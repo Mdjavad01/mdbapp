@@ -33,23 +33,37 @@
     <string name="error_server">خطای سرور رخ داده است. لطفاً کمی بعد دوباره تلاش کنید.</string>
     <string name="error_unknown">خطای غیرمنتظره‌ای رخ داد.</string>
     <string name="error_invalid_response">پاسخ سرور نامعتبر بود.</string>
+    <string name="error_rate_limited">تعداد درخواست‌ها بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.</string>
 
-    <!-- ===================== Auth (used from phase P3) ===================== -->
+    <!-- ===================== Auth (phase P3) ===================== -->
     <string name="auth_login_title">ورود به مستر دستباف</string>
+    <string name="auth_login_subtitle">برای ورود یا ساخت حساب، شمارهٔ موبایل خود را وارد کنید.</string>
+    <string name="auth_login_note">اگر این شماره در مستر دستباف حساب نداشته باشد، هنگام ورود به‌صورت خودکار ساخته می‌شود.</string>
     <string name="auth_phone_label">شماره موبایل</string>
     <string name="auth_phone_hint">۰۹۱۲۳۴۵۶۷۸۹</string>
     <string name="auth_phone_invalid">شماره موبایل وارد شده معتبر نیست.</string>
     <string name="auth_request_code">دریافت کد تأیید</string>
     <string name="auth_otp_label">کد تأیید</string>
+    <string name="auth_otp_hint">کد ۶ رقمی پیامک‌شده</string>
+    <string name="auth_otp_sent_to">کد تأیید به شمارهٔ %1$s ارسال شد.</string>
+    <string name="auth_otp_incomplete">کد تأیید باید ۶ رقم باشد.</string>
     <string name="auth_verify">ورود</string>
     <string name="auth_resend_code">ارسال دوبارهٔ کد</string>
-    <string name="auth_resend_wait">ارسال دوباره تا %1$d ثانیه دیگر</string>
+    <string name="auth_resend_wait">ارسال دوباره تا %1$s ثانیهٔ دیگر</string>
+    <string name="auth_change_phone">تغییر شمارهٔ موبایل</string>
     <string name="auth_first_name_label">نام</string>
     <string name="auth_last_name_label">نام خانوادگی</string>
     <string name="auth_signup_title">تکمیل ثبت‌نام</string>
+    <string name="auth_signup_subtitle">این شماره در مستر دستباف حساب ندارد؛ برای ساخت حساب نام خود را وارد کنید.</string>
+    <string name="auth_name_required">برای ساخت حساب، نام خود را وارد کنید.</string>
+    <string name="auth_name_latin">فقط حروف فارسی مجاز است. لطفاً نام را با حروف فارسی بنویسید.</string>
+    <string name="auth_name_too_long">نام نمی‌تواند بیش از ۶۰ نویسه باشد.</string>
     <string name="auth_session_expired">نشست شما منقضی شده است؛ لطفاً دوباره وارد شوید.</string>
     <string name="auth_logout">خروج از حساب کاربری</string>
     <string name="auth_logout_confirm">از حساب کاربری خود خارج می‌شوید؟</string>
+    <string name="auth_logged_out">از حساب کاربری خارج شدید.</string>
+    <string name="auth_sms_not_sent">کد تأیید در سامانه معتبر است اما پیامکی ارسال نشد؛ با پشتیبانی تماس بگیرید.</string>
+    <string name="auth_welcome_back">خوش آمدید، %1$s</string>
 
     <!-- ===================== Security (used from phase P2/P7) ===================== -->
     <string name="security_rooted_title">امکان پخش ویدیو وجود ندارد</string>
@@ -65,12 +79,18 @@
     <string name="tier_silver">نقره‌ای</string>
     <string name="tier_gold">طلایی</string>
 
-    <!-- ===================== Placeholder home (P0) ===================== -->
-    <string name="p0_badge">فاز صفر — اسکافولد</string>
-    <string name="p0_headline">ساختار پروژه آماده است</string>
-    <string name="p0_body">این صفحه فقط برای تأیید راه‌اندازی صحیح پروژه است: تم راست‌به‌چپ، فونت وزیرمتن، سیستم طراحی و پیکربندی محیط. صفحه‌های واقعی از فاز بعد اضافه می‌شوند.</string>
+    <!-- ===================== Account panel ===================== -->
+    <string name="account_title">حساب کاربری</string>
+    <string name="account_signed_out">وارد نشده‌اید</string>
+    <string name="account_signed_out_hint">برای دسترسی به دوره‌ها وارد حساب کاربری خود شوید.</string>
+    <string name="account_sign_in">ورود / ثبت‌نام</string>
+    <string name="account_membership_active">اشتراک %1$s — %2$s روز باقی‌مانده</string>
+    <string name="account_membership_expires_on">تا %1$s</string>
+    <string name="account_no_membership">اشتراک فعالی ندارید</string>
+    <string name="account_refresh">به‌روزرسانی وضعیت</string>
+
+    <!-- ===================== Build diagnostics ===================== -->
     <string name="p0_env_label">محیط فعال</string>
     <string name="p0_api_label">آدرس پایهٔ سرور</string>
     <string name="p0_version_label">نسخهٔ برنامه</string>
-    <string name="p0_font_sample">نمونهٔ متن فارسی با فونت وزیرمتن — ۱۲۳۴۵۶۷۸۹۰</string>
 </resources>

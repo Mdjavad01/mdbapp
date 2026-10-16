@@ -16,8 +16,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -34,26 +36,36 @@ import com.mrdastbaaf.mdbapp.core.ui.state.UiState
 import com.mrdastbaaf.mdbapp.core.ui.theme.MdbTheme
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
+import com.mrdastbaaf.mdbapp.features.auth.domain.model.Membership
+import com.mrdastbaaf.mdbapp.features.auth.domain.model.MembershipStatus
+import com.mrdastbaaf.mdbapp.features.auth.domain.model.MembershipTier
+import com.mrdastbaaf.mdbapp.features.auth.domain.model.UserProfile
+import com.mrdastbaaf.mdbapp.features.auth.domain.model.UserRole
+import com.mrdastbaaf.mdbapp.features.auth.presentation.session.SessionUiState
 import com.mrdastbaaf.mdbapp.features.home.domain.model.ServerInfo
 
 /**
- * Phase P0 scaffold screen.
+ * Scaffold screen.
  *
- * This is not a product screen and is replaced in P4. Its purpose is to make the
- * foundation visible and verifiable:
+ * Two jobs, both about making the foundation verifiable rather than pretty:
  *
- *  - the layout is RTL (labels start on the right, key/value rows read correctly)
- *  - Vazirmatn renders Persian and Persian-Indic digits
- *  - the environment and base URL shown are the ones actually compiled in, so a
- *    mis-flavoured build is obvious at a glance
- *  - a live `GET /version` proves the whole network stack reaches the bridge
+ *  1. The account panel proves the whole auth round trip — OTP, token storage,
+ *     session, profile fetch, logout — against the live backend.
+ *  2. The server/config cards prove the network stack and the build flavour.
+ *
+ * It is replaced by the real home screen in P4. It is written as a pure function
+ * of its state so both halves can be previewed and unit-tested without Hilt.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     state: UiState<ServerInfo>,
+    sessionState: SessionUiState,
     isOffline: Boolean,
     onRetry: () -> Unit,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+    onRefreshProfile: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -76,13 +88,18 @@ fun HomeScreen(
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
-            ScaffoldIntro()
+            AccountCard(
+                sessionState = sessionState,
+                onSignIn = onSignIn,
+                onSignOut = onSignOut,
+                onRefresh = onRefreshProfile,
+            )
 
             AsyncStateView(
                 state = state,
                 isOffline = isOffline,
                 onRetry = onRetry,
-                modifier = Modifier.height(220.dp),
+                modifier = Modifier.height(240.dp),
             ) { info ->
                 ServerInfoCard(info)
             }
@@ -92,32 +109,126 @@ fun HomeScreen(
     }
 }
 
+// ── Account ─────────────────────────────────────────────────────────────────
+
 @Composable
-private fun ScaffoldIntro() {
-    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+private fun AccountCard(
+    sessionState: SessionUiState,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    InfoCard(title = stringResource(R.string.account_title)) {
+        val profile = sessionState.profile
+
+        when {
+            !sessionState.isSignedIn -> {
+                Text(
+                    text = stringResource(R.string.account_signed_out),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(R.string.account_signed_out_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(Spacing.xs))
+                OutlinedButton(onClick = onSignIn) {
+                    Text(stringResource(R.string.account_sign_in))
+                }
+            }
+
+            profile == null -> {
+                // Signed in but the profile has not arrived yet (first fetch in
+                // flight, or it failed). The session is still valid — the token
+                // is what matters — so this is not an error state.
+                Text(
+                    text = stringResource(R.string.state_loading),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            else -> {
+                Text(
+                    text = profile.fullName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                InfoRow("شماره موبایل", PersianFormat.toPersianDigits(profile.maskedPhone))
+                InfoRow("شناسهٔ کاربر", PersianFormat.toPersianDigits(profile.id))
+                MembershipRow(profile)
+
+                Spacer(Modifier.height(Spacing.xs))
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    TextButton(onClick = onRefresh) {
+                        Text(stringResource(R.string.account_refresh))
+                    }
+                    TextButton(onClick = onSignOut) {
+                        Text(stringResource(R.string.auth_logout))
+                    }
+                }
+            }
+        }
+
+        sessionState.errorMessage?.let { message ->
+            Text(
+                text = message.asString(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MembershipRow(profile: UserProfile) {
+    val membership = profile.membership
+
+    if (membership == null || membership.status != MembershipStatus.ACTIVE) {
         Text(
-            text = stringResource(R.string.p0_badge),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            text = stringResource(R.string.p0_headline),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Text(
-            text = stringResource(R.string.p0_body),
-            style = MaterialTheme.typography.bodyMedium,
+            text = stringResource(R.string.account_no_membership),
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        return
+    }
+
+    Text(
+        text = stringResource(
+            R.string.account_membership_active,
+            membership.tier.displayName(),
+            PersianFormat.formatNumber(membership.daysRemaining.toLong()),
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Medium,
+    )
+
+    // The server pre-formats the Jalali date, so it is shown verbatim rather
+    // than re-derived — the bridge owns the timezone handling.
+    if (membership.formattedExpireDateJalali.isNotBlank()) {
         Text(
-            text = stringResource(R.string.p0_font_sample),
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onBackground,
+            text = stringResource(
+                R.string.account_membership_expires_on,
+                PersianFormat.toPersianDigits(membership.formattedExpireDateJalali),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
+
+@Composable
+private fun MembershipTier.displayName(): String = when (this) {
+    MembershipTier.BRONZE -> stringResource(R.string.tier_bronze)
+    MembershipTier.SILVER -> stringResource(R.string.tier_silver)
+    MembershipTier.GOLD -> stringResource(R.string.tier_gold)
+    MembershipTier.FREE -> stringResource(R.string.account_no_membership)
+}
+
+// ── Diagnostics ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun ServerInfoCard(info: ServerInfo) {
@@ -142,6 +253,8 @@ private fun EnvironmentCard() {
         InfoRow("پین گواهی", if (AppConfig.certPinningEnabled) "فعال" else "غیرفعال")
     }
 }
+
+// ── Building blocks ─────────────────────────────────────────────────────────
 
 @Composable
 private fun InfoCard(title: String, content: @Composable () -> Unit) {
@@ -200,22 +313,63 @@ private fun Environment.displayName(): String = when (this) {
     Environment.PRODUCTION -> "پروداکشن"
 }
 
-@Preview(name = "خانه — موفق", showBackground = true, locale = "fa")
+// ── Previews ────────────────────────────────────────────────────────────────
+
+private val PreviewServerInfo = ServerInfo(
+    pwaVersion = "1.5.6",
+    pluginVersion = "1.7.13",
+    databaseVersion = "1.5.1",
+    serverTime = "2026-10-16 12:00:00",
+    serverEpochSeconds = 1760625600L,
+)
+
+@Preview(name = "خانه — وارد نشده", showBackground = true, locale = "fa")
 @Composable
-private fun HomeScreenPreview() {
+private fun HomeSignedOutPreview() {
     MdbTheme {
         HomeScreen(
-            state = UiState.Success(
-                ServerInfo(
-                    pwaVersion = "1.5.6",
-                    pluginVersion = "1.7.13",
-                    databaseVersion = "1.5.1",
-                    serverTime = "2026-10-16 12:00:00",
-                    serverEpochSeconds = 1760625600L,
+            state = UiState.Success(PreviewServerInfo),
+            sessionState = SessionUiState(isSignedIn = false),
+            isOffline = false,
+            onRetry = {},
+            onSignIn = {},
+            onSignOut = {},
+            onRefreshProfile = {},
+        )
+    }
+}
+
+@Preview(name = "خانه — وارد شده", showBackground = true, locale = "fa")
+@Composable
+private fun HomeSignedInPreview() {
+    MdbTheme {
+        HomeScreen(
+            state = UiState.Success(PreviewServerInfo),
+            sessionState = SessionUiState(
+                isSignedIn = true,
+                profile = UserProfile(
+                    id = "42",
+                    phoneNumber = "09123456789",
+                    maskedPhone = "0912***6789",
+                    fullName = "محمدجواد فلان",
+                    role = UserRole.STUDENT,
+                    membership = Membership(
+                        tier = MembershipTier.GOLD,
+                        planId = "gold_4821",
+                        planName = "اشتراک طلایی",
+                        status = MembershipStatus.ACTIVE,
+                        startedAt = "2026-01-01 10:00:00",
+                        expiresAt = "2027-01-01 10:00:00",
+                        formattedExpireDateJalali = "1405/10/11",
+                        daysRemaining = 77,
+                    ),
                 ),
             ),
             isOffline = false,
             onRetry = {},
+            onSignIn = {},
+            onSignOut = {},
+            onRefreshProfile = {},
         )
     }
 }

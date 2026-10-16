@@ -17,7 +17,21 @@ object Routes {
 
     // ── Auth ────────────────────────────────────────────────────────────────
     const val LOGIN = "login"
-    const val OTP = "otp"
+
+    /**
+     * The OTP screen carries the phone number and whether the account already
+     * exists. Both are needed to render the right form — an existing account
+     * gets a 6-digit field, a new one also gets name fields — and re-deriving
+     * them would mean asking the server a second time.
+     *
+     * `registered` travels as `1`/`0` rather than a boolean string: Navigation
+     * Compose parses route arguments by type, and a lowercase `true`/`false`
+     * round-trips through `NavType.BoolType` less predictably than a digit.
+     */
+    const val OTP = "otp?phone={phone}&registered={registered}"
+    fun otp(phone: String, isRegistered: Boolean): String =
+        "otp?phone=${encode(phone)}&registered=${if (isRegistered) 1 else 0}"
+
     const val SIGNUP_DETAILS = "signup"
 
     // ── Catalogue ───────────────────────────────────────────────────────────
