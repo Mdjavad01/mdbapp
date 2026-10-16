@@ -1,0 +1,44 @@
+# --- Dependencies ---
+node_modules/
+vendor/
+.pnp.*
+.yarn/*
+
+# --- Build output ---
+dist/
+build/
+out/
+*.min.js
+*.min.css
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Logs ---
+*.log
+logs/
+npm-debug.log*
+yarn-error.log*
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- WorkBuddy local workspace data ---
+.workbuddy-ai/
+
+# --- Caches ---
+.cache/
+.temp/
+tmp/
