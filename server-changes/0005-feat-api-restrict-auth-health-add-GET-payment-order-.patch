@@ -1,0 +1,1085 @@
+From 66086709d38ae0e150d9715a130a761914695ac3 Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Sat, 17 Oct 2026 01:47:19 +0330
+Subject: [PATCH 5/5] feat(api): restrict /auth/health, add GET
+ /payment/order/{orderId} (v1.8.0)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two smaller changes the app needed. No schema change.
+
+1. GET /auth/health is now restricted in production.
+
+The endpoint was public and reported host internals: plugin version, database
+read/write timings, the OTP queue, the NAMES OF REGISTERED FILTER CALLBACKS
+(which leaks installed plugins), outbound firewall state, and the SMS service
+log. None of it is a credential, but together it is a decent map: "database is
+slow" alone suggests a resource-exhaustion window.
+
+In production it now answers only with a token:
+  define('MRDASTBAAF_HEALTH_TOKEN', '...');   // wp-config, or
+  option mrdastbaaf_health_token
+
+A rejected request gets 404, not 403 — so the endpoint's existence is not
+disclosed either, and it is indistinguishable from a route that does not
+exist. Comparison uses hash_equals so response timing does not leak the token.
+
+Two deliberate choices:
+- No token configured in production means the endpoint is fully OFF, not "open
+  with a warning". Forgetting to configure it must not open a hole.
+- The environment check is an allow-list of local/development/staging, not
+  "anything except production". If someone sets WP_ENVIRONMENT_TYPE to an
+  unknown value, the result is locked, and unlocking it takes a token rather
+  than a config typo.
+
+Staging and local keep it open without a token, because diagnosing the OTP
+chain without dashboard access is the endpoint's whole purpose.
+
+2. GET /payment/order/{orderId} — for post-payment polling.
+
+After returning from the Zibal gateway the app had no way to ask "did my order
+go through?". verify is webhook-oriented and cannot be called from a client;
+/me/orders returns the last 50 orders with no success key and no signal about
+whether payment happened.
+
+Response: {success, order{...}} where order is the same shape /me/orders
+returns, plus updatedAt, isPaid and isTerminal.
+
+The two booleans exist so the app does not re-encode the server's status
+vocabulary in its own strings.xml. If a status is ever added, a client
+checking `status == "completed"` breaks silently; one reading isPaid does not.
+
+Two status rules the app depends on, and which are pinned by tests:
+- verifying is NOT paid. It is transient and may still resolve either way.
+  Treating it as success would tell a user whose payment is rejected that it
+  succeeded.
+- pending is NOT terminal. Treating it as terminal stops polling early and
+  shows "failed" to someone who is still on the payment page.
+
+Ownership is enforced inside the WHERE clause (id AND user_id), so another
+user's order returns the same 404 "not found". Deliberately 404 rather than
+403: with 403, guessing ids would reveal which ones exist. Same guard pattern
+as the sessions endpoints.
+
+The order shape now lives in one place, format_order_for_client(), used by
+both this endpoint and /me/orders. The /me/orders output is byte-identical to
+before (no polling keys) — verified by comparing the shape in tests — but the
+two can no longer drift.
+
+Tests:
+- tests/php/test-health-access.php (23) — every environment/token combination,
+  plus the boundary cases: empty environment string, unknown environment,
+  token set but not provided, provided but not set, prefix, case mismatch.
+- tests/php/test-order-status.php (48) — isPaid/isTerminal for all six
+  statuses, the id pattern, the exact response shape including key order, and
+  the three conditions that gate adminNote.
+
+Suite total: 324 assertions across seven files.
+
+Not covered: handle_get_order itself (needs a live $wpdb). Staging checklist
+is in docs/PLUGIN_v1.8.0_HEALTH_AND_ORDER_STATUS.md.
+---
+ docs/PLUGIN_v1.8.0_HEALTH_AND_ORDER_STATUS.md | 226 ++++++++++++++++
+ .../includes/class-auth-controller.php        | 123 ++++++++-
+ .../includes/class-memberships-controller.php |  22 +-
+ .../includes/class-payment-controller.php     | 166 ++++++++++++
+ .../tests/php/test-health-access.php          | 137 ++++++++++
+ .../tests/php/test-order-status.php           | 248 ++++++++++++++++++
+ 6 files changed, 903 insertions(+), 19 deletions(-)
+ create mode 100644 docs/PLUGIN_v1.8.0_HEALTH_AND_ORDER_STATUS.md
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/test-health-access.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/test-order-status.php
+
+diff --git a/docs/PLUGIN_v1.8.0_HEALTH_AND_ORDER_STATUS.md b/docs/PLUGIN_v1.8.0_HEALTH_AND_ORDER_STATUS.md
+new file mode 100644
+index 0000000..bf4f7ec
+--- /dev/null
++++ b/docs/PLUGIN_v1.8.0_HEALTH_AND_ORDER_STATUS.md
+@@ -0,0 +1,226 @@
++# v1.8.0 — محدودسازی سلامت‌سنجی + وضعیت سفارش
++
++دو تغییر کوچک‌تر که هر دو برای اپ لازم بودند. بدون تغییر اسکیما.
++
++---
++
++## ۱. محدودسازی `GET /auth/health` در پروداکشن
++
++### مسئله
++
++اندپوینت عمومی بود و اطلاعات داخلی هاست را لو می‌داد:
++
++| افشا | چرا مهم است |
++|---|---|
++| `plugin_version` | نسخهٔ دقیق افزونه ⇒ جست‌وجوی آسیب‌پذیری نسخه‌محور |
++| `db_read_ms` / `db_write_ms` | «دیتابیس کند است» ⇒ پنجرهٔ مناسب حملهٔ منبع‌محور |
++| `otp_requests` | حجم ترافیک ورود |
++| `http_request_timeout.callbacks` | **نام کلاس‌ها و توابع** افزونه‌های نصب‌شده |
++| `melipayamak_outbound` | وضعیت فایروال خروجی هاست |
++| `sms_last_log` | متن وضعیت سرویس پیامک |
++
++هیچ‌کدام رمز نیست، ولی مجموعشان نقشهٔ خوبی برای مهاجم می‌سازد. بریف صراحتاً
++گفته بود «Server should restrict it».
++
++### رفتار جدید
++
++| محیط (`WP_ENVIRONMENT_TYPE`) | رفتار |
++|---|---|
++| `local` · `development` · `staging` | باز — بدون توکن (کاربرد اصلی: عیب‌یابی) |
++| هر چیز دیگر (شامل `production`، رشتهٔ خالی، مقدار ناشناخته) | فقط با توکن |
++
++وقتی دسترسی رد می‌شود، پاسخ **۴۰۴** است نه ۴۰۳ — یعنی وجود اندپوینت هم افشا
++نمی‌شود و از یک مسیر ناموجود قابل تشخیص نیست.
++
++### فعال‌کردن در پروداکشن
++
++```php
++// wp-config.php
++define('MRDASTBAAF_HEALTH_TOKEN', 'یک-رشتهٔ-تصادفی');
++```
++
++یا با گزینه:
++
++```bash
++wp option update mrdastbaaf_health_token 'یک-رشتهٔ-تصادفی'
++```
++
++و صدا زدن:
++
++```bash
++curl "https://mrdastbaaf.com/wp-json/mrdastbaaf/v1/auth/health?token=یک-رشتهٔ-تصادفی"
++```
++
++مقایسه با `hash_equals` انجام می‌شود تا زمان پاسخ توکن را لو ندهد.
++
++### دو تصمیم که باید بدونی
++
++**۱) بدون توکن، اندپوینت کاملاً خاموش است — نه «باز با هشدار».** در
++production اگر توکنی تنظیم نشده باشد، `health_access_allowed()` مقدار `false`
++برمی‌گرداند. این fail-closed است: فراموش‌کردن پیکربندی به «باز شدن» منجر
++نمی‌شود.
++
++**۲) allow-list است، نه «هر چیزی جز production».** اگر کسی
++`WP_ENVIRONMENT_TYPE` را به یک مقدار ناشناخته (مثلاً `qa`) ست کند، نتیجه
++«قفل شدن» است نه «باز شدن» — و بازکردنش یک توکن می‌خواهد، نه یک اشتباه
++پیکربندی.
++
++### یادآوری برای اپ
++
++اپ در بیلد پروداکشن **نباید** این اندپوینت را صدا بزند (طبق توافق قبلی). این
++تغییر فقط سطح حملهٔ سمت سرور را می‌بندد؛ از سمت کلاینت چیزی عوض نمی‌شود.
++
++---
++
++## ۲. `GET /payment/order/{orderId}`
++
++### چرا لازم شد
++
++کاربر از درگاه زیبال برمی‌گردد ولی وضعیت سفارشش را نمی‌داند. سه راه موجود
++هیچ‌کدام کار نمی‌کرد:
++
++- `POST /payment/zibal/verify` برای وب‌هوک/بازگشت پرداخت طراحی شده و از
++  مرورگر قابل صدا زدن نیست.
++- `GET /me/orders` فقط ۵۰ سفارش آخر را می‌دهد، بدون کلید `success` و بدون
++  هیچ نشانه‌ای از «پرداخت شده یا نه».
++- هیچ اندپوینتی برای «وضعیت یک سفارش مشخص» وجود نداشت.
++
++### درخواست
++
++```
++GET /wp-json/mrdastbaaf/v1/payment/order/{orderId}
++Authorization: Bearer {user_id}.{secret}
++```
++
++`orderId` الگوی `^[A-Za-z0-9_-]{1,64}$` را باید داشته باشد (ستون
++`varchar(64)`). هر چیز دیگری ۴۰۰ می‌گیرد.
++
++### پاسخ
++
++```json
++{
++  "success": true,
++  "order": {
++    "id": "ord-1",
++    "orderNumber": "MD-1001",
++    "itemTitle": "اشتراک طلایی",
++    "amountToman": 490000,
++    "gateway": "zibal",
++    "status": "completed",
++    "createdAt": "2026-10-16 08:00:00",
++    "verifiedAt": "2026-10-16 09:00:00",
++    "refNumber": "123456789",
++    "updatedAt": "2026-10-16 09:00:00",
++    "isPaid": true,
++    "isTerminal": true
++  }
++}
++```
++
++### واژگان وضعیت
++
++| وضعیت | معنی | `isPaid` | `isTerminal` |
++|---|---|---|---|
++| `pending` | در انتظار پرداخت | ✗ | ✗ |
++| `verifying` | در حال بررسی (گذرا) | ✗ | ✗ |
++| `completed` | پرداخت شد و سفارش انجام شد | ✓ | ✓ |
++| `failed` | پرداخت ناموفق | ✗ | ✓ |
++| `cancelled` | لغو شد | ✗ | ✓ |
++| `rejected` | فیش کارت‌به‌کارت رد شد | ✗ | ✓ |
++
++**دو نکته که اپ باید به آن‌ها تکیه کند:**
++
++- **`verifying` پرداخت‌شده نیست.** یک وضعیت گذراست: ممکن است به `completed`
++  برود یا به `pending` برگردد. اگر آن را «موفق» حساب کنید، به کاربری که
++  پرداختش رد می‌شود پیام موفقیت نشان می‌دهید.
++- **`pending` پایانی نیست.** اگر `isTerminal` را برایش درست کنید، پولینگ
++  زودتر از موعد متوقف می‌شود و کاربری که در حال پرداخت است صفحهٔ «ناموفق»
++  می‌بیند.
++
++پس منطق درست در اپ:
++
++```
++اگر isPaid → موفق
++وگرنه اگر isTerminal → ناموفق (با پیام مناسب وضعیت)
++وگرنه → همچنان پولینگ کن
++```
++
++### چرا `isPaid` و `isTerminal` در پاسخ هستند
++
++اپ نباید واژگان وضعیت سرور را در `strings.xml` خودش تکرار کند. اگر روزی
++`refunded` اضافه شود، اپی که خودش `status == "completed"` را چک می‌کند ساکت
++شکسته می‌شود؛ اپی که `isPaid` را می‌خواند نه.
++
++### امنیت
++
++مالکیت **در خود `WHERE`** بررسی می‌شود:
++
++```sql
++WHERE o.id = %s AND o.user_id = %d
++```
++
++پس سفارش کاربر دیگر همان ۴۰۴ «سفارشی با این شناسه یافت نشد» را می‌گیرد.
++عمداً ۴۰۴ و نه ۴۰۳: با ۴۰۳ می‌شد با حدس‌زدن شناسه، وجود سفارش‌های دیگران را
++شمارش کرد. همین الگوی گارد `GET/DELETE /auth/sessions` است.
++
++### یادداشت ادمین
++
++`adminNote` فقط برای فیشِ **کارت‌به‌کارتِ «ردشده»**ی خودِ کاربر برمی‌گردد
++(شفافیت دلیل رد). در هیچ وضعیت دیگری — از جمله رد شدن پرداخت زیبال — افشا
++نمی‌شود.
++
++### یک شکل پاسخ، دو اندپوینت
++
++شکل `order` در `MrDastbaaf_Payment_Controller::format_order_for_client()` تعریف
++شده و **هم** این اندپوینت و **هم** `GET /me/orders` از آن استفاده می‌کنند.
++خروجی `/me/orders` عیناً همان قبلی است (بدون `updatedAt`/`isPaid`/`isTerminal`)،
++ولی حالا دو پاسخ نمی‌توانند از هم فاصله بگیرند.
++
++### نمونهٔ استفاده در اپ
++
++```kotlin
++// بعد از بازگشت از درگاه
++repeat(20) {
++    val result = api.getOrder(orderId)
++    result.onSuccess { order ->
++        if (order.isPaid) return Success
++        if (order.isTerminal) return Failed(order.status)
++    }
++    delay(3_000)
++}
++// بعد از ۶۰ ثانیه: «اگر پرداخت موفق بوده، حداکثر تا ۴۸ ساعت خودکار فعال می‌شود»
++```
++
++سقف ۶۰ ثانیه عمدی است: کرون ریکنسیلیشن حداکثر تا ۴۸ ساعت بعد سفارش را
++تایید می‌کند، پس پولینگ بی‌نهایت فقط باتری می‌خورد.
++
++---
++
++## تست‌ها
++
++| فایل | تعداد | چه چیزی |
++|---|---|---|
++| `tests/php/test-health-access.php` | ۲۳ | همهٔ ترکیب‌های محیط/توکن، شامل حالت‌های مرزی (رشتهٔ خالی، مقدار ناشناخته، توکن ناقص) |
++| `tests/php/test-order-status.php` | ۴۸ | `isPaid`/`isTerminal` برای هر شش وضعیت، الگوی شناسه، شکل دقیق پاسخ، و شرط‌های افشای `adminNote` |
++
++مجموع مجموعه: **۳۲۴ assertion** در هفت فایل.
++
++**پوشش‌نداده:** خود `handle_get_order` (نیاز به `$wpdb` واقعی). چک‌لیست
++استیجینگ در §۳.
++
++---
++
++## چک‌لیست استیجینگ
++
++۱. `WP_ENVIRONMENT_TYPE=production` و بدون `MRDASTBAAF_HEALTH_TOKEN` ⇒
++   `GET /auth/health` باید ۴۰۴ بدهد.
++۲. با توکن تنظیم‌شده ⇒ با `?token=` درست باید ۲۰۰ بدهد و بدنهٔ قبلی را
++   برگرداند.
++۳. توکن اشتباه ⇒ ۴۰۴ (نه ۴۰۳).
++۴. `WP_ENVIRONMENT_TYPE=staging` ⇒ بدون توکن هم باید کار کند.
++۵. یک سفارش زیبال ناموفق بزنید و با `GET /payment/order/{id}` تا رسیدن به
++   `failed` پولینگ کنید؛ مطمئن شوید در `verifying` مقدار `isTerminal` درست
++   نمی‌شود.
++۶. با توکن کاربر دیگر همان شناسه را بخواهید ⇒ ۴۰۴.
++۷. `GET /me/orders` را قبل و بعد از این تغییر مقایسه کنید — باید **مو‌به‌مو**
++   یکسان باشد.
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php
+index 5eda847..9e5e6b9 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php
+@@ -268,9 +268,32 @@ class MrDastbaaf_Auth_Controller {
+      * امنیت: هیچ رمز/توکنی در پاسخ نیست؛ شماره‌ها در لاگ ماسک‌شده‌اند؛ سقف نرخ
+      * ۱ درخواست در ۱۰ ثانیه per-IP؛ LiteSpeed nocache (namespace-wide) اعمال است.
+      *
++     * ─── v1.8.0: محدودسازی در پروداکشن ───
++     * این اندپوینت عمومی بود و اطلاعات داخلی هاست را لو می‌داد: نسخهٔ افزونه،
++     * تایمینگ خواندن/نوشتن دیتابیس، وضعیت صف OTP، نام کالبک‌های فیلتر و نتیجهٔ
++     * تست اتصال خروجی. هیچ‌کدام رمز نیست، ولی همه با هم نقشهٔ خوبی برای
++     * مهاجم می‌سازد (مثلاً «دیتابیس کند است» ⇒ پنجرهٔ حملهٔ منبع‌محور).
++     *
++     * حالا در محیط production فقط با یک توکن اختصاصی پاسخ می‌دهد:
++     *   - تعریف ثابت MRDASTBAAF_HEALTH_TOKEN در wp-config.php، یا
++     *   - گزینهٔ mrdastbaaf_health_token
++     * و توکن با پارامتر ?token= فرستاده می‌شود (همان الگوی /cron/reconcile).
++     *
++     * در محیط‌های غیرproduction (development/staging/local) باز می‌ماند، چون
++     * کاربرد اصلی‌اش عیب‌یابی بدون دسترسی به پیشخوان است.
++     *
++     * اگر در production هیچ توکنی تنظیم نشده باشد، اندپوینت **کاملاً خاموش**
++     * است و ۴۰۴ می‌دهد — یعنی از یک مسیر ناموجود قابل تشخیص نیست.
++     *
++     * @param WP_REST_Request|null $request
+      * @return WP_REST_Response|WP_Error
+      */
+-    public function handle_health() {
++    public function handle_health($request = null) {
++        if (!self::health_access_allowed()) {
++            // عمداً ۴۰۴ (نه ۴۰۳): وجود اندپوینت هم افشا نمی‌شود.
++            return new WP_Error('rest_no_route', 'مسیر یافت نشد.', array('status' => 404));
++        }
++
+         $ip = self::get_client_ip();
+         $rl_key = 'mrdastbaaf_health_rl_' . md5($ip !== '' ? $ip : 'anon');
+         if (get_transient($rl_key)) {
+@@ -351,6 +374,104 @@ class MrDastbaaf_Auth_Controller {
+         return rest_ensure_response($payload);
+     }
+ 
++    /**
++     * v1.8.0: توکن سلامت‌سنجی — ثابت wp-config اولویت دارد، وگرنه گزینه.
++     *
++     * نگه‌داشتنش در wp-config یعنی در پشتیبان‌گیری دیتابیس و در alloptions
++     * نمی‌افتد.
++     *
++     * @return string
++     */
++    public static function health_token() {
++        if (defined('MRDASTBAAF_HEALTH_TOKEN')) {
++            $from_constant = (string) constant('MRDASTBAAF_HEALTH_TOKEN');
++            if ('' !== $from_constant) {
++                return $from_constant;
++            }
++        }
++
++        return (string) get_option('mrdastbaaf_health_token', '');
++    }
++
++    /**
++     * v1.8.0: محیط فعلی وردپرس — با محافظ برای نسخه‌های قدیمی‌تر از ۵.۵.
++     *
++     * wp_get_environment_type() پیش‌فرض 'production' برمی‌گرداند، پس نبودِ
++     * WP_ENVIRONMENT_TYPE به‌معنای «محیط نامعلوم ⇒ امن‌ترین فرض» است.
++     *
++     * @return string
++     */
++    public static function environment_type() {
++        if (function_exists('wp_get_environment_type')) {
++            return (string) wp_get_environment_type();
++        }
++
++        return 'production';
++    }
++
++    /**
++     * v1.8.0: توکن ارسالی کلاینت برای سلامت‌سنجی.
++     *
++     * @return string
++     */
++    public static function provided_health_token() {
++        if (isset($_GET['token'])) {
++            return sanitize_text_field(wp_unslash((string) $_GET['token']));
++        }
++
++        return '';
++    }
++
++    /**
++     * v1.8.0: آیا این درخواست اجازهٔ سلامت‌سنجی دارد؟
++     *
++     * منطق (خالص، تا بدون وردپرس آزمون‌پذیر باشد):
++     *   - محیط‌های غیرproductionِ شناخته‌شده ⇒ مجاز (کاربرد اصلی: عیب‌یابی)
++     *   - هر چیز دیگری — از جمله production، رشتهٔ خالی، یا یک مقدار ناشناخته —
++     *     فقط با توکن تنظیم‌شده و مطابق
++     *   - توکن تنظیم‌نشده در production ⇒ رد (fail-closed، نه «باز»)
++     *
++     * عمداً allow-list است، نه «هر چیزی جز production». اگر روزی کسی
++     * WP_ENVIRONMENT_TYPE را به یک مقدار ناشناخته ست کند، نتیجه «قفل شدن» است
++     * نه «باز شدن» — و بازکردنش یک توکن می‌خواهد، نه یک اشتباه پیکربندی.
++     *
++     * مقایسه با hash_equals انجام می‌شود تا زمان پاسخ، توکن را لو ندهد.
++     *
++     * @param string $environment
++     * @param string $provided
++     * @param string $expected
++     * @return bool
++     */
++    public static function health_access_allowed_for($environment, $provided, $expected) {
++        $environment = strtolower(trim((string) $environment));
++
++        if (in_array($environment, array('local', 'development', 'staging'), true)) {
++            return true;
++        }
++
++        $expected = (string) $expected;
++        $provided = (string) $provided;
++
++        if ('' === $expected || '' === $provided) {
++            return false;
++        }
++
++        return hash_equals($expected, $provided);
++    }
++
++    /**
++     * v1.8.0: پوشش وردپرسیِ [health_access_allowed_for].
++     *
++     * @return bool
++     */
++    public static function health_access_allowed() {
++        return self::health_access_allowed_for(
++            self::environment_type(),
++            self::provided_health_token(),
++            self::health_token()
++        );
++    }
++
+     /**
+      * اعتبارسنجی کد تایید و ورود هنرجو
+      *
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
+index a6e3d3a..6bce0dd 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
+@@ -368,24 +368,10 @@ class MrDastbaaf_Memberships_Controller {
+ 
+         $list = array();
+         foreach ($rows as $row) {
+-            $item = array(
+-                'id' => (string) $row->id,
+-                'orderNumber' => (string) $row->order_number,
+-                'itemTitle' => (string) $row->item_title,
+-                'amountToman' => (int) $row->amount_toman,
+-                'gateway' => (string) $row->gateway,
+-                'status' => (string) $row->status,
+-                'createdAt' => (string) $row->created_at,
+-                'verifiedAt' => !empty($row->verified_at) ? (string) $row->verified_at : null,
+-                'refNumber' => !empty($row->zibal_ref_number) ? (string) $row->zibal_ref_number : null,
+-            );
+-
+-            // یادداشت ادمین فقط در وضعیت rejected فیش کارت‌به‌کارت — کلید در سایر وضعیت‌ها حذف است
+-            if ('card_to_card' === $row->gateway && 'rejected' === $row->status && !empty($row->admin_review_note)) {
+-                $item['adminNote'] = (string) $row->admin_review_note;
+-            }
+-
+-            $list[] = $item;
++            // v1.8.0: شکل پاسخ در یک جا تعریف شده (format_order_for_client) تا
++            // این فهرست و /payment/order/{id} هرگز از هم فاصله نگیرند. شکل
++            // خروجی عیناً همان قبلی است (بدون کلیدهای مخصوص پولینگ).
++            $list[] = MrDastbaaf_Payment_Controller::format_order_for_client($row);
+         }
+ 
+         return rest_ensure_response(array('orders' => $list));
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php
+index 420c9ac..e363c3c 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php
+@@ -41,6 +41,31 @@ class MrDastbaaf_Payment_Controller {
+             'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
+         ));
+ 
++        /**
++         * v1.8.0: وضعیت یک سفارش — برای پولینگ بعد از پرداخت.
++         *
++         * چرا لازم شد: کاربر از درگاه زیبال برمی‌گردد ولی وضعیت سفارشش را
++         * نمی‌داند. `verify` وب‌هوک‌محور است و در مرورگر قابل صدا زدن نیست، و
++         * `/me/orders` فقط ۵۰ سفارش آخر را برمی‌گرداند (بدون کلید success و
++         * بدون isPaid). اپ باید بتواند یک سفارش مشخص را تا رسیدن به وضعیت
++         * نهایی دنبال کند.
++         *
++         * مالکیت کاملاً سمت سرور بررسی می‌شود: سفارش کاربر دیگر ۴۰۴ می‌دهد
++         * (نه ۴۰۳) تا وجود شناسه هم افشا نشود.
++         */
++        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/payment/order/(?P<orderId>[A-Za-z0-9_\-]{1,64})', array(
++            'methods' => 'GET',
++            'callback' => array($this, 'handle_get_order'),
++            'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
++            'args' => array(
++                'orderId' => array(
++                    'required' => true,
++                    'type' => 'string',
++                    'validate_callback' => array($this, 'validate_order_id'),
++                ),
++            ),
++        ));
++
+         /**
+          * v1.2.0: محرک دستی/سرور ریکنسیلیشن — برای هاست‌هایی که WP-Cron تزویرشان
+          * غیرقابل‌اتکاست (مثلاً crontab سیستم با curl). توکن از آپشن
+@@ -70,6 +95,147 @@ class MrDastbaaf_Payment_Controller {
+         return hash_equals($stored, $provided);
+     }
+ 
++    // ─────────────────────────────────────────────────────────────────────────
++    // v1.8.0: وضعیت سفارش — برای پولینگ بعد از پرداخت
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * آیا این وضعیت یعنی پول گرفته شده و سفارش انجام شده؟
++     *
++     * تنها وضعیت «پرداخت‌شده» در این افزونه `completed` است. `verifying` یک
++     * وضعیت گذراست (در حال بررسی)، نه تایید — اگر آن را paid حساب کنیم، اپ
++     * به کاربری که پرداختش رد می‌شود «موفق» نشان می‌دهد.
++     *
++     * @param string $status
++     * @return bool
++     */
++    public static function is_paid_status($status) {
++        return 'completed' === (string) $status;
++    }
++
++    /**
++     * آیا این وضعیت پایانی است؟ (پولینگ بعد از آن بی‌فایده است)
++     *
++     * `verifying` عمداً پایانی نیست: ممکن است به completed برود یا به pending
++     * برگردد. `pending` هم پایانی نیست (کاربر ممکن است هنوز پرداخت کند).
++     *
++     * @param string $status
++     * @return bool
++     */
++    public static function is_terminal_status($status) {
++        return in_array(
++            (string) $status,
++            array('completed', 'failed', 'cancelled', 'rejected'),
++            true
++        );
++    }
++
++    /**
++     * اعتبارسنجی شناسهٔ سفارش در مسیر.
++     *
++     * شناسه‌ها از نوع varchar(64) هستند؛ الگو عمداً محدود است تا هیچ شناسه‌ای
++     * با اسلش/نقطه/کاراکتر کنترلی به کوئری نرسد.
++     *
++     * @param mixed $value
++     * @return bool
++     */
++    public function validate_order_id($value) {
++        return (bool) preg_match('/^[A-Za-z0-9_\-]{1,64}$/', (string) $value);
++    }
++
++    /**
++     * شکل‌دهی یک ردیف سفارش برای کلاینت — تنها جایی که این شکل تعریف می‌شود.
++     *
++     * هم `/me/orders` و هم `/payment/order/{id}` از این استفاده می‌کنند تا دو
++     * پاسخ نتوانند از هم فاصله بگیرند (اگر روزی کلید جدیدی اضافه شد، در هر دو
++     * ظاهر می‌شود).
++     *
++     * @param object $row     ردیف سفارش (به‌همراه admin_review_note در صورت وجود)
++     * @param array  $options ['polling' => bool, 'admin_note' => bool]
++     * @return array
++     */
++    public static function format_order_for_client($row, $options = array()) {
++        $polling = !empty($options['polling']);
++        $with_admin_note = !array_key_exists('admin_note', $options) || $options['admin_note'];
++
++        $item = array(
++            'id' => (string) $row->id,
++            'orderNumber' => (string) $row->order_number,
++            'itemTitle' => (string) $row->item_title,
++            'amountToman' => (int) $row->amount_toman,
++            'gateway' => (string) $row->gateway,
++            'status' => (string) $row->status,
++            'createdAt' => (string) $row->created_at,
++            'verifiedAt' => !empty($row->verified_at) ? (string) $row->verified_at : null,
++            'refNumber' => !empty($row->zibal_ref_number) ? (string) $row->zibal_ref_number : null,
++        );
++
++        // یادداشت ادمین فقط برای فیشِ کارت‌به‌کارتِ «ردشده»ی خودِ کاربر — شفافیت
++        // دلیل رد. در هیچ وضعیت دیگری افشا نمی‌شود.
++        if ($with_admin_note
++            && 'card_to_card' === (string) $row->gateway
++            && 'rejected' === (string) $row->status
++            && !empty($row->admin_review_note)
++        ) {
++            $item['adminNote'] = (string) $row->admin_review_note;
++        }
++
++        if ($polling) {
++            // کلیدهای مخصوص پولینگ: اپ نباید واژگان وضعیت را خودش تفسیر کند.
++            $item['updatedAt'] = !empty($row->updated_at) ? (string) $row->updated_at : null;
++            $item['isPaid'] = self::is_paid_status($row->status);
++            $item['isTerminal'] = self::is_terminal_status($row->status);
++        }
++
++        return $item;
++    }
++
++    /**
++     * v1.8.0: GET /payment/order/{orderId} — وضعیت یک سفارش برای پولینگ.
++     *
++     * مالکیت در خود WHERE بررسی می‌شود (مثل گارد نشست‌ها): سفارش کاربر دیگر
++     * همان ۴۰۴ «یافت نشد» را می‌گیرد، پس نمی‌شود با حدس‌زدن شناسه، وجود
++     * سفارش‌های دیگران را شمارش کرد.
++     *
++     * @param WP_REST_Request $request
++     * @return WP_REST_Response|WP_Error
++     */
++    public function handle_get_order($request) {
++        global $wpdb;
++
++        $user_id = get_current_user_id();
++        if ($user_id <= 0) {
++            return new WP_Error('unauthorized', 'برای مشاهدهٔ سفارش ابتدا وارد حساب کاربری خود شوید.', array('status' => 401));
++        }
++
++        $order_id = (string) $request->get_param('orderId');
++        if ('' === $order_id) {
++            return new WP_Error('invalid_order', 'شناسهٔ سفارش معتبر نیست.', array('status' => 400));
++        }
++
++        $table_orders = $wpdb->prefix . 'mrdastbaaf_orders';
++        $table_transfers = $wpdb->prefix . 'mrdastbaaf_manual_transfers';
++
++        $row = $wpdb->get_row($wpdb->prepare(
++            "SELECT o.*, t.admin_review_note
++             FROM $table_orders o
++             LEFT JOIN $table_transfers t ON t.order_id = o.id
++             WHERE o.id = %s AND o.user_id = %d
++             LIMIT 1",
++            $order_id,
++            $user_id
++        ));
++
++        if (!$row) {
++            return new WP_Error('order_not_found', 'سفارشی با این شناسه یافت نشد.', array('status' => 404));
++        }
++
++        return rest_ensure_response(array(
++            'success' => true,
++            'order' => self::format_order_for_client($row, array('polling' => true)),
++        ));
++    }
++
+     /**
+      * v1.2.0: هندلر GET /cron/reconcile — اجرای ریکنسیلیشن و برگرداندن آخرین خلاصه
+      */
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-health-access.php b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-health-access.php
+new file mode 100644
+index 0000000..6cc91d4
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-health-access.php
+@@ -0,0 +1,137 @@
++<?php
++/**
++ * تست محدودسازی اندپوینت سلامت‌سنجی (test-health-access) — بدون وردپرس
++ *
++ * اجرا: php tests/php/test-health-access.php
++ *
++ * ─── چرا این تست مهم است ───
++ * GET /auth/health عمومی بود و اطلاعات داخلی هاست را لو می‌داد: نسخهٔ افزونه،
++ * تایمینگ خواندن/نوشتن دیتابیس، وضعیت صف OTP، نام کالبک‌های فیلتر و نتیجهٔ
++ * تست اتصال خروجی. هیچ‌کدام رمز نیست، ولی با هم نقشهٔ خوبی برای مهاجم می‌سازد.
++ *
++ * جهت خطا اینجا مهم است: اگر منطق اشتباه کند، نتیجه «باز شدن» است نه «بسته
++ * شدن». پس تست عمداً روی حالت‌های مرزی تمرکز دارد — رشتهٔ خالی محیط، مقدار
++ * ناشناخته، توکن تنظیم‌نشده، و توکن اشتباه.
++ */
++
++define('ABSPATH', '/tmp/');
++
++$GLOBALS['mrd_test_options'] = array();
++
++if (!function_exists('get_option')) {
++    function get_option($name, $default = false) {
++        return isset($GLOBALS['mrd_test_options'][$name]) ? $GLOBALS['mrd_test_options'][$name] : $default;
++    }
++}
++
++require_once __DIR__ . '/../../includes/class-auth-controller.php';
++
++$pass = 0;
++$fail = 0;
++
++function mrd_assert($label, $actual, $expected) {
++    global $pass, $fail;
++    if ($actual === $expected) {
++        $pass++;
++        echo "PASS: {$label}\n";
++    } else {
++        $fail++;
++        echo "FAIL: {$label} — expected: " . var_export($expected, true) . " | got: " . var_export($actual, true) . "\n";
++    }
++}
++
++$allow = 'MrDastbaaf_Auth_Controller::health_access_allowed_for';
++
++// ─── ۱) محیط‌های غیرproduction باز می‌مانند ────────────────────────────────
++//
++// کاربرد اصلی این اندپوینت عیب‌یابی بدون دسترسی به پیشخوان است؛ روی استیجینگ
++// باید بی‌دردسر کار کند.
++
++mrd_assert('local is allowed without a token', $allow('local', '', ''), true);
++mrd_assert('development is allowed without a token', $allow('development', '', ''), true);
++mrd_assert('staging is allowed without a token', $allow('staging', '', ''), true);
++mrd_assert('a mixed-case environment name is normalised', $allow('Staging', '', ''), true);
++mrd_assert('surrounding whitespace is trimmed', $allow(' development ', '', ''), true);
++
++// ─── ۲) production بدون توکن ⇒ کاملاً خاموش ────────────────────────────────
++
++mrd_assert('production without a configured token is denied', $allow('production', '', ''), false);
++mrd_assert('production with a token but none configured is denied', $allow('production', 'anything', ''), false);
++mrd_assert('production with a configured token but none provided is denied', $allow('production', '', 'secret-token'), false);
++
++// ─── ۳) production با توکن درست ⇒ مجاز ────────────────────────────────────
++
++mrd_assert('production with the matching token is allowed', $allow('production', 'secret-token', 'secret-token'), true);
++
++mrd_assert(
++    'a wrong token of the same length is denied',
++    $allow('production', 'secret-tokeX', 'secret-token'),
++    false
++);
++mrd_assert(
++    'a prefix of the token is denied',
++    $allow('production', 'secret', 'secret-token'),
++    false
++);
++mrd_assert(
++    'a token with different case is denied',
++    $allow('production', 'SECRET-TOKEN', 'secret-token'),
++    false
++);
++mrd_assert(
++    'an empty provided token never matches a configured one',
++    $allow('production', '', ''),
++    false
++);
++
++// ─── ۴) حالت‌های مرزی — جهت خطا باید «بسته» باشد ──────────────────────────
++//
++// این‌ها مهم‌ترین بخش‌اند: اگر wp_get_environment_type روزی مقدار عجیبی برگرداند
++// یا ثابت درست تنظیم نشده باشد، نباید اندپوینت باز شود.
++
++mrd_assert('an empty environment string is treated as production', $allow('', 'x', 'x'), true);
++// ↑ با توکن درست مجاز است؛ ولی بدون توکن باید بسته باشد:
++mrd_assert('an empty environment string without a token is denied', $allow('', '', ''), false);
++
++mrd_assert('an unknown environment name requires the token', $allow('qa', '', ''), false);
++mrd_assert('an unknown environment name works with the token', $allow('qa', 't', 't'), true);
++
++// مقدارهایی که می‌توانند به‌اشتباه «محیط توسعه» تلقی شوند.
++mrd_assert('the literal string production is never treated as development', $allow('production', '', ''), false);
++mrd_assert('a near-miss environment name is not allowed', $allow('productionn', '', ''), false);
++mrd_assert('the word dev is not in the allow-list', $allow('dev', '', ''), false);
++
++// ─── ۵) پوشش وردپرسی ───────────────────────────────────────────────────────
++//
++// health_access_allowed() همان منطق را با خواندن محیط/توکن از وردپرس صدا
++// می‌زند. اینجا فقط مسیر «توکن از گزینه» آزموده می‌شود (محیط را نمی‌توان بدون
++// وردپرس عوض کرد، پس روی production نمی‌مانیم).
++
++$GLOBALS['mrd_test_options']['mrdastbaaf_health_token'] = 'option-token';
++
++mrd_assert(
++    'health_token reads the option',
++    MrDastbaaf_Auth_Controller::health_token(),
++    'option-token'
++);
++
++// ثابت wp-config باید بر گزینه اولویت داشته باشد.
++define('MRDASTBAAF_HEALTH_TOKEN', 'constant-token');
++mrd_assert(
++    'health_token prefers the wp-config constant over the option',
++    MrDastbaaf_Auth_Controller::health_token(),
++    'constant-token'
++);
++
++// نبود WP_ENVIRONMENT_TYPE ⇒ امن‌ترین فرض (production).
++mrd_assert(
++    'environment_type falls back to production when WordPress cannot tell',
++    MrDastbaaf_Auth_Controller::environment_type(),
++    'production'
++);
++
++echo "\n---- result ----\n";
++echo "PASS: {$pass}\n";
++echo "FAIL: {$fail}\n";
++
++exit($fail > 0 ? 1 : 0);
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-order-status.php b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-order-status.php
+new file mode 100644
+index 0000000..3c726be
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-order-status.php
+@@ -0,0 +1,248 @@
++<?php
++/**
++ * تست وضعیت سفارش (test-order-status) — بدون وردپرس
++ *
++ * اجرا: php tests/php/test-order-status.php
++ *
++ * پوشش:
++ *   - is_paid_status()      فقط `completed` یعنی پول گرفته شده
++ *   - is_terminal_status()  پولینگ بعد از این وضعیت‌ها بی‌فایده است
++ *   - validate_order_id()   الگوی شناسهٔ مسیر
++ *   - format_order_for_client()  شکل پاسخ، و کلیدهای مخصوص پولینگ
++ *
++ * ─── چرا مهم است ───
++ * دو خطای ممکن اینجا هر دو به ضرر کاربر است:
++ *   ۱) اگر `verifying` را «پرداخت‌شده» حساب کنیم، اپی که پرداختش رد می‌شود
++ *      پیام موفقیت می‌بیند.
++ *   ۲) اگر `isTerminal` برای `pending` درست شود، پولینگ زودتر از موعد متوقف
++ *      می‌شود و کاربری که در حال پرداخت است، صفحهٔ «ناموفق» می‌بیند.
++ * تست هر دو جهت را قفل می‌کند.
++ */
++
++define('ABSPATH', '/tmp/');
++define('MRDASTBAAF_API_NAMESPACE', 'mrdastbaaf/v1');
++
++if (!defined('MINUTE_IN_SECONDS')) {
++    define('MINUTE_IN_SECONDS', 60);
++}
++if (!defined('HOUR_IN_SECONDS')) {
++    define('HOUR_IN_SECONDS', 3600);
++}
++if (!defined('DAY_IN_SECONDS')) {
++    define('DAY_IN_SECONDS', 86400);
++}
++
++require_once __DIR__ . '/../../includes/class-payment-controller.php';
++
++$pass = 0;
++$fail = 0;
++
++function mrd_assert($label, $actual, $expected) {
++    global $pass, $fail;
++    if ($actual === $expected) {
++        $pass++;
++        echo "PASS: {$label}\n";
++    } else {
++        $fail++;
++        echo "FAIL: {$label} — expected: " . var_export($expected, true) . " | got: " . var_export($actual, true) . "\n";
++    }
++}
++
++$controller = new MrDastbaaf_Payment_Controller();
++
++// ─── ۱) پرداخت‌شده؟ ────────────────────────────────────────────────────────
++
++mrd_assert('completed is paid', MrDastbaaf_Payment_Controller::is_paid_status('completed'), true);
++mrd_assert('pending is not paid', MrDastbaaf_Payment_Controller::is_paid_status('pending'), false);
++mrd_assert('verifying is NOT paid (it is a transient state)', MrDastbaaf_Payment_Controller::is_paid_status('verifying'), false);
++mrd_assert('failed is not paid', MrDastbaaf_Payment_Controller::is_paid_status('failed'), false);
++mrd_assert('cancelled is not paid', MrDastbaaf_Payment_Controller::is_paid_status('cancelled'), false);
++mrd_assert('rejected is not paid', MrDastbaaf_Payment_Controller::is_paid_status('rejected'), false);
++mrd_assert('an empty status is not paid', MrDastbaaf_Payment_Controller::is_paid_status(''), false);
++mrd_assert('the check is case sensitive', MrDastbaaf_Payment_Controller::is_paid_status('Completed'), false);
++
++// ─── ۲) پایانی؟ ────────────────────────────────────────────────────────────
++
++mrd_assert('completed is terminal', MrDastbaaf_Payment_Controller::is_terminal_status('completed'), true);
++mrd_assert('failed is terminal', MrDastbaaf_Payment_Controller::is_terminal_status('failed'), true);
++mrd_assert('cancelled is terminal', MrDastbaaf_Payment_Controller::is_terminal_status('cancelled'), true);
++mrd_assert('rejected is terminal', MrDastbaaf_Payment_Controller::is_terminal_status('rejected'), true);
++
++// این دو مهم‌اند: توقف پولینگ روی آن‌ها کاربر را در حالت «ناموفق» رها می‌کند.
++mrd_assert('pending is NOT terminal (the user may still pay)', MrDastbaaf_Payment_Controller::is_terminal_status('pending'), false);
++mrd_assert('verifying is NOT terminal (it may still resolve)', MrDastbaaf_Payment_Controller::is_terminal_status('verifying'), false);
++mrd_assert('an empty status is not terminal', MrDastbaaf_Payment_Controller::is_terminal_status(''), false);
++mrd_assert('an unknown status is not terminal', MrDastbaaf_Payment_Controller::is_terminal_status('whatever'), false);
++
++// ─── ۳) اعتبارسنجی شناسهٔ سفارش ────────────────────────────────────────────
++
++mrd_assert('a normal id is valid', $controller->validate_order_id('abc123'), true);
++mrd_assert('hyphens and underscores are valid', $controller->validate_order_id('A-b_c-9'), true);
++mrd_assert('a 64 character id is valid', $controller->validate_order_id(str_repeat('a', 64)), true);
++mrd_assert('a 65 character id is invalid', $controller->validate_order_id(str_repeat('a', 65)), false);
++mrd_assert('an empty id is invalid', $controller->validate_order_id(''), false);
++mrd_assert('a slash is invalid', $controller->validate_order_id('a/b'), false);
++mrd_assert('a dot is invalid', $controller->validate_order_id('a.b'), false);
++mrd_assert('a space is invalid', $controller->validate_order_id('a b'), false);
++mrd_assert('a newline is invalid', $controller->validate_order_id("a\nb"), false);
++mrd_assert('a percent is invalid', $controller->validate_order_id('a%2Fb'), false);
++mrd_assert('persian digits are invalid (ids are ascii)', $controller->validate_order_id('۱۲۳'), false);
++
++// ─── ۴) شکل پاسخ ───────────────────────────────────────────────────────────
++
++/**
++ * ساخت ردیف سفارش آزمایشی.
++ */
++function mrd_order_row($overrides = array()) {
++    return (object) array_merge(array(
++        'id' => 'ord-1',
++        'order_number' => 'MD-1001',
++        'item_title' => 'اشتراک طلایی',
++        'amount_toman' => 490000,
++        'gateway' => 'zibal',
++        'status' => 'pending',
++        'created_at' => '2026-10-16 08:00:00',
++        'updated_at' => '2026-10-16 08:05:00',
++        'verified_at' => null,
++        'zibal_ref_number' => null,
++        'admin_review_note' => null,
++    ), $overrides);
++}
++
++// شکل پایه — باید **مو‌به‌مو** همان چیزی باشد که /me/orders برمی‌گرداند.
++$base = MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row());
++
++mrd_assert('the base shape is unchanged (key order included)', $base, array(
++    'id' => 'ord-1',
++    'orderNumber' => 'MD-1001',
++    'itemTitle' => 'اشتراک طلایی',
++    'amountToman' => 490000,
++    'gateway' => 'zibal',
++    'status' => 'pending',
++    'createdAt' => '2026-10-16 08:00:00',
++    'verifiedAt' => null,
++    'refNumber' => null,
++));
++
++// کلیدهای مخصوص پولینگ نباید در پاسخ فهرست ظاهر شوند.
++mrd_assert('the base shape has no isPaid key', array_key_exists('isPaid', $base), false);
++mrd_assert('the base shape has no updatedAt key', array_key_exists('updatedAt', $base), false);
++
++mrd_assert(
++    'a null verified_at maps to null, not an empty string',
++    MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array('verified_at' => null)))['verifiedAt'],
++    null
++);
++mrd_assert(
++    'a set verified_at is passed through',
++    MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array('verified_at' => '2026-10-16 09:00:00')))['verifiedAt'],
++    '2026-10-16 09:00:00'
++);
++mrd_assert(
++    'a null ref number maps to null',
++    MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array('zibal_ref_number' => null)))['refNumber'],
++    null
++);
++mrd_assert(
++    'the amount is cast to int',
++    MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array('amount_toman' => '490000')))['amountToman'],
++    490000
++);
++
++// ─── ۵) یادداشت ادمین — فقط در یک حالت ────────────────────────────────────
++
++mrd_assert(
++    'adminNote is exposed for a rejected card-to-card receipt',
++    MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array(
++        'gateway' => 'card_to_card',
++        'status' => 'rejected',
++        'admin_review_note' => 'مبلغ واریزی با مبلغ سفارش مطابقت ندارد.',
++    )))['adminNote'],
++    'مبلغ واریزی با مبلغ سفارش مطابقت ندارد.'
++);
++
++mrd_assert(
++    'adminNote is NOT exposed for a rejected zibal payment',
++    array_key_exists('adminNote', MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array(
++        'gateway' => 'zibal',
++        'status' => 'rejected',
++        'admin_review_note' => 'یادداشت داخلی',
++    )))),
++    false
++);
++
++mrd_assert(
++    'adminNote is NOT exposed for an approved card-to-card receipt',
++    array_key_exists('adminNote', MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array(
++        'gateway' => 'card_to_card',
++        'status' => 'completed',
++        'admin_review_note' => 'یادداشت داخلی',
++    )))),
++    false
++);
++
++mrd_assert(
++    'adminNote is NOT exposed when the note is empty',
++    array_key_exists('adminNote', MrDastbaaf_Payment_Controller::format_order_for_client(mrd_order_row(array(
++        'gateway' => 'card_to_card',
++        'status' => 'rejected',
++        'admin_review_note' => '',
++    )))),
++    false
++);
++
++mrd_assert(
++    'adminNote can be suppressed explicitly',
++    array_key_exists('adminNote', MrDastbaaf_Payment_Controller::format_order_for_client(
++        mrd_order_row(array('gateway' => 'card_to_card', 'status' => 'rejected', 'admin_review_note' => 'x')),
++        array('admin_note' => false)
++    )),
++    false
++);
++
++// ─── ۶) حالت پولینگ ────────────────────────────────────────────────────────
++
++$polling = MrDastbaaf_Payment_Controller::format_order_for_client(
++    mrd_order_row(array('status' => 'completed', 'verified_at' => '2026-10-16 09:00:00')),
++    array('polling' => true)
++);
++
++mrd_assert('polling adds isPaid', $polling['isPaid'], true);
++mrd_assert('polling adds isTerminal', $polling['isTerminal'], true);
++mrd_assert('polling adds updatedAt', $polling['updatedAt'], '2026-10-16 08:05:00');
++
++$polling_pending = MrDastbaaf_Payment_Controller::format_order_for_client(
++    mrd_order_row(array('status' => 'pending')),
++    array('polling' => true)
++);
++mrd_assert('a pending order is not paid', $polling_pending['isPaid'], false);
++mrd_assert('a pending order is not terminal — keep polling', $polling_pending['isTerminal'], false);
++
++$polling_verifying = MrDastbaaf_Payment_Controller::format_order_for_client(
++    mrd_order_row(array('status' => 'verifying')),
++    array('polling' => true)
++);
++mrd_assert('a verifying order is not paid', $polling_verifying['isPaid'], false);
++mrd_assert('a verifying order is not terminal — keep polling', $polling_verifying['isTerminal'], false);
++
++mrd_assert(
++    'a null updated_at maps to null',
++    MrDastbaaf_Payment_Controller::format_order_for_client(
++        mrd_order_row(array('updated_at' => null)),
++        array('polling' => true)
++    )['updatedAt'],
++    null
++);
++
++// شکل پایه در حالت پولینگ هم باید همان ۹ کلید اول را داشته باشد.
++mrd_assert(
++    'the polling shape is the base shape plus three keys',
++    array_keys($polling),
++    array('id', 'orderNumber', 'itemTitle', 'amountToman', 'gateway', 'status', 'createdAt', 'verifiedAt', 'refNumber', 'updatedAt', 'isPaid', 'isTerminal')
++);
++
++echo "\n---- result ----\n";
++echo "PASS: {$pass}\n";
++echo "FAIL: {$fail}\n";
++
++exit($fail > 0 ? 1 : 0);
+-- 
+2.55.0.windows.3
+

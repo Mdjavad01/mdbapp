@@ -1,6 +1,6 @@
 # Server-side changes — plugin v1.8.0
 
-Four independent, reviewable changes to the WordPress bridge
+Five independent, reviewable changes to the WordPress bridge
 (`wordpress-plugin/mrdastbaaf-bridge/`) that the Android app depends on.
 
 Base: `70a04b1` (upstream `main`, plugin **1.7.13**, schema **1.5.1**)
@@ -19,37 +19,45 @@ GitHub token cannot create a fork (`403 Resource not accessible by personal
 access token`). So the changes are delivered as a `git format-patch` series,
 which is permission-free and applies directly.
 
-To turn these into PRs, either:
+The series has been verified end to end:
 
-1. **Fork the repo yourself**, then
-   `git push <your-fork> feat/plugin-multi-device-tokens` etc. — the branches
-   exist in the working copy at `D:\work-webs\0 Build\mrdb-server`; or
-2. **Apply the series and push branches** (see below) and open the PRs from
-   your own account.
+- applies cleanly to a pristine checkout of upstream `main`, in order
+- reproduces the branch tree **byte-for-byte** (tree hash `78de9a6`)
+- the patched tree lints clean and passes all **324** assertions
 
-The series has been verified: it applies cleanly to a pristine checkout of
-`main`, reproduces the branch tree **byte-for-byte** (identical tree hash
-`08ae19b`), and passes the full test suite.
+To turn these into PRs, fork the repo yourself and push the branches — they
+exist in the working copy at `D:\work-webs\0 Build\mrdb-server`:
+
+```
+feat/plugin-multi-device-tokens
+feat/plugin-playback-position
+feat/plugin-video-type-watermark-name
+feat/plugin-signed-urls
+feat/plugin-health-and-order-status
+```
 
 ---
 
-## The four changes
+## The five changes
 
 | # | Patch | What it does | Tests |
 |---|---|---|---|
-| 1 | `0001-feat-auth-multi-device-Bearer-tokens…` | Multi-device tokens. Replaces the single per-user usermeta slot (which made signing in on the phone sign the user out of the web app) with a `wp_mrdastbaaf_api_tokens` table, max 3 devices, oldest revoked. Adds `GET/DELETE /auth/sessions`. | 40 |
+| 1 | `0001-feat-auth-multi-device-Bearer-tokens…` | Multi-device tokens. Replaces the single per-user usermeta slot (which made signing in on the phone sign the user out of the web app) with a `wp_mrdastbaaf_api_tokens` table, max 3 devices, oldest revoked. Adds `GET/DELETE /auth/sessions`. | 79 |
 | 2 | `0002-feat-progress-lesson-playback-position…` | `GET/PUT /lessons/{id}/progress`. Stores a playback position per user+lesson, resumes where the user stopped, auto-completes at 95%. | 33 |
 | 3 | `0003-feat-playback-truthful-streamType-videoType…` | Corrects `streamType` (was hard-coded `"hls"` while serving MP4), adds `videoType` and per-quality `type`, adds `watermarkFullName`. | 16 |
-| 4 | `0004-feat-playback-expiring-signed-URLs…` | Replaces the **permanent** CDN URL with a short-lived signed URL (nginx `secure_link`). Ships the nginx config and the migration note. | 43 |
+| 4 | `0004-feat-playback-expiring-signed-URLs-via-a-PHP-gateway…` | Replaces the **permanent** CDN URL with a short-lived signed URL served through a PHP gateway (`s.php`) on the download host. Ships the gateway, the `.htaccess` and the Apache runbook. | 114 |
+| 5 | `0005-feat-api-restrict-auth-health-add-GET-payment-order…` | Restricts `GET /auth/health` to a token in production; adds `GET /payment/order/{orderId}` for post-payment polling. | 71 |
 
-Total: **143 assertions**, all passing.
+Total: **324 assertions** across seven test files.
 
 Each patch also contains its own contract document under `docs/`:
 
-- `docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md`
-- `docs/PLUGIN_v1.8.0_PLAYBACK_POSITION.md`
-- `docs/PLUGIN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md`
-- `docs/NGINX_SIGNED_URLS.md` + `docs/DLL_HOST_NGINX_SIGNED_URLS.sample`
+- `PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md`
+- `PLUGIN_v1.8.0_PLAYBACK_POSITION.md`
+- `PLUGIN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md`
+- `APACHE_SIGNED_URLS.md` (plus `gateway/htaccess.sample`,
+  `gateway/signed-url-config.php.sample`)
+- `PLUGIN_v1.8.0_HEALTH_AND_ORDER_STATUS.md`
 
 ---
 
@@ -63,8 +71,8 @@ git checkout -b feat/plugin-v1.8.0
 git -c am.keepcr=false am /path/to/server-changes/*.patch
 ```
 
-`am.keepcr=false` matters: the plugin files use LF, and without it the
-CRLF settings on Windows can corrupt the whitespace in the diffs.
+`am.keepcr=false` matters: the plugin files use LF, and without it the CRLF
+settings on Windows can corrupt the whitespace in the diffs.
 
 To apply them one at a time (recommended for review):
 
@@ -85,7 +93,7 @@ git revert <sha>
 ## Running the tests
 
 The tests are plain PHP with no WordPress and no PHPUnit — they exercise the
-pure functions only, so they run anywhere:
+pure functions plus a small in-memory `$wpdb` double, so they run anywhere:
 
 ```bash
 cd wordpress-plugin/mrdastbaaf-bridge
@@ -105,44 +113,42 @@ date.timezone = UTC
 Expected output:
 
 ```
-TOTAL PASS: 143
+TOTAL PASS: 324
 TOTAL FAIL: 0
 FAILED FILES: 0
 ```
 
-**Not covered by unit tests:** anything that needs a live `$wpdb` — the
-token store's `issue`/`find_by_token`/`revoke`/`enforce_device_limit`, the
-progress controller's SQL, and the settings round-trips. A manual staging
+**Not covered by unit tests:** anything that needs a live `$wpdb` — the token
+store's real `issue`/`find_by_token` SQL (the tests use an in-memory double
+that only understands the queries the class issues), the progress controller's
+SQL, `handle_get_order`, and the settings round-trips. A manual staging
 checklist for those is in each contract document.
 
 ---
 
 ## Deployment order (read before merging change 4)
 
-Change 4 is the only one with a **server configuration** dependency, and it
-is order-sensitive:
+Change 4 is the only one with a **server configuration** dependency, and the
+order is not negotiable. The gateway must be live before PHP starts signing,
+and direct access must be blocked last.
 
-1. Merge and deploy the plugin **with signing still disabled** — it defaults
-   to off, and when off it is a no-op. Nothing changes for users.
-2. Put the shared secret in `wp-config.php`:
+1. **Deploy the gateway** to the download host (`dll.mrdastbaaf.com`):
+   `s.php`, `SignedUrlGateway.php`, `signed-url-core.php`, and a
+   `signed-url-config.php` with the shared secret and `media_root`.
+   Do **not** touch `.htaccess` yet.
+2. **Turn signing on in the plugin** — set `mrdastbaaf_signed_url_gateway` to
+   `https://dll.mrdastbaaf.com/s.php`, set `mrdastbaaf_signed_urls_enabled`,
+   and put `MRDASTBAAF_SIGNED_URL_SECRET` in `wp-config.php` with the same
+   value as the gateway config. Verify playback still works.
+3. **Only then block direct access** — install `gateway/htaccess.sample` as
+   `.htaccess` in the media root. This supersedes the Referer-based
+   `docs/DLL_HOST_HTACCESS.sample`, which a forged header defeats.
+4. **Verify**: direct access 403, forged-Referer access 403, a real signed URL
+   200, and a `Range` request 206.
 
-   ```php
-   define('MRDASTBAAF_SIGNED_URL_SECRET', '<same value as in nginx>');
-   ```
-
-3. Update the nginx config on the download host
-   (`docs/DLL_HOST_NGINX_SIGNED_URLS.sample`), but **leave enforcement
-   commented out**. Reload.
-4. Enable signing in the plugin. Now every playback URL is signed, but nginx
-   is not yet checking — so nothing can break.
-5. Verify a signature in the access log, then uncomment enforcement and
-   reload nginx.
-6. Confirm that a URL **without** the signature is now refused.
-
-Doing 5 before 4 is what causes a total outage: nginx would reject every
-request because PHP is not yet attaching a signature. The full runbook,
-including rollback and the 403 troubleshooting table, is in
-`docs/NGINX_SIGNED_URLS.md`.
+Doing step 3 before step 2 causes a total outage: every request is refused
+because PHP is not yet attaching a signature. The full runbook, including
+rollback and a 403 troubleshooting table, is in `docs/APACHE_SIGNED_URLS.md`.
 
 ---
 
@@ -161,25 +167,31 @@ legacy meta is then deleted. **No user is signed out by the upgrade** — which
 matters here, because users are logged into the web app and buying
 subscriptions through it.
 
-**Change 4 does not touch the database at all.**
+**Changes 4 and 5 do not touch the database at all.**
 
-**Change 3 is additive.** Every pre-existing response key is unchanged, so
-the shipped PWA 1.5.6 is unaffected by all four changes.
+**Change 5 changes a public endpoint's behaviour.** `GET /auth/health` stops
+answering in production unless a token is configured. Nothing in the web app
+or the PWA calls it, so this should be invisible — but if any uptime monitor
+is watching it, that monitor will start seeing 404s. Set
+`MRDASTBAAF_HEALTH_TOKEN` and add `?token=` if so.
+
+**Changes 3 and 5 are additive** to existing response shapes. Every
+pre-existing key is unchanged, so the shipped PWA 1.5.6 is unaffected by all
+five changes.
 
 ---
 
 ## What still needs doing on the server
 
-Not part of these four, still open:
+Not part of these five, still open:
 
-- **HLS + AES-128 packaging.** The download host now hands out expiring URLs,
-  which closes the "capture it once, download forever" hole. It does not stop
-  a determined user from pulling the file while their session is live. Real
+- **HLS + AES-128 packaging.** The gateway now hands out expiring URLs, which
+  closes the "capture it once, download forever" hole. It does not stop a
+  determined user from pulling the file while their session is live. Real
   protection needs segment-level signing, which needs HLS.
 - **Playback session + heartbeat** (`POST /lessons/{id}/session`). Needed for
   concurrent-stream limits and for the app's foreground re-validation.
-- `GET /payment/order/{orderId}` for post-payment polling.
-- Restrict `GET /auth/health` in production — it is public and reports host
-  internals.
+- Multi-device is capped at 3 with no user-visible device list in the app yet
+  (the endpoints exist: `GET/DELETE /auth/sessions`).
 
 See `docs/API_REVIEW_AND_PLAN.md` in the app repo for the full list.

@@ -1,7 +1,7 @@
-From b27f1fa803139b3bfbb7acbe8bee8c029f37946b Mon Sep 17 00:00:00 2001
+From 849c83d4a43118566d1178416a5bbe7aadfa5079 Mon Sep 17 00:00:00 2001
 From: Mdjavad2nd prf <md.javad01@gmail.com>
 Date: Fri, 16 Oct 2026 19:54:20 +0330
-Subject: [PATCH] feat(progress): lesson playback position GET/PUT (v1.8.0,
+Subject: [PATCH 2/5] feat(progress): lesson playback position GET/PUT (v1.8.0,
  schema 1.7.0)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -979,3 +979,6 @@ index 0000000..19f1a2e
 +echo "FAIL: {$fail}\n";
 +
 +exit($fail > 0 ? 1 : 0);
+-- 
+2.55.0.windows.3
+

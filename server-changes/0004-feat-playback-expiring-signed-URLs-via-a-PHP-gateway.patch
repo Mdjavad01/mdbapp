@@ -1,0 +1,2651 @@
+From da723fa4f172f203f41981b09d3cfd1cab443144 Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Sat, 17 Oct 2026 00:27:56 +0330
+Subject: [PATCH 4/5] feat(playback): expiring signed URLs via a PHP gateway
+ (v1.8.0, Apache)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Release blocker. POST /lessons/{id}/playback returned a PERMANENT url
+(https://dll.mrdastbaaf.com/FA/lesson-01.mp4). Anyone who captured it once —
+from the Network tab, a proxy log, a screenshot — could download the file
+forever, with no login. The only protection was Referer-based hotlink
+blocking, defeated by a forged header.
+
+Playback URLs are now short-lived and signed:
+
+  https://dll.mrdastbaaf.com/s.php?f=%2FFA%2Flesson-01.mp4&e=1800000000&u=42&t=<hmac>
+                                    path        expiry          userId     signature
+
+s.php verifies the signature, resolves the path safely, and streams the file
+with full Range support.
+
+This replaces an earlier draft of this change that relied on nginx's
+secure_link module. The download host is Apache 2.4.67, so the verification
+moved into PHP. That is not a cosmetic difference: nginx would have served
+the bytes statically, whereas the gateway reads and writes them itself, so
+Range, Content-Length, Content-Type and output buffering all become our
+responsibility. The gateway does all four explicitly.
+
+Signature:
+  message   = "<percent-DECODED path>|<expiry>|<userId>"
+  signature = hash_hmac('sha256', message, secret)     // hex, 64 chars
+
+Design decisions worth reviewing:
+
+- ONE implementation, two consumers. gateway/signed-url-core.php holds the
+  pure algorithm and is included by BOTH the plugin and the gateway. The
+  plugin's service class now does no cryptography of its own. Two independent
+  implementations would eventually drift, and the symptom would be every
+  stream 403ing in production. A test pins the two sides equal.
+
+- The signature is over the DECODED path while the URL carries the encoded
+  one. Every filename in this project is Persian, so signing the encoded form
+  would invalidate every signature. Pinned by a test.
+
+- Hex, not base64. base64 puts +, / and = into a query string, where each has
+  a different meaning. The gateway also parses QUERY_STRING by hand instead of
+  reading $_GET, because PHP turns '+' into a space in $_GET while
+  rawurlencode emits %2B — so a filename containing '+' round-trips exactly.
+
+- Path safety is four layers: null bytes rejected, any ".." segment rejected
+  (after normalising backslashes), a closed extension allow-list, and a
+  final realpath containment check that also catches symlinks. A valid
+  signature is NOT authorisation to read any file: a correctly signed
+  traversal still 404s.
+
+- Rollout order is gateway first, signing flag second, block direct access
+  LAST. If nginx-style enforcement goes in before PHP starts signing, every
+  stream 403s. is_enabled() therefore requires BOTH the flag and a configured
+  gateway URL, defaults to OFF, and maybe_sign() is a no-op when off — so the
+  call site needs no guard and enabling without configuring cannot emit a
+  broken URL.
+
+- The secret comes from MRDASTBAAF_SIGNED_URL_SECRET in wp-config.php when
+  defined, falling back to an option. Keeping it out of the options table
+  keeps it out of database backups and out of alloptions on every request.
+
+- Expiry is capped at 24h so a misconfiguration cannot quietly restore a
+  permanent URL, and the gateway re-checks that ceiling independently.
+
+- The response gains signedUrls (bool) so support can tell "no signature"
+  from "bad signature" without shell access.
+
+Scope: only /playback output is signed. Proxy mode is untouched and
+proxyMode:true remains unsupported by the client by agreement.
+
+Deliverables:
+- gateway/s.php, gateway/SignedUrlGateway.php, gateway/signed-url-core.php
+- gateway/signed-url-config.php.sample, gateway/htaccess.sample
+- docs/APACHE_SIGNED_URLS.md — deployment, the four-step rollout, verification
+  commands, rollback, and a 403 troubleshooting table
+- docs/DLL_HOST_INSTALL.md and docs/DLL_HOST_HTACCESS.sample are marked
+  superseded so nobody keeps maintaining the Referer approach
+
+Tests: tests/php/test-signed-urls.php — 114 assertions: the fixed vector
+cross-checked against an independent Python implementation, the Persian-path
+vector, per-input sensitivity, encoded-vs-decoded divergence, the full
+build->parse->verify round trip, traversal (including backslash and symlink),
+the extension allow-list, every Range branch including 416, gateway status
+codes, and the plugin/gateway drift guard.
+
+Four assertions failed on first run and every one was my expectation, not the
+code: base64 padding, parse_url on a non-URL, the expiry arithmetic, and one
+test that used the test's secret instead of the plugin's generated one. Each
+was verified against the runtime and the test corrected.
+
+Suite total: 324 assertions across seven files.
+
+Honest limits, also stated in the runbook: a user who is watching can still
+capture the stream; the URL is reusable until it expires; and the gateway adds
+PHP load per Range request (X-Sendfile is the upgrade path if that ever
+becomes the bottleneck). Real segment-level protection needs HLS, which is not
+built yet.
+---
+ docs/APACHE_SIGNED_URLS.md                    | 279 +++++++
+ docs/DLL_HOST_HTACCESS.sample                 |  11 +
+ docs/DLL_HOST_INSTALL.md                      |   5 +
+ .../gateway/SignedUrlGateway.php              | 321 +++++++
+ .../mrdastbaaf-bridge/gateway/htaccess.sample | 101 +++
+ .../mrdastbaaf-bridge/gateway/s.php           |  63 ++
+ .../gateway/signed-url-config.php.sample      |  86 ++
+ .../gateway/signed-url-core.php               | 496 +++++++++++
+ .../includes/class-courses-controller.php     |  18 +-
+ .../includes/class-signed-url-service.php     | 241 ++++++
+ .../mrdastbaaf-bridge/mrdastbaaf-bridge.php   |   5 +
+ .../tests/php/test-signed-urls.php            | 787 ++++++++++++++++++
+ 12 files changed, 2411 insertions(+), 2 deletions(-)
+ create mode 100644 docs/APACHE_SIGNED_URLS.md
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/gateway/SignedUrlGateway.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/gateway/htaccess.sample
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/gateway/s.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-config.php.sample
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-core.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php
+
+diff --git a/docs/APACHE_SIGNED_URLS.md b/docs/APACHE_SIGNED_URLS.md
+new file mode 100644
+index 0000000..ffb14a6
+--- /dev/null
++++ b/docs/APACHE_SIGNED_URLS.md
+@@ -0,0 +1,279 @@
++# آدرس‌های امضاشدهٔ منقضی‌شونده روی هاست دانلود (Apache) — v1.8.0
++
++> هاست دانلود: cPanel 138 + **Apache 2.4.67** + BitNinja WAF
++> سند پیشین: `docs/DLL_HOST_INSTALL.md` (حفاظت مبتنی بر Referer — **منسوخ**)
++
++---
++
++## ۱. مسئله
++
++`POST /lessons/{id}/playback` یک آدرس **دائمی** برمی‌گرداند:
++
++```
++https://dll.mrdastbaaf.com/FA/lesson-01.mp4
++```
++
++هر کسی که این آدرس را یک‌بار ببیند — از تب Network، از لاگ پروکسی، از یک
++اسکرین‌شات — برای همیشه و بدون ورود می‌تواند ویدیو را دانلود کند. تنها محافظ،
++Hotlink Protection مبتنی بر Referer بود که با یک هدر جعلی دور زده می‌شود.
++
++## ۲. راه‌حل
++
++آدرسی کوتاه‌عمر که به **دروازهٔ PHP** اشاره می‌کند. دروازه پیش از سرو فایل،
++امضا را بررسی می‌کند:
++
++```
++https://dll.mrdastbaaf.com/s.php?f=%2FFA%2Flesson-01.mp4&e=1800000000&u=42&t=<hmac>
++                                     └─ مسیر      └─ انقضا           └─ شناسهٔ کاربر   └─ امضا
++```
++
++### چرا دروازه و نه `secure_link`
++
++طرح اول این تغییر بر پایهٔ ماژول `secure_link` خود **nginx** نوشته شده بود.
++هاست دانلود این پروژه Apache است، پس آن طرح کنار گذاشته شد و اعتبارسنجی به یک
++اسکریپت PHP منتقل شد که خودش فایل را سرو می‌کند.
++
++تفاوت عملی مهم: در مدل nginx، وب‌سرور فایل را **استاتیک** می‌فرستاد و فقط امضا
++را چک می‌کرد. اینجا PHP بایت‌ها را می‌خواند و می‌فرستد — یعنی `Range`، هدرها و
++نوع محتوا را خودمان باید درست انجام دهیم. به همین دلیل دروازه:
++
++- `Range` را کامل پشتیبانی می‌کند (۲۰۶ + `Content-Range`، و ۴۱۶ برای بازهٔ
++  غیرقابل‌ارضا) — بدون این، پلیر نمی‌تواند جلو/عقب ببرد.
++- `Content-Length` دقیق می‌فرستد و بافر/فشرده‌سازی خروجی را خاموش می‌کند
++  (وگرنه طول غلط می‌شود و پلیر Range را اشتباه می‌فهمد).
++- مسیر را با چهار لایه بررسی می‌کند (جزئیات در §۵).
++
++## ۳. قرارداد امضا
++
++```
++message   = "<مسیر decode‌شده>|<انقضا>|<شناسهٔ کاربر>"
++signature = hash_hmac('sha256', message, secret)     // hex، ۶۴ کاراکتر
++```
++
++نمونهٔ ثابت (همین در تست‌ها قفل شده و مستقل با پایتون هم تأیید شده است):
++
++```
++"/FA/lesson-01.mp4|1800000000|42" + secret "test-secret"
++⇒ 101d4a77cbe84329e3b27880f939926f05d12c570d34304ef078ac078343776a
++```
++
++### سه نکتهٔ حیاتی
++
++**۱) امضا روی مسیر decode‌شده است، ولی آدرس مسیر encode‌شده را نگه می‌دارد.**
++نام فایل‌های این پروژه فارسی‌اند و در URL به‌صورت percent-encoded می‌آیند
++(`/FA/درس-اول.mp4` → `%2F%D8%AF...`). اگر یک طرف روی شکل encode‌شده امضا بگذارد
++و طرف دیگر روی decode‌شده، **هیچ امضایی معتبر نیست و همهٔ ویدیوها ۴۰۳ می‌شوند**.
++دروازه پارامتر `f` را با `rawurldecode` می‌خواند.
++
++**۲) خروجی hex است، نه base64.** با base64 کاراکترهای `+`، `/` و `=` وارد
++کوئری‌استرینگ می‌شوند و هر کدام معنای خاصی می‌گیرند. hex این کلاس خطا را حذف
++می‌کند.
++
++**۳) دروازه `QUERY_STRING` را دستی پارس می‌کند، نه `$_GET`.** PHP در `$_GET`
++علامت `+` را به فاصله تبدیل می‌کند؛ ولی `rawurlencode` سمت امضا برای فاصله
++`%20` و برای `+` خودِ `%2B` می‌فرستد. پارس دستی رفت‌وبرگشت را بیت‌به‌بیت دقیق
++نگه می‌دارد و نام فایلی که `+` دارد هم درست کار می‌کند.
++
++### یک پیاده‌سازی، دو مصرف‌کننده
++
++امضا در دو جا ساخته/بررسی می‌شود (افزونه و دروازه). برای اینکه از هم فاصله
++نگیرند، **هر دو یک فایل را include می‌کنند**:
++
++```
++wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-core.php
++```
++
++افزونه (`includes/class-signed-url-service.php`) هیچ محاسبهٔ رمزنگاری‌ای خودش
++انجام نمی‌دهد و کاملاً به این هسته واگذار می‌کند. یک تست اختصاصی هم تساوی دو
++طرف را قفل می‌کند.
++
++## ۴. فایل‌های استقرار
++
++| فایل در ریپو | مقصد روی هاست دانلود |
++|---|---|
++| `gateway/s.php` | `~/public_html/dll.mrdastbaaf.com/s.php` |
++| `gateway/SignedUrlGateway.php` | کنار `s.php` |
++| `gateway/signed-url-core.php` | کنار `s.php` |
++| `gateway/signed-url-config.php.sample` | کپی با نام `signed-url-config.php` و پرکردن مقادیر |
++| `gateway/htaccess.sample` | کپی با نام `.htaccess` در ریشهٔ دامنه (کنار پوشهٔ `FA/`) |
++
++> **توصیهٔ اکید:** `signed-url-config.php` را **بیرون از ریشهٔ وب** بگذارید
++> (مثلاً `~/mrdastbaaf-config/signed-url-config.php`) و مسیرش را با متغیر محیطی
++> `MRD_GATEWAY_CONFIG` به `s.php` بدهید. در آن حالت حتی اگر `.htaccess` اشتباه
++> پیکربندی شود، کلید مشترک لو نمی‌رود.
++
++### کلید مشترک
++
++باید در **دو جا** یکی باشد:
++
++```php
++// wp-config.php  (سمت وردپرس)
++define('MRDASTBAAF_SIGNED_URL_SECRET', 'یک-رشتهٔ-تصادفی-حداقل-۳۲-نویسه');
++```
++
++```php
++// signed-url-config.php  (سمت هاست دانلود)
++'secret' => 'یک-رشتهٔ-تصادفی-حداقل-۳۲-نویسه',
++```
++
++اختیاری، برای اینکه لازم نباشد آدرس دروازه در دیتابیس ذخیره شود:
++
++```php
++// wp-config.php
++define('MRDASTBAAF_SIGNED_URL_GATEWAY', 'https://dll.mrdastbaaf.com/s.php');
++```
++
++**این کلید تنها چیزی است که جلوی ساخت آدرس دلخواه توسط مهاجم را می‌گیرد.**
++اگر لو برود، هر کسی می‌تواند برای هر فایلی آدرس معتبر بسازد — یعنی دقیقاً همان
++وضعیتی که این لایه می‌خواست ببندد. تصادفی و طولانی انتخابش کنید و هرگز در
++گیت کامیت نکنید.
++
++## ۵. ترتیب راه‌اندازی — **حیاتی**
++
++این ترتیب عمدی است. اگر جابه‌جا شود، می‌تواند کل پخش پلتفرم را بخواباند.
++
++### گام ۱ — دروازه را مستقر کنید (بدون بستن چیزی)
++
++1. `s.php`، `SignedUrlGateway.php` و `signed-url-core.php` را آپلود کنید.
++2. `signed-url-config.php` را بسازید و `secret`، `media_root` و بقیه را پر کنید.
++3. **`.htaccess` را هنوز دست نزنید.** دسترسی مستقیم فعلاً باز است.
++4. بررسی کنید که دروازه پاسخ می‌دهد:
++
++   ```bash
++   curl -s -o /dev/null -w "%{http_code}\n" \
++     "https://dll.mrdastbaaf.com/s.php?f=%2FFA%2Flesson-01.mp4&e=1&u=0&t=x"
++   # انتظار: 403  (امضا غلط است — یعنی اسکریپت اجرا می‌شود)
++   ```
++
++   اگر ۴۰۴ گرفتید، `s.php` آپلود نشده یا مسیرش غلط است.
++   اگر ۵۰۰ گرفتید، `signed-url-config.php` پیدا نمی‌شود.
++
++### گام ۲ — امضاگذاری را در افزونه روشن کنید
++
++در وردپرس (پیشخوان → تنظیمات افزونه، یا با `wp option update`):
++
++```
++mrdastbaaf_signed_url_gateway  = https://dll.mrdastbaaf.com/s.php
++mrdastbaaf_signed_urls_enabled = 1
++```
++
++و `MRDASTBAAF_SIGNED_URL_SECRET` را در `wp-config.php` بگذارید.
++
++از این لحظه `POST /lessons/{id}/playback` آدرس دروازه برمی‌گرداند، **ولی
++دسترسی مستقیم هنوز باز است** — پس اگر مشکلی پیش بیاید، مسیر قدیمی هنوز کار
++می‌کند و می‌توانید برگردید.
++
++بررسی:
++
++```bash
++curl -s -X POST "https://mrdastbaaf.com/wp-json/mrdastbaaf/v1/lessons/<lesson-id>/playback" \
++  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
++  -d '{"ticketId":"<ticket>"}' | grep -o 'videoUrl[^,]*'
++# باید با https://dll.mrdastbaaf.com/s.php?f= شروع شود
++```
++
++و پخش را در وب‌اپ/اپ تست کنید.
++
++> **نکته:** اگر پرچم را روشن کنید ولی `mrdastbaaf_signed_url_gateway` را خالی
++> بگذارید، افزونه عمداً «خاموش» می‌ماند و آدرس اصلی را دست‌نخورده برمی‌گرداند.
++> این کار برای این است که هرگز آدرس ناقص ساخته نشود. پس اگر دیدید آدرس‌ها
++> امضا **نمی‌شوند**، اول مقدار دروازه را چک کنید.
++
++### گام ۳ — دسترسی مستقیم را ببندید
++
++فقط بعد از اینکه پخش از مسیر دروازه تأیید شد:
++
++```bash
++cp gateway/htaccess.sample .htaccess   # در ریشهٔ dll.mrdastbaaf.com
++```
++
++> این فایل **جایگزین** `docs/DLL_HOST_HTACCESS.sample` می‌شود (آن یکی مبتنی بر
++> Referer بود). ادغام نکنید — جایگزین کنید.
++>
++> اگر از قبل `.htaccess` دارید، فقط بخش «بستن دسترسی مستقیم» را به آن اضافه
++> کنید.
++
++### گام ۴ — تأیید نهایی
++
++```bash
++# الف) دسترسی مستقیم باید بسته باشد
++curl -s -o /dev/null -w "direct: %{http_code}\n" \
++  "https://dll.mrdastbaaf.com/FA/lesson-01.mp4"
++# انتظار: 403
++
++# ب) با Referer جعلی هم باید بسته باشد (این دقیقاً چیزی است که طرح قبلی نمی‌گرفت)
++curl -s -o /dev/null -w "forged referer: %{http_code}\n" \
++  -H "Referer: https://app.mrdastbaaf.com/" \
++  "https://dll.mrdastbaaf.com/FA/lesson-01.mp4"
++# انتظار: 403
++
++# ج) دروازه با امضای معتبر باید ۲۰۰ بدهد
++curl -s -o /dev/null -w "gateway: %{http_code}\n" "<آدرس امضاشدهٔ واقعی از پاسخ playback>"
++# انتظار: 200
++
++# د) Range باید کار کند (پلیر بدون این نمی‌تواند seek کند)
++curl -s -o /dev/null -w "range: %{http_code}\n" -H "Range: bytes=0-1023" "<آدرس امضاشده>"
++# انتظار: 206
++```
++
++## ۶. عقب‌گرد (Rollback)
++
++به ترتیب معکوس:
++
++1. `.htaccess` را به حالت قبل برگردانید (دسترسی مستقیم باز می‌شود).
++2. `mrdastbaaf_signed_urls_enabled = 0`.
++3. دروازه را می‌توانید سر جایش بگذارید — با خاموش‌بودن پرچم، هیچ آدرسی به آن
++   اشاره نمی‌کند و بی‌اثر است.
++
++**هیچ‌کدام از این گام‌ها به دیتابیس یا دادهٔ کاربر دست نمی‌زنند.** این تغییر
++اسکیما ندارد.
++
++## ۷. عیب‌یابی
++
++| نشانه | علت محتمل | راه‌حل |
++|---|---|---|
++| **همهٔ** پخش‌ها ۴۰۳ | `.htaccess` قبل از روشن‌کردن پرچم فعال شده | `.htaccess` را بردارید، پرچم را روشن کنید، بعد دوباره بگذارید |
++| پخش ۴۰۳، ولی `/s.php` با امضای درست ۲۰۰ می‌دهد | آدرس پخش اصلاً امضا نشده (پرچم خاموش، یا دروازه تنظیم‌نشده) | `mrdastbaaf_signed_url_gateway` را پر کنید |
++| پخش ۴۰۳ و لاگ `bad_signature` | `secret` دو طرف یکی نیست | مقدار wp-config و فایل پیکربندی را مقایسه کنید (فاصله/نقل‌قول اضافه) |
++| پخش ۴۰۳ و لاگ `expired` | ساعت سرورها اختلاف دارد | NTP را روی هر دو هاست بررسی کنید |
++| نام فایل فارسی ۴۰۴ می‌دهد | امضا روی مسیر encode‌شده حساب شده | `signed-url-core.php` باید نسخهٔ همین ریپو باشد (پارامتر `f` با `rawurldecode` خوانده می‌شود) |
++| فایل‌های بزرگ وسط پخش قطع می‌شوند | `max_execution_time` یا بافر خروجی | `set_time_limit(0)` در دروازه هست؛ `mod_deflate` را برای این مسیر خاموش کنید |
++| seek کار نمی‌کند | `Range` به دروازه نمی‌رسد | مطمئن شوید BitNinja WAF هدر `Range` را حذف نمی‌کند |
++| کل سایت ۵۰۰ می‌زند | سینتکس `.htaccess` | `.htaccess` را خالی کنید و بخش‌به‌بخش اضافه کنید؛ `AllowOverride` را چک کنید |
++| تصاویر دوره‌ها ناپدید شده‌اند | بخش کامنت‌شدهٔ تصاویر را فعال کرده‌اید | آن بخش را کامنت کنید، یا آدرس تصاویر را هم امضا کنید |
++
++برای دیدن دلیل دقیق خطاها، `'debug' => true` را در فایل پیکربندی بگذارید و
++`error_log` هاست را ببینید. **دلیل هرگز در پاسخ HTTP ظاهر نمی‌شود** — مهاجم
++نمی‌فهمد «امضا غلط بود» یا «منقضی».
++
++## ۸. امنیت مسیر — چهار لایه
++
++دروازه فقط فایل‌هایی را سرو می‌کند که از هر چهار لایه رد شوند:
++
++1. نویسهٔ `null` در مسیر رد می‌شود.
++2. هر بخش `..` رد می‌شود (پس از یکسان‌سازی `\` به `/` تا تراورسال ویندوزی
++   نگیرد).
++3. پسوند باید در فهرست مجاز باشد (`mp4`, `m3u8`, `ts`, `key`, …). هر چیز
++   دیگری ۴۰۴ می‌گیرد، **حتی با امضای معتبر**.
++4. `realpath` نهایی باید داخل `realpath` ریشهٔ رسانه باشد — این لایه symlink
++   را هم می‌گیرد.
++
++نکتهٔ مهم: **امضا مجوز خواندن هر فایلی نیست.** یک امضای معتبر برای مسیر
++`/FA/../../wp-config.php` هم ۴۰۴ می‌گیرد، چون لایهٔ ۲ قبل از هر چیز آن را رد
++می‌کند.
++
++## ۹. صادقانه — این لایه چه چیزی را نمی‌بندد
++
++- **کاربری که در حال تماشاست می‌تواند فایل را ضبط کند.** دروازه جلوی «گرفتن
++  آدرس و استفادهٔ همیشگی» را می‌گیرد، ولی وقتی کاربر دارد ویدیو را می‌بیند،
++  بایت‌ها به دستگاه او می‌رسند. ضبط صفحه، دانلودر، یا کپچر ترافیک در آن لحظه
++  کار می‌کند. تنها چیزی که این را سخت‌تر می‌کند واترمارک دینامیک است (که در
++  اپ اندروید پیاده شده) و HLS با سگمنت‌های امضاشدهٔ کوتاه‌عمر (که **هنوز
++  ساخته نشده**).
++- **لینک تا پایان TTL (پیش‌فرض ۱۵ دقیقه) قابل استفاده است.** اگر کسی در آن
++  بازه آن را بگیرد، تا انقضا کار می‌کند. کوتاه‌کردن TTL این پنجره را کم می‌کند
++  ولی روی ویدیوهای بلند ریسک قطع پخش دارد.
++- **دروازه بار PHP را بالا می‌برد.** هر درخواست Range یک فرایند PHP است.
++  برای ترافیک بالا، ترکیب بهتر «Apache + X-Sendfile» است که هدرها را در PHP
++  بررسی می‌کند و ارسال بایت‌ها را به وب‌سرور می‌سپارد. اگر روزی به سقف
++  رسیدید، آن مسیر ارتقا است.
+diff --git a/docs/DLL_HOST_HTACCESS.sample b/docs/DLL_HOST_HTACCESS.sample
+index 86d9b3f..44dc021 100644
+--- a/docs/DLL_HOST_HTACCESS.sample
++++ b/docs/DLL_HOST_HTACCESS.sample
+@@ -1,6 +1,17 @@
+ # ===========================================================================
+ # مستر دستباف — حفاظت Hotlink برای dll.mrdastbaaf.com
+ # ---------------------------------------------------------------------------
++# ⚠️ این پیکربندی با آمدن آدرس‌های امضاشده (v1.8.0) **منسوخ** می‌شود.
++#
++# این فایل فقط جلوی Referer جعلی را نمی‌گیرد؛ هر کسی با یک هدر جعلی یا حتی
++# بدون Referer (خط ۳۱) ویدیو را می‌گیرد. در v1.8.0 دسترسی مستقیم کاملاً بسته
++# می‌شود و تنها راه رسیدن به فایل، دروازهٔ s.php است:
++#     wordpress-plugin/mrdastbaaf-bridge/gateway/htaccess.sample
++# و روند مهاجرت در docs/APACHE_SIGNED_URLS.md.
++#
++# تا زمانی که امضاگذاری روشن نشده، این فایل معتبر است. پس از مهاجرت،
++# **این فایل را با gateway/htaccess.sample جایگزین کنید** (نه ادغام).
++# ---------------------------------------------------------------------------
+ # هاست: cPanel 138 + Apache 2.4.67 + BitNinja WAF
+ # اگه روی هاست اشتراکی هستید، این فایل را در ریشهٔ dll.mrdastbaaf.com
+ # (کنار پوشهٔ FA/) به‌عنوان .htaccess قرار دهید.
+diff --git a/docs/DLL_HOST_INSTALL.md b/docs/DLL_HOST_INSTALL.md
+index e273e19..671f216 100644
+--- a/docs/DLL_HOST_INSTALL.md
++++ b/docs/DLL_HOST_INSTALL.md
+@@ -2,6 +2,11 @@
+ 
+ > هاست شما: cPanel 138 + Apache 2.4.67 + BitNinja WAF (60GB package)
+ 
++> ⚠️ **منسوخ با v1.8.0.** حفاظت مبتنی بر Referer (همین سند) با آمدن
++> آدرس‌های امضاشده جایگزین می‌شود، چون با یک هدر جعلی دور زده می‌شود.
++> سند جدید: **`docs/APACHE_SIGNED_URLS.md`**. تا وقتی پرچم امضاگذاری روشن
++> نشده، همین سند معتبر است.
++
+ ---
+ 
+ ## گام ۱ — نصب فایل
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/gateway/SignedUrlGateway.php b/wordpress-plugin/mrdastbaaf-bridge/gateway/SignedUrlGateway.php
+new file mode 100644
+index 0000000..23673b3
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/gateway/SignedUrlGateway.php
+@@ -0,0 +1,321 @@
++<?php
++/**
++ * دروازهٔ سرو رسانه با آدرس امضاشده (v1.8.0) — سمت هاست دانلود (Apache)
++ *
++ * ─── چرا دروازه و نه secure_link ───
++ * نسخهٔ اول این تغییر بر پایهٔ ماژول secure_link خود nginx نوشته شده بود.
++ * هاست دانلود این پروژه **Apache** است، پس آن طرح کنار گذاشته شد و اعتبارسنجی
++ * به یک اسکریپت PHP (s.php) منتقل شد که خودش فایل را سرو می‌کند.
++ *
++ * تفاوت مهم: در مدل nginx، وب‌سرور فایل را استاتیک می‌فرستاد و فقط امضا را
++ * بررسی می‌کرد. اینجا PHP بایت‌ها را می‌خواند و می‌فرستد — یعنی باید خودمان
++ * Range، هدرها و نوع محتوا را درست انجام دهیم. به همین دلیل این کلاس منطق
++ * «تصمیم» را از «ورودی/خروجی HTTP» جدا می‌کند: [evaluate()] خالص و آزمون‌پذیر
++ * است و [serve()] فقط آن را اجرا می‌کند.
++ *
++ * ─── بارگذاری ───
++ * این فایل در دو بافت کار می‌کند:
++ *   - از s.php روی هاست دانلود (بدون وردپرس)
++ *   - از تست‌های PHP (فقط برای توابع خالص)
++ */
++
++if (!defined('ABSPATH') && !defined('MRD_GATEWAY_CONTEXT')) {
++    exit;
++}
++
++if (!defined('MRD_GATEWAY_CONTEXT')) {
++    define('MRD_GATEWAY_CONTEXT', 1);
++}
++
++require_once __DIR__ . '/signed-url-core.php';
++
++if (!class_exists('Mdb_Signed_Url_Gateway')) {
++
++    class Mdb_Signed_Url_Gateway {
++
++        /** اندازهٔ هر بلوک خواندن/نوشتن هنگام استریم. */
++        const CHUNK_SIZE = 262144; // 256 KB
++
++        /**
++         * تصمیم‌گیری برای یک درخواست — بدون هیچ ورودی/خروجی HTTP.
++         *
++         * خروجی یکی از این دو شکل است:
++         *   array('status' => 200|206, 'path' => string, 'range' => array|null, 'reason' => '')
++         *   array('status' => 400|403|404|416, 'reason' => 'code')
++         *
++         * `reason` هرگز به کلاینت فرستاده نمی‌شود؛ فقط برای لاگ است تا بشود
++         * فهمید «۴۰۳ چون امضا غلط بود» با «۴۰۳ چون منقضی بود» فرق دارد، بدون
++         * اینکه به مهاجم هم گفته شود.
++         *
++         * @param array $config
++         * @param array $params  پارامترهای درخواست، **از قبل decode‌شده** (f/e/u/t)
++         * @param int|null $now
++         * @param string   $range_header مقدار خام هدر Range
++         * @return array
++         */
++        public static function evaluate($config, $params, $now = null, $range_header = '') {
++            $secret = isset($config['secret']) ? (string) $config['secret'] : '';
++            $media_root = isset($config['media_root']) ? (string) $config['media_root'] : '';
++            $allowed = isset($config['allowed_extensions']) ? $config['allowed_extensions'] : null;
++            $now = (null === $now) ? time() : (int) $now;
++
++            $f = isset($params['f']) ? (string) $params['f'] : '';
++            $e = isset($params['e']) ? (string) $params['e'] : '';
++            $u = isset($params['u']) ? (string) $params['u'] : '';
++            $t = isset($params['t']) ? (string) $params['t'] : '';
++
++            if ('' === $f || '' === $e || '' === $t || '' === $secret || '' === $media_root) {
++                return array('status' => 400, 'reason' => 'missing_parameters');
++            }
++
++            if (!ctype_digit($e)) {
++                return array('status' => 400, 'reason' => 'malformed_expiry');
++            }
++
++            // «u» می‌تواند ۰ (مهمان) باشد؛ فقط باید عدد باشد.
++            if ('' !== $u && !ctype_digit($u)) {
++                return array('status' => 400, 'reason' => 'malformed_user');
++            }
++
++            $expires = (int) $e;
++            $user_id = ('' === $u) ? 0 : (int) $u;
++
++            // سقف عمر امضا: حتی اگر امضا معتبر باشد، عمری بیش از سقف پذیرفته
++            // نمی‌شود تا یک امضای دزدیده‌شده تا ابد کار نکند.
++            $max_ttl = isset($config['max_ttl_seconds'])
++                ? (int) $config['max_ttl_seconds']
++                : Mdb_Signed_Url_Core::MAX_TTL_SECONDS;
++            if ($max_ttl > 0 && ($expires - $now) > $max_ttl) {
++                return array('status' => 403, 'reason' => 'expiry_beyond_max_ttl');
++            }
++
++            if (!Mdb_Signed_Url_Core::verify($f, $expires, $user_id, $t, $secret, $now)) {
++                // تفکیک «منقضی» از «امضای غلط» فقط برای لاگ.
++                $reason = ($expires <= $now) ? 'expired' : 'bad_signature';
++                return array('status' => 403, 'reason' => $reason);
++            }
++
++            $path = Mdb_Signed_Url_Core::resolve_path($media_root, $f, $allowed);
++            if (null === $path) {
++                return array('status' => 404, 'reason' => 'not_found_or_rejected');
++            }
++
++            $filesize = (int) @filesize($path);
++            $range = Mdb_Signed_Url_Core::parse_range($range_header, $filesize);
++
++            if (Mdb_Signed_Url_Core::RANGE_INVALID === $range) {
++                return array('status' => 416, 'reason' => 'range_not_satisfiable', 'filesize' => $filesize);
++            }
++
++            if (null === $range) {
++                return array('status' => 200, 'path' => $path, 'range' => null, 'reason' => '', 'filesize' => $filesize);
++            }
++
++            return array('status' => 206, 'path' => $path, 'range' => $range, 'reason' => '', 'filesize' => $filesize);
++        }
++
++        /**
++         * اجرای درخواست: تصمیم می‌گیرد، هدر می‌فرستد و بدنه را استریم می‌کند.
++         *
++         * @param array $config
++         * @param array $params
++         * @param array $server  معمولاً $_SERVER
++         */
++        public static function serve($config, $params, $server) {
++            $method = isset($server['REQUEST_METHOD']) ? strtoupper((string) $server['REQUEST_METHOD']) : 'GET';
++            if ('GET' !== $method && 'HEAD' !== $method) {
++                self::respond_error(405, isset($config['debug']) && $config['debug']);
++                return;
++            }
++
++            $range_header = isset($server['HTTP_RANGE']) ? (string) $server['HTTP_RANGE'] : '';
++            $result = self::evaluate($config, $params, null, $range_header);
++            $status = (int) $result['status'];
++
++            if (isset($config['debug']) && $config['debug'] && '' !== $result['reason']) {
++                // فقط در حالت دیباگ و فقط در لاگ سرور — هرگز در پاسخ.
++                error_log('mrdastbaaf gateway: ' . $status . ' ' . $result['reason']);
++            }
++
++            if ($status >= 400) {
++                self::respond_error($status, isset($config['debug']) && $config['debug'], isset($result['filesize']) ? $result['filesize'] : null);
++                return;
++            }
++
++            self::stream_file($config, $result, 'HEAD' === $method);
++        }
++
++        /**
++         * ارسال فایل با پشتیبانی Range.
++         */
++        private static function stream_file($config, $result, $head_only) {
++            $path = $result['path'];
++            $filesize = (int) $result['filesize'];
++            $range = $result['range'];
++
++            $start = (null === $range) ? 0 : (int) $range['start'];
++            $end = (null === $range) ? ($filesize > 0 ? $filesize - 1 : 0) : (int) $range['end'];
++            $length = ($filesize > 0) ? ($end - $start + 1) : 0;
++
++            self::send_headers($config, $path, $filesize, ($result['status'] === 206), $start, $end);
++
++            if ($head_only || 0 === $length) {
++                return;
++            }
++
++            $handle = @fopen($path, 'rb');
++            if (false === $handle) {
++                return; // هدرها رفته‌اند؛ بهترین کار توقف است
++            }
++
++            if ($start > 0) {
++                if (0 !== @fseek($handle, $start)) {
++                    fclose($handle);
++                    return;
++                }
++            }
++
++            // خروجی بافر و فشرده‌سازی باید خاموش باشد وگرنه Content-Length غلط
++            // می‌شود و پلیر Range را اشتباه می‌فهمد.
++            while (ob_get_level() > 0) {
++                @ob_end_clean();
++            }
++            @set_time_limit(0);
++
++            $remaining = $length;
++            while ($remaining > 0 && !feof($handle)) {
++                if (connection_aborted()) {
++                    break;
++                }
++                $read = (int) min(self::CHUNK_SIZE, $remaining);
++                $buffer = fread($handle, $read);
++                if (false === $buffer || '' === $buffer) {
++                    break;
++                }
++                echo $buffer;
++                flush();
++                $remaining -= strlen($buffer);
++            }
++
++            fclose($handle);
++        }
++
++        /**
++         * هدرهای پاسخ.
++         */
++        private static function send_headers($config, $path, $filesize, $partial, $start, $end) {
++            if (headers_sent()) {
++                return;
++            }
++
++            $length = $partial ? ($end - $start + 1) : $filesize;
++
++            header('Content-Type: ' . Mdb_Signed_Url_Core::content_type_for($path));
++            header('Content-Length: ' . (int) $length);
++            header('Accept-Ranges: bytes');
++            header('X-Content-Type-Options: nosniff');
++            // inline تا مرورگر پخش کند، نه دانلود.
++            header('Content-Disposition: inline');
++
++            if ($partial) {
++                header('Content-Range: ' . Mdb_Signed_Url_Core::content_range_header($start, $end, $filesize));
++            }
++
++            $cache_control = isset($config['cache_control'])
++                ? (string) $config['cache_control']
++                : 'private, no-store';
++            if ('' !== $cache_control) {
++                header('Cache-Control: ' . $cache_control);
++            }
++
++            // CORS فقط اگر صراحتاً پیکربندی شده باشد. تگ <video> بدون
++            // crossorigin به هدر CORS نیازی ندارد؛ این گزینه برای وقتی است که
++            // کلاینت با crossorigin="anonymous" درخواست بدهد.
++            $origins = isset($config['allowed_origins']) ? (array) $config['allowed_origins'] : array();
++            if (!empty($origins)) {
++                $origin = isset($_SERVER['HTTP_ORIGIN']) ? (string) $_SERVER['HTTP_ORIGIN'] : '';
++                $allow = '';
++                foreach ($origins as $candidate) {
++                    $candidate = (string) $candidate;
++                    if ('*' === $candidate) {
++                        $allow = '*';
++                        break;
++                    }
++                    if ('' !== $origin && $candidate === $origin) {
++                        $allow = $origin;
++                        break;
++                    }
++                }
++                if ('' !== $allow) {
++                    header('Access-Control-Allow-Origin: ' . $allow);
++                    header('Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges');
++                    header('Vary: Origin');
++                }
++            }
++        }
++
++        /**
++         * پاسخ خطا — پیام عمومی، بدون افشای دلیل واقعی.
++         */
++        private static function respond_error($status, $debug, $filesize = null) {
++            if (416 === (int) $status && null !== $filesize) {
++                if (!headers_sent()) {
++                    header('Content-Range: bytes */' . (int) $filesize);
++                    header('Accept-Ranges: bytes');
++                }
++            }
++
++            if (!headers_sent()) {
++                http_response_code((int) $status);
++                header('Content-Type: text/plain; charset=utf-8');
++                header('X-Content-Type-Options: nosniff');
++                header('Cache-Control: no-store');
++            }
++
++            $messages = array(
++                400 => 'درخواست نامعتبر است.',
++                403 => 'دسترسی به این فایل مجاز نیست یا لینک منقضی شده است.',
++                404 => 'فایل یافت نشد.',
++                405 => 'روش درخواست پشتیبانی نمی‌شود.',
++                416 => 'بازهٔ درخواستی معتبر نیست.',
++            );
++
++            echo isset($messages[(int) $status]) ? $messages[(int) $status] : 'خطا.';
++        }
++
++        /**
++         * خواندن پارامترهای درخواست از QUERY_STRING.
++         *
++         * عمداً از $_GET استفاده نمی‌کنیم: PHP در $_GET علامت «+» را به فاصله
++         * تبدیل می‌کند، ولی rawurlencode در سمت امضا برای فاصله «%20» و برای
++         * «+» خودِ «%2B» می‌فرستد. با پارس‌کردن دستی QUERY_STRING، رفت‌وبرگشت
++         * بیت‌به‌بیت دقیق می‌ماند و نام فایلی که «+» دارد هم درست کار می‌کند.
++         *
++         * @param string $query_string
++         * @return array
++         */
++        public static function parse_query($query_string) {
++            $params = array();
++            $query_string = (string) $query_string;
++
++            if ('' === $query_string) {
++                return $params;
++            }
++
++            foreach (explode('&', $query_string) as $pair) {
++                if ('' === $pair) {
++                    continue;
++                }
++                $eq = strpos($pair, '=');
++                if (false === $eq) {
++                    continue;
++                }
++                $key = rawurldecode(substr($pair, 0, $eq));
++                $value = rawurldecode(substr($pair, $eq + 1));
++                $params[$key] = $value;
++            }
++
++            return $params;
++        }
++    }
++}
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/gateway/htaccess.sample b/wordpress-plugin/mrdastbaaf-bridge/gateway/htaccess.sample
+new file mode 100644
+index 0000000..5a998d9
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/gateway/htaccess.sample
+@@ -0,0 +1,101 @@
++# ---------------------------------------------------------------------------
++# .htaccess برای ریشهٔ رسانهٔ هاست دانلود — v1.8.0
++#
++# این فایل را در همان پوشه‌ای بگذارید که فایل‌های ویدیو در آن هستند
++# (مثلاً ریشهٔ dll.mrdastbaaf.com، کنار پوشهٔ FA/).
++#
++# هدف: **بستن دسترسی مستقیم** به فایل‌های رسانه. تنها راه رسیدن به فایل،
++# دروازهٔ s.php است که امضا را بررسی می‌کند.
++#
++# ⚠️ ترتیب راه‌اندازی: این فایل را **آخر از همه** فعال کنید. اگر قبل از
++# روشن‌کردن پرچم امضاگذاری در افزونه فعالش کنید، هیچ آدرسی امضا ندارد و
++# تمام پخش‌ها ۴۰۳ می‌شوند. جزئیات در docs/APACHE_SIGNED_URLS.md.
++#
++# ⚠️ پیش‌نیاز: در پیکربندی Apache، AllowOverride باید اجازهٔ AuthConfig
++# (یا All) را برای این پوشه بدهد، وگرنه این قواعد نادیده گرفته می‌شوند.
++# ---------------------------------------------------------------------------
++
++# فهرست‌کردن پوشه‌ها خاموش — وگرنه نام همهٔ فایل‌ها قابل شمارش است.
++Options -Indexes
++
++# ---------------------------------------------------------------------------
++# ۱) بستن دسترسی مستقیم به رسانه
++#
++# s.php با این قواعد مسدود نمی‌شود (پسوندش php است، نه رسانه) و باید در دسترس
++# بماند. فایل‌های ویدیو از بیرون ۴۰۳ می‌گیرند و فقط از طریق دروازه سرو می‌شوند.
++# ---------------------------------------------------------------------------
++<FilesMatch "\.(mp4|m4v|mov|webm|mkv|ogv|m3u8|ts|m4s|mpd|key|vtt|srt|mp3|m4a|aac|ogg)$">
++    <IfModule mod_authz_core.c>
++        Require all denied
++    </IfModule>
++    <IfModule !mod_authz_core.c>
++        Order allow,deny
++        Deny from all
++    </IfModule>
++</FilesMatch>
++
++# ---------------------------------------------------------------------------
++# ۲) تصاویر — پیش‌فرض باز می‌مانند
++#
++# تصاویر دوره‌ها (پوستر/بندانگشتی) معمولاً باید عمومی باشند و در فهرست دوره‌ها
++# نمایش داده شوند. اگر آن‌ها را هم از همین هاست سرو می‌کنید و می‌خواهید پشت
++# دروازه بروند، خط زیر را از حالت کامنت دربیاورید.
++# اگر این کار را می‌کنید، مطمئن شوید آدرس تصاویر در پاسخ /courses هم امضا شده
++# است — وگرنه کاتالوگ بی‌تصویر می‌شود.
++# ---------------------------------------------------------------------------
++# <FilesMatch "\.(jpg|jpeg|png|webp)$">
++#     <IfModule mod_authz_core.c>
++#         Require all denied
++#     </IfModule>
++#     <IfModule !mod_authz_core.c>
++#         Order allow,deny
++#         Deny from all
++#     </IfModule>
++# </FilesMatch>
++
++# ---------------------------------------------------------------------------
++# ۳) محافظت از فایل پیکربندی دروازه
++#
++# این فایل کلید مشترک را در خود دارد. اگر بیرون از ریشهٔ وب باشد (توصیه‌شده)
++# این قاعده لازم نیست، ولی به‌عنوان لایهٔ دوم ضرری ندارد.
++# ---------------------------------------------------------------------------
++<Files "signed-url-config.php">
++    <IfModule mod_authz_core.c>
++        Require all denied
++    </IfModule>
++    <IfModule !mod_authz_core.c>
++        Order allow,deny
++        Deny from all
++    </IfModule>
++</Files>
++
++# فایل‌های نمونه و مستندات نباید روی وب‌سرور بمانند.
++<FilesMatch "\.(sample|md|dist)$">
++    <IfModule mod_authz_core.c>
++        Require all denied
++    </IfModule>
++    <IfModule !mod_authz_core.c>
++        Order allow,deny
++        Deny from all
++    </IfModule>
++</FilesMatch>
++
++# فایل‌های مخفی (شامل خود .htaccess و فایل‌های ادیتور).
++<FilesMatch "^\.">
++    <IfModule mod_authz_core.c>
++        Require all denied
++    </IfModule>
++    <IfModule !mod_authz_core.c>
++        Order allow,deny
++        Deny from all
++    </IfModule>
++</FilesMatch>
++
++# ---------------------------------------------------------------------------
++# ۴) هدرهای امنیتی
++# ---------------------------------------------------------------------------
++<IfModule mod_headers.c>
++    Header always set X-Content-Type-Options "nosniff"
++    # اگر پشت پروکسی/CDN هستید، این خط را نگه دارید تا مبدأ واقعی بازنویسی نشود.
++    Header always set X-Frame-Options "SAMEORIGIN"
++</IfModule>
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/gateway/s.php b/wordpress-plugin/mrdastbaaf-bridge/gateway/s.php
+new file mode 100644
+index 0000000..6779cef
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/gateway/s.php
+@@ -0,0 +1,63 @@
++<?php
++/**
++ * s.php — دروازهٔ سرو رسانه با آدرس امضاشده (v1.8.0)
++ *
++ * این فایل روی **هاست دانلود** (Apache) قرار می‌گیرد، نه روی سایت وردپرس.
++ * آدرس پخش ویدیو دیگر مستقیم نیست؛ به این شکل است:
++ *
++ *   https://dll.mrdastbaaf.com/s.php?f=%2FFA%2Flesson-01.mp4&e=1800000000&u=42&t=<hmac>
++ *
++ * ─── چرا اینجا وردپرس بارگذاری نمی‌شود ───
++ * هاست دانلود نصب وردپرس ندارد و نباید داشته باشد. ضمناً بارگذاری وردپرس برای
++ * هر درخواست Range یک پلیر ویدیویی، چند صد میلی‌ثانیه هزینه دارد. پس این اسکریپت
++ * کاملاً مستقل است و کلید مشترک را از یک فایل پیکربندی کنار خودش می‌خواند.
++ *
++ * ─── ترتیب راه‌اندازی (حیاتی) ───
++ * ۱) این فایل + فایل پیکربندی را روی هاست دانلود بگذارید.
++ * ۲) در افزونه، آدرس دروازه را تنظیم و پرچم امضاگذاری را روشن کنید.
++ * ۳) **آخر از همه** دسترسی مستقیم به فایل‌های رسانه را با .htaccess ببندید.
++ *
++ * اگر مرحلهٔ ۳ قبل از ۲ انجام شود، هیچ آدرسی امضا ندارد و همهٔ پخش‌ها ۴۰۳
++ * می‌شوند. جزئیات در docs/APACHE_SIGNED_URLS.md.
++ *
++ * @package mrdastbaaf-bridge
++ */
++
++// بافت دروازه را اعلام می‌کنیم تا فایل‌های هسته بارگذاری شوند.
++define('MRD_GATEWAY_CONTEXT', 1);
++
++require_once __DIR__ . '/SignedUrlGateway.php';
++
++// ─── بارگذاری پیکربندی ───────────────────────────────────────────────────────
++
++$config_path = __DIR__ . '/signed-url-config.php';
++
++// امکان قرار دادن فایل پیکربندی بیرون از ریشهٔ وب (توصیه‌شده).
++$env_config = getenv('MRD_GATEWAY_CONFIG');
++if (is_string($env_config) && '' !== $env_config) {
++    $config_path = $env_config;
++}
++
++$config = null;
++if (is_file($config_path)) {
++    $loaded = require $config_path;
++    if (is_array($loaded)) {
++        $config = $loaded;
++    }
++}
++
++if (null === $config) {
++    http_response_code(500);
++    header('Content-Type: text/plain; charset=utf-8');
++    error_log('mrdastbaaf gateway: configuration missing at ' . $config_path);
++    echo 'پیکربندی دروازه یافت نشد.';
++    exit;
++}
++
++// ─── سرو ─────────────────────────────────────────────────────────────────────
++
++$params = Mdb_Signed_Url_Gateway::parse_query(
++    isset($_SERVER['QUERY_STRING']) ? (string) $_SERVER['QUERY_STRING'] : ''
++);
++
++Mdb_Signed_Url_Gateway::serve($config, $params, $_SERVER);
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-config.php.sample b/wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-config.php.sample
+new file mode 100644
+index 0000000..da9be98
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-config.php.sample
+@@ -0,0 +1,86 @@
++<?php
++/**
++ * پیکربندی دروازهٔ رسانه (نمونه) — v1.8.0
++ *
++ * ─── نصب ───
++ * این فایل را با نام `signed-url-config.php` کنار `s.php` روی هاست دانلود
++ * بگذارید، مقادیر زیر را پر کنید، و **بلافاصله** مطمئن شوید که از بیرون
++ * قابل دانلود نیست (بخش محافظت در docs/APACHE_SIGNED_URLS.md و نمونهٔ
++ * .htaccess).
++ *
++ * توصیهٔ اکید: این فایل را **بیرون از ریشهٔ وب** بگذارید و مسیرش را با متغیر
++ * محیطی MRD_GATEWAY_CONFIG به s.php بدهید. در آن حالت حتی اگر .htaccess اشتباه
++ * پیکربندی شود، کلید لو نمی‌رود.
++ *
++ * @package mrdastbaaf-bridge
++ */
++
++return array(
++
++    /**
++     * کلید مشترک با افزونه — **باید بایت‌به‌بایت یکسان باشد**.
++     *
++     * همان مقداری که در wp-config.php می‌گذارید:
++     *     define('MRDASTBAAF_SIGNED_URL_SECRET', 'همین-مقدار');
++     *
++     * این کلید تنها چیزی است که جلوی ساخت آدرس دلخواه توسط مهاجم را می‌گیرد.
++     * آن را تصادفی و طولانی انتخاب کنید (حداقل ۳۲ نویسه). اگر لو برود، هر کسی
++     * می‌تواند برای هر فایلی آدرس معتبر بسازد — یعنی دقیقاً همان وضعیتی که این
++     * لایه می‌خواست ببندد.
++     */
++    'secret' => 'CHANGE-ME-to-a-long-random-string-shared-with-wordpress',
++
++    /**
++     * ریشهٔ فایل‌های رسانه روی دیسک (مسیر مطلق).
++     *
++     * همهٔ مسیرهای درخواستی نسبت به این ریشه حل می‌شوند و هیچ فایلی بیرون از آن
++     * سرو نمی‌شود (realpath بررسی می‌شود).
++     */
++    'media_root' => '/var/www/dll.mrdastbaaf.com',
++
++    /**
++     * سقف عمر امضا (ثانیه). حتی اگر امضا معتبر باشد، عمری بیش از این پذیرفته
++     * نمی‌شود تا یک آدرس دزدیده‌شده تا ابد کار نکند. پیش‌فرض: ۲۴ ساعت.
++     */
++    'max_ttl_seconds' => 86400,
++
++    /**
++     * پسوندهای مجاز برای سرو.
++     *
++     * فهرست بسته — هر چیزی خارج از این‌ها ۴۰۴ می‌گیرد، حتی اگر امضایش درست
++     * باشد. اگر روزی HLS اضافه شد، 'm3u8'، 'ts' و 'key' از قبل اینجا هستند.
++     */
++    'allowed_extensions' => array(
++        'mp4', 'm4v', 'mov', 'webm', 'mkv', 'ogv',
++        'm3u8', 'ts', 'm4s', 'key', 'mpd',
++        'vtt', 'srt', 'jpg', 'jpeg', 'png', 'webp',
++        'mp3', 'm4a', 'aac', 'ogg',
++    ),
++
++    /**
++     * هدر Cache-Control پاسخ.
++     *
++     * پیش‌فرض `private, no-store` است تا هیچ نسخهٔ میانی ویدیوی پولی را نگه
++     * ندارد. اگر پخش روان‌تر می‌خواهید می‌توانید به
++     * `private, max-age=300` تغییر دهید — امضا خودش منقضی می‌شود، پس خطرش
++     * محدود است. عمومی (public) هرگز نگذارید.
++     */
++    'cache_control' => 'private, no-store',
++
++    /**
++     * مبدأهای مجاز برای CORS — معمولاً لازم نیست.
++     *
++     * تگ <video> بدون ویژگی crossorigin به هدر CORS نیازی ندارد. فقط اگر کلاینت
++     * با crossorigin="anonymous" درخواست بدهد این را پر کنید:
++     *     array('https://app.mrdastbaaf.com'),
++     * یا برای همه: array('*')
++     */
++    'allowed_origins' => array(),
++
++    /**
++     * لاگ تشخیصی. در حالت true، دلیل دقیق خطا (bad_signature / expired / …)
++     * در error_log سرور نوشته می‌شود. **هرگز** در پاسخ HTTP ظاهر نمی‌شود.
++     * برای عیب‌یابی روشن کنید و بعد خاموش بگذارید.
++     */
++    'debug' => false,
++);
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-core.php b/wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-core.php
+new file mode 100644
+index 0000000..61efe00
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/gateway/signed-url-core.php
+@@ -0,0 +1,496 @@
++<?php
++/**
++ * هستهٔ امضای آدرس و منطق خالص دروازه (v1.8.0) — بدون وردپرس
++ *
++ * ─── چرا این فایل جدا است ───
++ * امضا در «دو» جا محاسبه/بررسی می‌شود:
++ *   ۱) افزونه (سمت وردپرس) هنگام ساخت آدرس پخش
++ *   ۲) دروازهٔ s.php روی هاست دانلود (Apache) هنگام سرو فایل
++ * اگر هر کدام پیاده‌سازی خودش را داشته باشد، دیر یا زود از هم فاصله می‌گیرند و
++ * نتیجه‌اش ۴۰۳ شدن «همهٔ» پخش‌هاست. پس هر دو، همین یک فایل را include می‌کنند.
++ * هیچ وابستگی‌ای به وردپرس اینجا نیست تا s.php بتواند روی هاست دانلود —
++ * که نصب وردپرس ندارد — مستقیم اجرا شود.
++ *
++ * ─── قرارداد امضا ───
++ *   message   = "<مسیر decode‌شده>|<انقضا>|<شناسهٔ کاربر>"
++ *   signature = hash_hmac('sha256', message, secret)      // hex lowercase
++ *   query     = ?f=<path>&e=<expiry>&u=<userId>&t=<signature>
++ *
++ * مسیر در امضا **decode‌شده** است (شکل rawurldecode)، ولی در URL به‌صورت
++ * rawurlencode نوشته می‌شود. دلیل: نام فایل‌های این پروژه فارسی‌اند و در URL
++ * percent-encoded می‌آیند؛ اگر یک طرف روی شکل encode‌شده امضا بگذارد و طرف
++ * دیگر روی decode‌شده، هیچ امضایی معتبر نیست.
++ *
++ * خروجی hex است (نه base64) تا هیچ‌وقت «+»، «/» یا «=» در URL نیفتد — همان
++ * کاراکترهایی که در کوئری‌استرینگ معناهای متفاوتی می‌گیرند.
++ */
++
++if (!defined('ABSPATH') && !defined('MRD_GATEWAY_CONTEXT')) {
++    // فایل باید یا از داخل وردپرس و یا از دروازهٔ مستقل بارگذاری شود.
++    exit;
++}
++
++if (!class_exists('Mdb_Signed_Url_Core')) {
++
++    class Mdb_Signed_Url_Core {
++
++        /** طول عمر پیش‌فرض امضا — هم‌اندازهٔ عمر بلیط پخش. */
++        const DEFAULT_TTL_SECONDS = 900;
++
++        /** سقف عمر امضا — ۲۴ ساعت؛ جلوی پیکربندی‌ای که آدرس را دائمی می‌کند. */
++        const MAX_TTL_SECONDS = 86400;
++
++        /** پسوندهایی که دروازه اجازهٔ سروشان را دارد. */
++        public static function default_allowed_extensions() {
++            return array(
++                // ویدیو
++                'mp4', 'm4v', 'mov', 'webm', 'mkv', 'ogv',
++                // HLS (برای آینده — سرور فعلاً MP4 می‌دهد)
++                'm3u8', 'ts', 'm4s', 'key', 'mpd',
++                // زیرنویس و پوستر
++                'vtt', 'srt', 'jpg', 'jpeg', 'png', 'webp',
++                // صدا
++                'mp3', 'm4a', 'aac', 'ogg',
++            );
++        }
++
++        // ─────────────────────────────────────────────────────────────────────
++        // امضا
++        // ─────────────────────────────────────────────────────────────────────
++
++        /**
++         * پیام امضا. تنها جایی که قالب پیام تعریف می‌شود.
++         *
++         * @param string   $decoded_path مسیر decode‌شده (مثل /FA/درس-اول.mp4)
++         * @param int      $expires      مهر زمانی انقضا (UTC)
++         * @param int|null $user_id      شناسهٔ کاربر؛ 0 برای مهمان/پیش‌نمایش رایگان
++         * @return string
++         */
++        public static function message($decoded_path, $expires, $user_id) {
++            return (string) $decoded_path . '|' . (int) $expires . '|' . (int) $user_id;
++        }
++
++        /**
++         * امضای HMAC-SHA256 به‌صورت hex.
++         *
++         * @param string   $decoded_path
++         * @param int      $expires
++         * @param int|null $user_id
++         * @param string   $secret
++         * @return string رشتهٔ ۶۴ کاراکتری hex، یا '' اگر secret خالی باشد
++         */
++        public static function signature($decoded_path, $expires, $user_id, $secret) {
++            $secret = (string) $secret;
++            if ('' === $secret) {
++                return '';
++            }
++
++            return hash_hmac(
++                'sha256',
++                self::message($decoded_path, $expires, $user_id),
++                $secret
++            );
++        }
++
++        /**
++         * اعتبارسنجی یک امضا.
++         *
++         * ترتیب بررسی‌ها مهم است: اول انقضا (ارزان)، بعد مقایسهٔ زمان-ثابت.
++         *
++         * @param string   $decoded_path
++         * @param int      $expires
++         * @param int|null $user_id
++         * @param string   $signature
++         * @param string   $secret
++         * @param int|null $now
++         * @return bool
++         */
++        public static function verify($decoded_path, $expires, $user_id, $signature, $secret, $now = null) {
++            $signature = (string) $signature;
++            $secret = (string) $secret;
++
++            if ('' === $signature || '' === $secret) {
++                return false;
++            }
++
++            $now = (null === $now) ? time() : (int) $now;
++            if ((int) $expires <= $now) {
++                return false; // منقضی — fail-closed
++            }
++
++            $expected = self::signature($decoded_path, $expires, $user_id, $secret);
++            if ('' === $expected) {
++                return false;
++            }
++
++            // مقایسهٔ زمان-ثابت تا امضا قابل حدس‌زدن کاراکتر-به-کاراکتر نباشد.
++            return hash_equals($expected, $signature);
++        }
++
++        /**
++         * استخراج مسیرِ قابل‌امضا از یک آدرس کامل یا نسبی.
++         *
++         * **decode می‌کند** و «+» را دست‌نخورده می‌گذارد (rawurldecode برخلاف
++         * urldecode «+» را فاصله نمی‌کند) — چون سمت دروازه هم عیناً همین کار
++         * انجام می‌شود.
++         *
++         * @param string $url
++         * @return string مسیر decode‌شده، یا '' اگر قابل استخراج نبود
++         */
++        public static function path_for_signing($url) {
++            $url = (string) $url;
++            if ('' === $url) {
++                return '';
++            }
++
++            $path = self::url_path($url);
++            if ('' === $path) {
++                return '';
++            }
++
++            return rawurldecode($path);
++        }
++
++        /**
++         * استخراج بخش path از یک آدرس، با پشتیبانی از ورودی بدون scheme.
++         *
++         * از parse_url مستقیم استفاده نمی‌کنیم چون برای رشتهٔ بدون scheme رفتار
++         * غیرشهودی دارد؛ اینجا خودمان تصمیم می‌گیریم.
++         *
++         * @param string $url
++         * @return string
++         */
++        private static function url_path($url) {
++            $url = (string) $url;
++
++            // آدرس کامل با scheme یا protocol-relative
++            if (preg_match('#^[a-z][a-z0-9+.\-]*://#i', $url) || strpos($url, '//') === 0) {
++                $parsed = parse_url($url, PHP_URL_PATH);
++                return is_string($parsed) ? $parsed : '';
++            }
++
++            // مسیر نسبی یا مطلق بدون میزبان — کوئری و fragment را ببر
++            $cut = strcspn($url, '?#');
++            return substr($url, 0, $cut);
++        }
++
++        /**
++         * ساخت آدرس دروازه از یک آدرس رسانه.
++         *
++         * @param string   $media_url  آدرس اصلی فایل روی هاست دانلود
++         * @param string   $gateway    آدرس پایهٔ دروازه (مثل https://dll.example.com/s.php)
++         * @param int|null $user_id
++         * @param string   $secret
++         * @param int|null $ttl
++         * @param int|null $now
++         * @return string آدرس امضاشده، یا آدرس اصلی اگر قابل امضا نبود
++         */
++        public static function build_gateway_url($media_url, $gateway, $user_id, $secret, $ttl = null, $now = null) {
++            $media_url = (string) $media_url;
++            $gateway = trim((string) $gateway);
++
++            if ('' === $media_url || '' === $gateway || '' === (string) $secret) {
++                return $media_url;
++            }
++
++            $path = self::path_for_signing($media_url);
++            if ('' === $path) {
++                return $media_url; // آدرس بی‌مسیر — دست‌نخورده
++            }
++
++            $ttl = (null === $ttl) ? self::DEFAULT_TTL_SECONDS : (int) $ttl;
++            $ttl = max(1, min($ttl, self::MAX_TTL_SECONDS));
++
++            $now = (null === $now) ? time() : (int) $now;
++            $expires = $now + $ttl;
++            $user_id = (int) $user_id;
++
++            $signature = self::signature($path, $expires, $user_id, $secret);
++            if ('' === $signature) {
++                return $media_url;
++            }
++
++            $query = http_build_query(
++                array(
++                    'f' => $path,          // http_build_query از rawurlencode استفاده می‌کند
++                    'e' => $expires,
++                    'u' => $user_id,
++                    't' => $signature,
++                ),
++                '',
++                '&',
++                PHP_QUERY_RFC3986
++            );
++
++            $separator = (strpos($gateway, '?') === false) ? '?' : '&';
++
++            return $gateway . $separator . $query;
++        }
++
++        // ─────────────────────────────────────────────────────────────────────
++        // امنیت مسیر (سمت دروازه)
++        // ─────────────────────────────────────────────────────────────────────
++
++        /**
++         * تبدیل مسیر درخواستی به مسیر مطلق امن روی دیسک.
++         *
++         * چهار لایهٔ دفاع:
++         *   ۱) نویسهٔ null رد می‌شود
++         *   ۲) هر بخش «..» رد می‌شود (پس از یکسان‌سازی «\» به «/»)
++         *   ۳) پسوند باید در فهرست مجاز باشد
++         *   ۴) realpath نهایی باید داخل realpath ریشهٔ رسانه باشد — این لایه
++         *      symlink و مسیرهای عجیب را هم می‌گیرد
++         *
++         * @param string   $media_root ریشهٔ رسانه روی دیسک
++         * @param string   $decoded_path مسیر decode‌شدهٔ درخواستی
++         * @param string[]|null $allowed_extensions
++         * @return string|null مسیر مطلق، یا null اگر نامعتبر بود
++         */
++        public static function resolve_path($media_root, $decoded_path, $allowed_extensions = null) {
++            $media_root = rtrim((string) $media_root, "/\\");
++            $decoded_path = (string) $decoded_path;
++
++            if ('' === $media_root || '' === $decoded_path) {
++                return null;
++            }
++            if (strpos($decoded_path, "\0") !== false) {
++                return null;
++            }
++
++            $root_real = realpath($media_root);
++            if (false === $root_real || !is_dir($root_real)) {
++                return null; // پیکربندی خراب — fail-closed
++            }
++
++            // اگر کلاینت اشتباهاً یک URL کامل فرستاده باشد، فقط مسیرش را برمی‌داریم.
++            if (preg_match('#^[a-z][a-z0-9+.\-]*://#i', $decoded_path)) {
++                $parsed = parse_url($decoded_path, PHP_URL_PATH);
++                $decoded_path = is_string($parsed) ? $parsed : '';
++            }
++
++            // یکسان‌سازی جداکننده‌ها: در ویندوز «\» هم جداکننده است و بدون این
++            // خط، «..\..\x» از بررسی بخش‌ها رد می‌شد.
++            $decoded_path = str_replace('\\', '/', $decoded_path);
++
++            // نرمال‌سازی: حذف اسلش‌های تکراری و بخش‌های «.»؛ «..» را رد می‌کنیم
++            // (به‌جای حل‌کردنش) تا هیچ ورودی‌ای نتواند از ریشه بیرون بزند.
++            $segments = explode('/', $decoded_path);
++            $clean = array();
++            foreach ($segments as $segment) {
++                if ('' === $segment || '.' === $segment) {
++                    continue;
++                }
++                if ('..' === $segment) {
++                    return null;
++                }
++                $clean[] = $segment;
++            }
++
++            if (empty($clean)) {
++                return null;
++            }
++
++            $relative = implode('/', $clean);
++
++            $extensions = (null === $allowed_extensions)
++                ? self::default_allowed_extensions()
++                : $allowed_extensions;
++            if (!self::is_allowed_extension($relative, $extensions)) {
++                return null;
++            }
++
++            $candidate = $root_real . DIRECTORY_SEPARATOR . $relative;
++            $real = realpath($candidate);
++
++            if (false === $real || !is_file($real)) {
++                return null;
++            }
++
++            // لایهٔ آخر: مسیر واقعی باید واقعاً داخل ریشه باشد.
++            $root_prefix = $root_real . DIRECTORY_SEPARATOR;
++            if (strpos($real . DIRECTORY_SEPARATOR, $root_prefix) !== 0) {
++                return null;
++            }
++
++            return $real;
++        }
++
++        /**
++         * آیا پسوند فایل در فهرست مجاز است؟
++         *
++         * مقایسه بدون حساسیت به بزرگی/کوچکی حروف.
++         *
++         * @param string   $path
++         * @param string[] $allowed
++         * @return bool
++         */
++        public static function is_allowed_extension($path, $allowed) {
++            $path = (string) $path;
++            $dot = strrpos($path, '.');
++            if (false === $dot || $dot === strlen($path) - 1) {
++                return false; // بدون پسوند — رد
++            }
++
++            $ext = strtolower(substr($path, $dot + 1));
++
++            foreach ((array) $allowed as $candidate) {
++                if (strtolower((string) $candidate) === $ext) {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
++        /**
++         * نوع محتوا از روی پسوند — عمداً فهرست بسته، نه حدس.
++         *
++         * @param string $path
++         * @return string
++         */
++        public static function content_type_for($path) {
++            $map = array(
++                'mp4'  => 'video/mp4',
++                'm4v'  => 'video/mp4',
++                'mov'  => 'video/quicktime',
++                'webm' => 'video/webm',
++                'mkv'  => 'video/x-matroska',
++                'ogv'  => 'video/ogg',
++                'm3u8' => 'application/vnd.apple.mpegurl',
++                'ts'   => 'video/mp2t',
++                'm4s'  => 'video/iso.segment',
++                'mpd'  => 'application/dash+xml',
++                'key'  => 'application/octet-stream',
++                'vtt'  => 'text/vtt',
++                'srt'  => 'application/x-subrip',
++                'jpg'  => 'image/jpeg',
++                'jpeg' => 'image/jpeg',
++                'png'  => 'image/png',
++                'webp' => 'image/webp',
++                'mp3'  => 'audio/mpeg',
++                'm4a'  => 'audio/mp4',
++                'aac'  => 'audio/aac',
++                'ogg'  => 'audio/ogg',
++            );
++
++            $dot = strrpos((string) $path, '.');
++            $ext = (false === $dot) ? '' : strtolower(substr($path, $dot + 1));
++
++            return isset($map[$ext]) ? $map[$ext] : 'application/octet-stream';
++        }
++
++        // ─────────────────────────────────────────────────────────────────────
++        // Range
++        // ─────────────────────────────────────────────────────────────────────
++
++        /** نتیجهٔ «کل فایل را بفرست» (۲۰۰). */
++        const RANGE_FULL = null;
++
++        /** نتیجهٔ «درخواست غیرقابل‌ارضا» (۴۱۶). */
++        const RANGE_INVALID = false;
++
++        /**
++         * تجزیهٔ هدر Range.
++         *
++         * خروجی:
++         *   array('start' => int, 'end' => int)  → ۲۰۶ با Content-Range
++         *   RANGE_FULL (null)                    → ۲۰۰، کل فایل
++         *   RANGE_INVALID (false)                → ۴۱۶
++         *
++         * در درخواست چندبازه‌ای فقط بازهٔ اول سرو می‌شود. ارسال multipart/byteranges
++         * برای یک پلیر ویدیویی بی‌فایده است و فقط سطح حمله را باز می‌کند.
++         *
++         * @param string $header مقدار خام هدر Range
++         * @param int    $filesize اندازهٔ فایل
++         * @return array|bool|null
++         */
++        public static function parse_range($header, $filesize) {
++            $header = trim((string) $header);
++            $filesize = (int) $filesize;
++
++            if ('' === $header) {
++                return self::RANGE_FULL;
++            }
++
++            // واحد ناشناخته ⇒ نادیده بگیر و کل فایل را بفرست (رفتار RFC 7233).
++            if (stripos($header, 'bytes=') !== 0) {
++                return self::RANGE_FULL;
++            }
++
++            $spec = trim(substr($header, 6));
++
++            // چندبازه‌ای: فقط اولی
++            $comma = strpos($spec, ',');
++            if (false !== $comma) {
++                $spec = trim(substr($spec, 0, $comma));
++            }
++
++            if ('' === $spec || strpos($spec, '-') === false) {
++                return self::RANGE_FULL;
++            }
++
++            if ($filesize <= 0) {
++                return self::RANGE_INVALID; // فایل خالی هیچ بازه‌ای ندارد
++            }
++
++            $parts = explode('-', $spec, 2);
++            $start_raw = trim($parts[0]);
++            $end_raw = trim($parts[1]);
++
++            // «bytes=-N» ⇒ N بایت آخر
++            if ('' === $start_raw) {
++                if ('' === $end_raw || !ctype_digit($end_raw)) {
++                    return self::RANGE_FULL;
++                }
++                $suffix = (int) $end_raw;
++                if ($suffix <= 0) {
++                    return self::RANGE_INVALID;
++                }
++                if ($suffix >= $filesize) {
++                    return array('start' => 0, 'end' => $filesize - 1);
++                }
++                return array('start' => $filesize - $suffix, 'end' => $filesize - 1);
++            }
++
++            if (!ctype_digit($start_raw)) {
++                return self::RANGE_FULL;
++            }
++
++            $start = (int) $start_raw;
++
++            // «bytes=N-» ⇒ از N تا انتها
++            if ('' === $end_raw) {
++                if ($start >= $filesize) {
++                    return self::RANGE_INVALID;
++                }
++                return array('start' => $start, 'end' => $filesize - 1);
++            }
++
++            if (!ctype_digit($end_raw)) {
++                return self::RANGE_FULL;
++            }
++
++            $end = (int) $end_raw;
++
++            if ($start > $end) {
++                return self::RANGE_INVALID;
++            }
++            if ($start >= $filesize) {
++                return self::RANGE_INVALID;
++            }
++
++            if ($end >= $filesize) {
++                $end = $filesize - 1;
++            }
++
++            return array('start' => $start, 'end' => $end);
++        }
++
++        /**
++         * هدر Content-Range برای پاسخ ۲۰۶.
++         */
++        public static function content_range_header($start, $end, $filesize) {
++            return 'bytes ' . (int) $start . '-' . (int) $end . '/' . (int) $filesize;
++        }
++    }
++}
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
+index 718ecaf..eeb3dd0 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
+@@ -569,24 +569,38 @@ class MrDastbaaf_Courses_Controller {
+             ));
+         }
+ 
++        // v1.8.0: آدرس‌های امضاشده با انقضا — از طریق دروازهٔ PHP روی هاست دانلود.
++        //
++        // اگر فعال باشد، آدرس دائمی CDN با یک آدرس کوتاه‌عمر جایگزین می‌شود که
++        // فقط تا TTL معتبر است و به شناسهٔ همین کاربر امضا شده. اگر خاموش باشد،
++        // maybe_sign آدرس را دست‌نخورده برمی‌گرداند — پس این فراخوانی در هر دو
++        // حالت بی‌خطر است و نیازی به شرط بیرونی ندارد.
++        //
++        // امضا شامل شناسهٔ کاربر است (۰ برای مهمان)، پس لینک بین کاربران قابل
++        // استفادهٔ متقابل نیست.
++        $signed_video_url = MrDastbaaf_Signed_Url_Service::maybe_sign($video_url, $user_id);
++
+         // v1.8.0: نوع هر کیفیت — کلاینت نباید برای تشخیص MP4/HLS به پسوند
+         // تکیه کند (در حالت پروکسی اصلاً پسوندی وجود ندارد).
+         $typed_qualities = array();
+         foreach ($stored_qualities as $q) {
+             $typed_qualities[] = array(
+                 'label' => $q['label'],
+-                'url'   => $q['url'],
++                'url'   => MrDastbaaf_Signed_Url_Service::maybe_sign($q['url'], $user_id),
+                 'type'  => self::detect_video_type($q['url'], $lesson_id),
+             );
+         }
+ 
+         return rest_ensure_response(array(
+-            'videoUrl' => $video_url,
++            'videoUrl' => $signed_video_url,
+             'videoType' => self::detect_video_type($video_url, $lesson_id),
+             'watermarkText' => $watermark['text'],
+             'watermarkUserId' => $watermark['user_id'],
+             'watermarkFullName' => $watermark['name'],
+             'expiresAt' => gmdate('c', $issued_at + self::TICKET_TTL),
++            // v1.8.0: آیا آدرس‌ها امضاشده‌اند؟ کلاینت می‌تواند در لاگ/پشتیبانی
++            // از آن استفاده کند؛ برای پخش نیازی به خواندنش ندارد.
++            'signedUrls' => MrDastbaaf_Signed_Url_Service::is_enabled(),
+             // v1.4.0: [{label,url}, …] — ممکن است خالی باشد (فقط «خودکار»)
+             // v1.8.0: کلید type به هر آیتم اضافه شد
+             'qualities' => $typed_qualities,
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php
+new file mode 100644
+index 0000000..0ad58e6
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php
+@@ -0,0 +1,241 @@
++<?php
++/**
++ * آدرس‌های امضاشده با انقضا برای هاست دانلود (v1.8.0 — بدون تغییر اسکیما)
++ *
++ * ─── مسئله ───
++ * تا پیش از این، POST /lessons/{id}/playback یک آدرس **دائمی** برمی‌گرداند:
++ * https://dll.mrdastbaaf.com/FA/lesson-01.mp4
++ * هر کسی که این آدرس را می‌گرفت (از تب Network، از یک لاگ، از یک اسکرین‌شات)
++ * برای همیشه و بدون ورود می‌توانست ویدیو را دانلود کند. تنها محافظ،
++ * Hotlink Protection مبتنی بر Referer بود که با یک هدر جعلی دور زده می‌شود.
++ *
++ * ─── راه‌حل ───
++ * آدرس کوتاه‌عمرِ امضاشده که به **دروازهٔ PHP** روی هاست دانلود اشاره می‌کند:
++ *
++ *   https://dll.mrdastbaaf.com/s.php?f=%2FFA%2Flesson-01.mp4&e=1800000000&u=42&t=<hmac>
++ *
++ * دروازه (gateway/s.php) پیش از سرو فایل، امضا را بررسی می‌کند.
++ *
++ * ⚠️ نسخهٔ اول این طرح بر پایهٔ ماژول secure_link خود nginx نوشته شده بود.
++ * هاست دانلود این پروژه **Apache** است، پس اعتبارسنجی به دروازهٔ PHP منتقل شد
++ * و دیگر هیچ وابستگی‌ای به nginx وجود ندارد.
++ *
++ * ─── الگوریتم (تعریف‌شده در gateway/signed-url-core.php) ───
++ *   message   = "<مسیر decode‌شده>|<انقضا>|<شناسهٔ کاربر>"
++ *   signature = hash_hmac('sha256', message, secret)   // hex
++ *
++ * **این کلاس هیچ محاسبهٔ رمزنگاری‌ای خودش انجام نمی‌دهد** — همه به هستهٔ
++ * مشترک واگذار می‌شود. دلیلش ساده است: امضا در دو جا (اینجا و دروازه) ساخته و
++ * بررسی می‌شود؛ اگر دو پیاده‌سازی جدا باشند، دیر یا زود از هم فاصله می‌گیرند و
++ * نتیجه‌اش ۴۰۳ شدن همهٔ پخش‌هاست.
++ *
++ * ─── ترتیب راه‌اندازی (مهم) ───
++ * ۱) دروازه را روی هاست دانلود مستقر کنید.
++ * ۲) آدرس دروازه را تنظیم و پرچم را روشن کنید.
++ * ۳) **آخر از همه** دسترسی مستقیم را با .htaccess ببندید.
++ * جزئیات در docs/APACHE_SIGNED_URLS.md.
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++require_once MRDASTBAAF_BRIDGE_PATH . 'gateway/signed-url-core.php';
++
++class MrDastbaaf_Signed_Url_Service {
++
++    const SECRET_OPTION  = 'mrdastbaaf_signed_url_secret';
++    const ENABLED_OPTION = 'mrdastbaaf_signed_urls_enabled';
++    const TTL_OPTION     = 'mrdastbaaf_signed_url_ttl';
++    const GATEWAY_OPTION = 'mrdastbaaf_signed_url_gateway';
++
++    /**
++     * تعریف ثابت در wp-config.php بر پایگاه‌داده اولویت دارد.
++     *
++     * چرا: این کلید باید **هم** در افزونه و **هم** در فایل پیکربندی دروازه یکی
++     * باشد. نگه‌داشتنش در wp-config یعنی یک منبع حقیقت، بدون رفت‌وبرگشت
++     * دیتابیس، و بدون اینکه مقدارش در پشتیبان‌گیری دیتابیس بیفتد.
++     */
++    const SECRET_CONSTANT  = 'MRDASTBAAF_SIGNED_URL_SECRET';
++    const GATEWAY_CONSTANT = 'MRDASTBAAF_SIGNED_URL_GATEWAY';
++
++    /** عمر پیش‌فرض امضا — ۱۵ دقیقه، هم‌اندازهٔ عمر بلیط پخش. */
++    const DEFAULT_TTL_SECONDS = Mdb_Signed_Url_Core::DEFAULT_TTL_SECONDS;
++
++    /** سقف TTL — ۲۴ ساعت. جلوگیری از پیکربندی اشتباهی که آدرس را دائمی می‌کند. */
++    const MAX_TTL_SECONDS = Mdb_Signed_Url_Core::MAX_TTL_SECONDS;
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // بخش خالص — واگذاری به هستهٔ مشترک
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * امضای یک مسیر decode‌شده.
++     *
++     * @param string   $decoded_path
++     * @param int      $expires
++     * @param int|null $user_id
++     * @param string   $secret
++     * @return string hex (۶۴ کاراکتر)، یا '' اگر secret خالی باشد
++     */
++    public static function sign($decoded_path, $expires, $user_id, $secret) {
++        return Mdb_Signed_Url_Core::signature($decoded_path, $expires, $user_id, $secret);
++    }
++
++    /**
++     * اعتبارسنجی امضا — برای خودآزمایی، تست و عیب‌یابی.
++     *
++     * در پروداکشن، اعتبارسنجی کار دروازه است؛ این متد برای تست یکپارچگی
++     * «افزونه ↔ دروازه» به‌کار می‌رود.
++     */
++    public static function verify($decoded_path, $expires, $user_id, $signature, $secret, $now = null) {
++        return Mdb_Signed_Url_Core::verify($decoded_path, $expires, $user_id, $signature, $secret, $now);
++    }
++
++    /**
++     * استخراج مسیر decode‌شده از یک آدرس.
++     *
++     * **decode می‌شود** تا با مقداری که دروازه از پارامتر `f` می‌گیرد یکی باشد.
++     * نام فایل‌های این پروژه فارسی‌اند و در URL percent-encoded می‌آیند؛ اگر
++     * یک طرف روی شکل encode‌شده امضا بگذارد و طرف دیگر روی decode‌شده، هیچ
++     * امضایی معتبر نیست و **همهٔ ویدیوها ۴۰۳ می‌شوند**.
++     */
++    public static function path_for_signing($url) {
++        return Mdb_Signed_Url_Core::path_for_signing($url);
++    }
++
++    /**
++     * ساخت آدرس دروازه برای یک فایل رسانه.
++     *
++     * @param string      $media_url
++     * @param int|null    $user_id
++     * @param string      $secret
++     * @param int|null    $ttl
++     * @param int|null    $now
++     * @param string|null $gateway آدرس پایهٔ دروازه؛ پیش‌فرض از پیکربندی
++     * @return string آدرس امضاشده، یا آدرس اصلی اگر قابل امضا نبود
++     */
++    public static function sign_url($media_url, $user_id, $secret, $ttl = null, $now = null, $gateway = null) {
++        if (null === $gateway) {
++            $gateway = self::get_gateway_url();
++        }
++
++        return Mdb_Signed_Url_Core::build_gateway_url($media_url, $gateway, $user_id, $secret, $ttl, $now);
++    }
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // پیکربندی (وردپرس)
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * کلید مشترک — ثابت wp-config اولویت دارد، وگرنه گزینهٔ دیتابیس.
++     *
++     * روی نخستین فراخوانی، اگر هیچ‌کدام نبود، کلید تصادفی ساخته و ذخیره
++     * می‌شود (همان الگوی mrdastbaaf_cron_token). ذخیره با autoload=false تا در
++     * alloptions هر درخواست بارگذاری نشود.
++     *
++     * ⚠️ این مقدار باید **دقیقاً** با 'secret' در فایل پیکربندی دروازه یکی باشد.
++     *
++     * @return string
++     */
++    public static function get_secret() {
++        if (defined(self::SECRET_CONSTANT)) {
++            $from_constant = (string) constant(self::SECRET_CONSTANT);
++            if ('' !== $from_constant) {
++                return $from_constant;
++            }
++        }
++
++        $stored = (string) get_option(self::SECRET_OPTION, '');
++        if ('' !== $stored) {
++            return $stored;
++        }
++
++        $generated = wp_generate_password(48, false, false);
++        update_option(self::SECRET_OPTION, $generated, false);
++
++        return $generated;
++    }
++
++    /**
++     * آدرس پایهٔ دروازه (s.php روی هاست دانلود).
++     *
++     * @return string
++     */
++    public static function get_gateway_url() {
++        if (defined(self::GATEWAY_CONSTANT)) {
++            $from_constant = trim((string) constant(self::GATEWAY_CONSTANT));
++            if ('' !== $from_constant) {
++                return $from_constant;
++            }
++        }
++
++        return trim((string) get_option(self::GATEWAY_OPTION, ''));
++    }
++
++    /**
++     * آیا امضاگذاری فعال است؟
++     *
++     * دو شرط با هم: پرچم روشن **و** آدرس دروازه تنظیم‌شده. اگر پرچم روشن باشد
++     * ولی دروازه پیکربندی نشده باشد، آدرس‌ها بدون دروازه ساخته می‌شوند — یعنی
++     * کاربر آدرس ناقصی می‌گیرد و پخش می‌شکند. پس در آن حالت عمداً «خاموش»
++     * گزارش می‌شود و آدرس اصلی دست‌نخورده می‌ماند.
++     *
++     * پیش‌فرض خاموش است. دلیل عملیاتی: اگر افزونه امضا بگذارد ولی دروازه هنوز
++     * مستقر نشده باشد، همه‌چیز کار می‌کند؛ اما اگر دروازه مستقر شود و افزونه
++     * امضا نگذارد، **تمام پخش‌ها ۴۰۳ می‌شوند**.
++     *
++     * @return bool
++     */
++    public static function is_enabled() {
++        $flag = (bool) apply_filters(
++            'mrdastbaaf_signed_urls_enabled',
++            (bool) get_option(self::ENABLED_OPTION, false)
++        );
++
++        if (!$flag) {
++            return false;
++        }
++
++        return '' !== self::get_gateway_url();
++    }
++
++    /**
++     * عمر امضا — با سقف MAX_TTL_SECONDS.
++     *
++     * @return int
++     */
++    public static function get_ttl() {
++        $ttl = (int) get_option(self::TTL_OPTION, self::DEFAULT_TTL_SECONDS);
++        if ($ttl <= 0) {
++            $ttl = self::DEFAULT_TTL_SECONDS;
++        }
++
++        return max(1, min($ttl, self::MAX_TTL_SECONDS));
++    }
++
++    /**
++     * امضای یک آدرس با پیکربندی فعلی.
++     *
++     * اگر امضاگذاری خاموش باشد، آدرس **دست‌نخورده** برگردانده می‌شود — تا
++     * فراخوان لازم نباشد شرط فعال‌بودن را تکرار کند.
++     *
++     * @param string   $url     آدرس اصلی فایل رسانه
++     * @param int|null $user_id شناسهٔ کاربر امضاکننده؛ 0 برای مهمان/پیش‌نمایش رایگان
++     * @return string
++     */
++    public static function maybe_sign($url, $user_id = 0) {
++        if (!self::is_enabled()) {
++            return (string) $url;
++        }
++
++        return self::sign_url(
++            $url,
++            (int) $user_id,
++            self::get_secret(),
++            self::get_ttl(),
++            null,
++            self::get_gateway_url()
++        );
++    }
++}
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+index 8d26145..0610934 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+@@ -168,6 +168,11 @@ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-membership-helper.php';
+ // v1.8.0: مخزن توکن چند-دستگاهی — پیش از کنترلر احراز هویت بارگذاری می‌شود
+ // (verify-otp برای صدور توکن و لایهٔ Bearer برای اعتبارسنجی به آن نیاز دارند).
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-token-store.php';
++// v1.8.0: آدرس‌های امضاشده (دروازهٔ PHP روی هاست دانلود) — پیش از کنترلر
++// دوره‌ها، چون مسیر playback در همان کنترلر امضا می‌گذارد. هستهٔ امضا در
++// gateway/signed-url-core.php است و دروازهٔ s.php هم همان را include می‌کند،
++// تا پیاده‌سازی دو طرف هرگز از هم فاصله نگیرد.
++require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-signed-url-service.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-auth-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-courses-controller.php';
+ // v1.4.0: فروشگاه — محصولات فیزیکی دست‌ساز (پیش از کنترلر صفحات ادمین تا
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php
+new file mode 100644
+index 0000000..f232274
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php
+@@ -0,0 +1,787 @@
++<?php
++/**
++ * تست امضای آدرس و دروازهٔ رسانه (test-signed-urls) — بدون وردپرس
++ *
++ * اجرا: php tests/php/test-signed-urls.php
++ *
++ * ─── چرا این تست حیاتی است ───
++ * امضا در دو جا ساخته/بررسی می‌شود: افزونه (سمت وردپرس) و دروازهٔ s.php روی
++ * هاست دانلود. اگر یک کاراکتر اختلاف باشد — یک «|» جابه‌جا، مسیر encode‌شده به
++ * جای decode‌شده، hex به جای base64 — **همهٔ** پخش‌های پلتفرم ۴۰۳ می‌شوند.
++ *
++ * این تست قرارداد را با بردارهای ثابت قفل می‌کند و همان بردارها مستقل با
++ * پایتون هم بازمحاسبه و تأیید شده‌اند:
++ *
++ *   message = "/FA/lesson-01.mp4|1800000000|42", secret = "test-secret"
++ *   ⇒ 101d4a77cbe84329e3b27880f939926f05d12c570d34304ef078ac078343776a
++ *
++ *   message = "/FA/درس-اول.mp4|1800000000|42", secret = "test-secret"
++ *   ⇒ d7fe6d69ddfb61f7307ce2fd0aeaccf18cca5b97ed0eb224393035f5191ded9b
++ *
++ * بخش‌ها:
++ *   ۱) بردار ثابت و اثر هر جزء ورودی
++ *   ۲) استخراج و decode مسیر (فارسی/percent-encoded)
++ *   ۳) ساخت آدرس دروازه و رفت‌وبرگشت کامل
++ *   ۴) اعتبارسنجی امضا
++ *   ۵) resolve_path — traversal و فهرست پسوند
++ *   ۶) parse_range
++ *   ۷) evaluate — کدهای وضعیت دروازه
++ *   ۸) parse_query — حفظ «+»
++ *   ۹) پیکربندی افزونه
++ *  ۱۰) نگهبان واگرایی: افزونه و دروازه یک امضا می‌دهند
++ */
++
++define('ABSPATH', '/tmp/');
++define('MRDASTBAAF_BRIDGE_PATH', __DIR__ . '/../../');
++
++if (!defined('MINUTE_IN_SECONDS')) {
++    define('MINUTE_IN_SECONDS', 60);
++}
++if (!defined('HOUR_IN_SECONDS')) {
++    define('HOUR_IN_SECONDS', 3600);
++}
++if (!defined('DAY_IN_SECONDS')) {
++    define('DAY_IN_SECONDS', 86400);
++}
++
++$GLOBALS['mrd_test_options'] = array();
++$GLOBALS['mrd_test_filters'] = array();
++
++if (!function_exists('get_option')) {
++    function get_option($name, $default = false) {
++        return isset($GLOBALS['mrd_test_options'][$name]) ? $GLOBALS['mrd_test_options'][$name] : $default;
++    }
++}
++if (!function_exists('update_option')) {
++    function update_option($name, $value, $autoload = null) {
++        $GLOBALS['mrd_test_options'][$name] = $value;
++        return true;
++    }
++}
++if (!function_exists('apply_filters')) {
++    function apply_filters($tag, $value) {
++        return isset($GLOBALS['mrd_test_filters'][$tag]) ? $GLOBALS['mrd_test_filters'][$tag] : $value;
++    }
++}
++if (!function_exists('wp_generate_password')) {
++    function wp_generate_password($length = 12, $special = true, $extra = true) {
++        return substr(str_repeat('abcdef0123456789', 8), 0, $length);
++    }
++}
++
++require_once __DIR__ . '/../../includes/class-signed-url-service.php';
++require_once __DIR__ . '/../../gateway/SignedUrlGateway.php';
++
++$pass = 0;
++$fail = 0;
++$skip = 0;
++
++function mrd_assert($label, $actual, $expected) {
++    global $pass, $fail;
++    if ($actual === $expected) {
++        $pass++;
++        echo "PASS: {$label}\n";
++    } else {
++        $fail++;
++        echo "FAIL: {$label} — expected: " . var_export($expected, true) . " | got: " . var_export($actual, true) . "\n";
++    }
++}
++
++function mrd_skip($label, $why) {
++    global $skip;
++    $skip++;
++    echo "SKIP: {$label} ({$why})\n";
++}
++
++const MRD_SECRET = 'test-secret';
++const MRD_EXPIRES = 1800000000;
++const MRD_UID = 42;
++const MRD_PATH = '/FA/lesson-01.mp4';
++const MRD_SIG = '101d4a77cbe84329e3b27880f939926f05d12c570d34304ef078ac078343776a';
++const MRD_FA_PATH = '/FA/درس-اول.mp4';
++const MRD_FA_SIG = 'd7fe6d69ddfb61f7307ce2fd0aeaccf18cca5b97ed0eb224393035f5191ded9b';
++const MRD_GATEWAY = 'https://dll.mrdastbaaf.com/s.php';
++
++// ─── ۱) بردار ثابت ─────────────────────────────────────────────────────────
++
++mrd_assert(
++    'signature matches the fixed, python-verified vector',
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET),
++    MRD_SIG
++);
++
++mrd_assert(
++    'signature matches the fixed vector for a persian path',
++    Mdb_Signed_Url_Core::signature(MRD_FA_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET),
++    MRD_FA_SIG
++);
++
++mrd_assert(
++    'the message format is path|expiry|userId',
++    Mdb_Signed_Url_Core::message(MRD_PATH, MRD_EXPIRES, MRD_UID),
++    '/FA/lesson-01.mp4|1800000000|42'
++);
++
++mrd_assert(
++    'signature is deterministic',
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET),
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET)
++);
++
++mrd_assert(
++    'signature is lowercase hex sha256 (64 chars, no + / or =)',
++    (bool) preg_match('/^[0-9a-f]{64}$/', Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET)),
++    true
++);
++
++// هر جزء ورودی باید در امضا اثر داشته باشد — وگرنه امضا قابل جعل می‌شد.
++mrd_assert(
++    'a different secret yields a different signature',
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, 'other-secret') === MRD_SIG,
++    false
++);
++mrd_assert(
++    'a different expiry yields a different signature',
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES + 1, MRD_UID, MRD_SECRET) === MRD_SIG,
++    false
++);
++mrd_assert(
++    'a different path yields a different signature',
++    Mdb_Signed_Url_Core::signature('/FA/lesson-02.mp4', MRD_EXPIRES, MRD_UID, MRD_SECRET) === MRD_SIG,
++    false
++);
++// شناسهٔ کاربر در امضاست، پس لینک یک کاربر برای کاربر دیگر معتبر نیست.
++mrd_assert(
++    'a different user id yields a different signature',
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, 43, MRD_SECRET) === MRD_SIG,
++    false
++);
++// جداکننده باید واقعاً جداکننده باشد: بدون آن، path+expiry می‌توانستند جابه‌جا
++// ترکیب شوند و دو ورودی متفاوت یک امضا بدهند (حملهٔ الحاق).
++mrd_assert(
++    'the separator prevents concatenation ambiguity',
++    Mdb_Signed_Url_Core::signature('/FA/a|1800000000|1.mp4', MRD_EXPIRES, MRD_UID, MRD_SECRET)
++        === Mdb_Signed_Url_Core::signature('/FA/a', MRD_EXPIRES, MRD_UID, MRD_SECRET),
++    false
++);
++
++mrd_assert(
++    'an empty secret yields an empty signature',
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, ''),
++    ''
++);
++
++// ─── ۲) استخراج مسیر ───────────────────────────────────────────────────────
++
++mrd_assert(
++    'path_for_signing strips the query string',
++    Mdb_Signed_Url_Core::path_for_signing('https://dll.mrdastbaaf.com/FA/lesson-01.mp4?foo=bar'),
++    '/FA/lesson-01.mp4'
++);
++
++mrd_assert(
++    'path_for_signing percent-decodes so both sides agree',
++    Mdb_Signed_Url_Core::path_for_signing('https://dll.mrdastbaaf.com/FA/%D8%AF%D8%B1%D8%B3-%DB%B1.mp4'),
++    '/FA/درس-۱.mp4'
++);
++
++// دلیل وجود decode: اگر روی مسیر encode‌شده امضا می‌شد، هیچ امضایی در دروازه
++// معتبر نبود و همهٔ ویدیوها ۴۰۳ می‌شدند.
++mrd_assert(
++    'an encoded and a decoded path produce different signatures',
++    Mdb_Signed_Url_Core::signature('/FA/%D8%AF%D8%B1%D8%B3.mp4', MRD_EXPIRES, MRD_UID, MRD_SECRET)
++        === Mdb_Signed_Url_Core::signature('/FA/درس.mp4', MRD_EXPIRES, MRD_UID, MRD_SECRET),
++    false
++);
++
++// rawurldecode برخلاف urldecode علامت «+» را به فاصله تبدیل نمی‌کند. این برای
++// نام فایلی که «+» دارد حیاتی است.
++mrd_assert(
++    'path_for_signing keeps + as a literal plus (rawurldecode, not urldecode)',
++    Mdb_Signed_Url_Core::path_for_signing('https://dll.mrdastbaaf.com/FA/a+b.mp4'),
++    '/FA/a+b.mp4'
++);
++
++mrd_assert(
++    'path_for_signing on an empty string',
++    Mdb_Signed_Url_Core::path_for_signing(''),
++    ''
++);
++
++mrd_assert(
++    'path_for_signing accepts a bare relative path',
++    Mdb_Signed_Url_Core::path_for_signing('/FA/a.mp4'),
++    '/FA/a.mp4'
++);
++
++mrd_assert(
++    'path_for_signing on a host with no path',
++    Mdb_Signed_Url_Core::path_for_signing('https://dll.mrdastbaaf.com'),
++    ''
++);
++
++mrd_assert(
++    'path_for_signing strips a fragment',
++    Mdb_Signed_Url_Core::path_for_signing('/FA/a.mp4#t=10'),
++    '/FA/a.mp4'
++);
++
++// ─── ۳) ساخت آدرس دروازه ───────────────────────────────────────────────────
++
++$now = MRD_EXPIRES - 900;
++
++$built = Mdb_Signed_Url_Core::build_gateway_url(
++    'https://dll.mrdastbaaf.com/FA/lesson-01.mp4',
++    MRD_GATEWAY,
++    MRD_UID,
++    MRD_SECRET,
++    900,
++    $now
++);
++
++mrd_assert(
++    'build_gateway_url produces the exact expected url',
++    $built,
++    MRD_GATEWAY . '?f=%2FFA%2Flesson-01.mp4&e=' . MRD_EXPIRES . '&u=42&t=' . MRD_SIG
++);
++
++mrd_assert(
++    'the built url has no raw slash or space in the path parameter',
++    (strpos($built, 'f=%2FFA%2F') !== false),
++    true
++);
++
++// رفت‌وبرگشت کامل: آدرسی که افزونه می‌سازد باید با همان پارامترهایی که دروازه
++// پارس می‌کند معتبر شناخته شود. اگر این تست بیفتد، پخش در پروداکشن ۴۰۳ می‌شود.
++$round_trip_params = Mdb_Signed_Url_Gateway::parse_query(parse_url($built, PHP_URL_QUERY));
++mrd_assert(
++    'the built url round-trips: parsed f equals the original decoded path',
++    $round_trip_params['f'],
++    '/FA/lesson-01.mp4'
++);
++mrd_assert(
++    'the built url round-trips: signature verifies',
++    Mdb_Signed_Url_Core::verify(
++        $round_trip_params['f'],
++        (int) $round_trip_params['e'],
++        (int) $round_trip_params['u'],
++        $round_trip_params['t'],
++        MRD_SECRET,
++        $now
++    ),
++    true
++);
++
++// همان رفت‌وبرگشت برای نام فایل فارسی — سناریوی واقعی این پروژه.
++$fa_built = Mdb_Signed_Url_Core::build_gateway_url(
++    'https://dll.mrdastbaaf.com/FA/%D8%AF%D8%B1%D8%B3-%D8%A7%D9%88%D9%84.mp4',
++    MRD_GATEWAY,
++    MRD_UID,
++    MRD_SECRET,
++    900,
++    $now
++);
++$fa_params = Mdb_Signed_Url_Gateway::parse_query(parse_url($fa_built, PHP_URL_QUERY));
++mrd_assert(
++    'a persian filename round-trips through the gateway url',
++    $fa_params['f'],
++    MRD_FA_PATH
++);
++mrd_assert(
++    'a persian filename round-trips: signature verifies',
++    Mdb_Signed_Url_Core::verify($fa_params['f'], (int) $fa_params['e'], (int) $fa_params['u'], $fa_params['t'], MRD_SECRET, $now),
++    true
++);
++
++mrd_assert(
++    'build_gateway_url appends with & when the gateway already has a query',
++    (strpos(
++        Mdb_Signed_Url_Core::build_gateway_url('https://dll.mrdastbaaf.com/FA/a.mp4', MRD_GATEWAY . '?v=2', MRD_UID, MRD_SECRET, 900, $now),
++        '?v=2&f='
++    ) !== false),
++    true
++);
++
++mrd_assert(
++    'build_gateway_url returns the media url unchanged when the secret is empty',
++    Mdb_Signed_Url_Core::build_gateway_url('https://dll.mrdastbaaf.com/FA/a.mp4', MRD_GATEWAY, MRD_UID, '', 900, $now),
++    'https://dll.mrdastbaaf.com/FA/a.mp4'
++);
++
++mrd_assert(
++    'build_gateway_url returns the media url unchanged when the gateway is empty',
++    Mdb_Signed_Url_Core::build_gateway_url('https://dll.mrdastbaaf.com/FA/a.mp4', '', MRD_UID, MRD_SECRET, 900, $now),
++    'https://dll.mrdastbaaf.com/FA/a.mp4'
++);
++
++mrd_assert(
++    'build_gateway_url returns the media url unchanged when there is no path',
++    Mdb_Signed_Url_Core::build_gateway_url('https://dll.mrdastbaaf.com', MRD_GATEWAY, MRD_UID, MRD_SECRET, 900, $now),
++    'https://dll.mrdastbaaf.com'
++);
++
++mrd_assert(
++    'build_gateway_url clamps an absurd ttl to MAX_TTL_SECONDS',
++    (strpos(
++        Mdb_Signed_Url_Core::build_gateway_url('https://dll.mrdastbaaf.com/FA/a.mp4', MRD_GATEWAY, MRD_UID, MRD_SECRET, 999999999, $now),
++        'e=' . ($now + Mdb_Signed_Url_Core::MAX_TTL_SECONDS)
++    ) !== false),
++    true
++);
++
++mrd_assert(
++    'build_gateway_url clamps a zero ttl to at least one second',
++    (strpos(
++        Mdb_Signed_Url_Core::build_gateway_url('https://dll.mrdastbaaf.com/FA/a.mp4', MRD_GATEWAY, MRD_UID, MRD_SECRET, 0, $now),
++        'e=' . ($now + 1)
++    ) !== false),
++    true
++);
++
++// ─── ۴) اعتبارسنجی ─────────────────────────────────────────────────────────
++
++mrd_assert(
++    'verify accepts a valid, unexpired signature',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SIG, MRD_SECRET, $now),
++    true
++);
++
++mrd_assert(
++    'verify rejects a tampered signature',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, MRD_UID, str_repeat('a', 64), MRD_SECRET, $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects a signature made with a different secret',
++    Mdb_Signed_Url_Core::verify(
++        MRD_PATH,
++        MRD_EXPIRES,
++        MRD_UID,
++        Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, 'attacker'),
++        MRD_SECRET,
++        $now
++    ),
++    false
++);
++
++mrd_assert(
++    'verify rejects a signature minted for a different user',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, 43, MRD_SIG, MRD_SECRET, $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects an expired signature',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SIG, MRD_SECRET, MRD_EXPIRES + 1),
++    false
++);
++
++mrd_assert(
++    'verify treats expiry exactly at now as expired (fail-closed)',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SIG, MRD_SECRET, MRD_EXPIRES),
++    false
++);
++
++// سناریوی حمله: مهاجم e را جلو می‌برد ولی امضا را ندارد.
++mrd_assert(
++    'verify rejects an extended expiry with the original signature',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES + 86400, MRD_UID, MRD_SIG, MRD_SECRET, $now),
++    false
++);
++
++// سناریوی حمله: مهاجم فایل را عوض می‌کند ولی امضا را نگه می‌دارد.
++mrd_assert(
++    'verify rejects a swapped path with the original signature',
++    Mdb_Signed_Url_Core::verify('/FA/lesson-02.mp4', MRD_EXPIRES, MRD_UID, MRD_SIG, MRD_SECRET, $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects an empty signature',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, MRD_UID, '', MRD_SECRET, $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects an empty secret',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SIG, '', $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects a truncated signature (no prefix match)',
++    Mdb_Signed_Url_Core::verify(MRD_PATH, MRD_EXPIRES, MRD_UID, substr(MRD_SIG, 0, 32), MRD_SECRET, $now),
++    false
++);
++
++// ─── ۵) resolve_path ───────────────────────────────────────────────────────
++
++$root = sys_get_temp_dir() . '/mrd-signed-url-test-' . getmypid() . '-' . mt_rand(1000, 9999);
++$outside = sys_get_temp_dir() . '/mrd-signed-url-outside-' . getmypid() . '-' . mt_rand(1000, 9999);
++
++@mkdir($root . '/FA', 0777, true);
++@mkdir($outside, 0777, true);
++file_put_contents($root . '/FA/lesson-01.mp4', 'VIDEO-BYTES-0123456789');
++file_put_contents($root . '/FA/درس-اول.mp4', 'PERSIAN-NAME-BYTES');
++file_put_contents($root . '/notes.txt', 'not a media file');
++file_put_contents($outside . '/secret.mp4', 'OUTSIDE-THE-ROOT');
++
++mrd_assert(
++    'resolve_path finds a normal file',
++    Mdb_Signed_Url_Core::resolve_path($root, '/FA/lesson-01.mp4'),
++    realpath($root . '/FA/lesson-01.mp4')
++);
++
++mrd_assert(
++    'resolve_path finds a persian-named file',
++    Mdb_Signed_Url_Core::resolve_path($root, '/FA/درس-اول.mp4'),
++    realpath($root . '/FA/درس-اول.mp4')
++);
++
++mrd_assert(
++    'resolve_path accepts a path without a leading slash',
++    Mdb_Signed_Url_Core::resolve_path($root, 'FA/lesson-01.mp4'),
++    realpath($root . '/FA/lesson-01.mp4')
++);
++
++mrd_assert(
++    'resolve_path rejects ../ traversal',
++    Mdb_Signed_Url_Core::resolve_path($root, '/FA/../notes.txt'),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects traversal that would escape the root',
++    Mdb_Signed_Url_Core::resolve_path($root, '/../' . basename($outside) . '/secret.mp4'),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects a backslash traversal',
++    Mdb_Signed_Url_Core::resolve_path($root, '/FA\\..\\..\\notes.txt'),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects an embedded null byte',
++    Mdb_Signed_Url_Core::resolve_path($root, "/FA/lesson-01.mp4\0.txt"),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects a disallowed extension',
++    Mdb_Signed_Url_Core::resolve_path($root, '/notes.txt'),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects a missing file',
++    Mdb_Signed_Url_Core::resolve_path($root, '/FA/nope.mp4'),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects an empty path',
++    Mdb_Signed_Url_Core::resolve_path($root, ''),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects an empty root',
++    Mdb_Signed_Url_Core::resolve_path('', '/FA/lesson-01.mp4'),
++    null
++);
++
++mrd_assert(
++    'resolve_path rejects a directory',
++    Mdb_Signed_Url_Core::resolve_path($root, '/FA'),
++    null
++);
++
++// لایهٔ symlink: حتی اگر نام درست باشد، مقصد واقعی نباید بیرون از ریشه باشد.
++$link = $root . '/FA/escape.mp4';
++$linked = @symlink($outside . '/secret.mp4', $link);
++if ($linked) {
++    mrd_assert(
++        'resolve_path rejects a symlink pointing outside the root',
++        Mdb_Signed_Url_Core::resolve_path($root, '/FA/escape.mp4'),
++        null
++    );
++} else {
++    mrd_skip('resolve_path rejects a symlink pointing outside the root', 'symlink not permitted here');
++}
++
++mrd_assert(
++    'is_allowed_extension is case-insensitive',
++    Mdb_Signed_Url_Core::is_allowed_extension('A.MP4', array('mp4')),
++    true
++);
++
++mrd_assert(
++    'is_allowed_extension rejects a file with no extension',
++    Mdb_Signed_Url_Core::is_allowed_extension('README', array('mp4')),
++    false
++);
++
++mrd_assert(
++    'content_type_for maps mp4',
++    Mdb_Signed_Url_Core::content_type_for('/FA/a.mp4'),
++    'video/mp4'
++);
++
++mrd_assert(
++    'content_type_for maps m3u8',
++    Mdb_Signed_Url_Core::content_type_for('/FA/a.m3u8'),
++    'application/vnd.apple.mpegurl'
++);
++
++mrd_assert(
++    'content_type_for falls back to octet-stream',
++    Mdb_Signed_Url_Core::content_type_for('/FA/a.weird'),
++    'application/octet-stream'
++);
++
++// ─── ۶) parse_range ────────────────────────────────────────────────────────
++
++mrd_assert('parse_range on an empty header means whole file', Mdb_Signed_Url_Core::parse_range('', 100), null);
++mrd_assert('parse_range on a non-bytes unit means whole file', Mdb_Signed_Url_Core::parse_range('items=0-10', 100), null);
++mrd_assert('parse_range on garbage means whole file', Mdb_Signed_Url_Core::parse_range('bytes=abc', 100), null);
++mrd_assert('parse_range on a lone dash means whole file', Mdb_Signed_Url_Core::parse_range('bytes=-', 100), null);
++
++mrd_assert('parse_range handles a closed range', Mdb_Signed_Url_Core::parse_range('bytes=0-49', 100), array('start' => 0, 'end' => 49));
++mrd_assert('parse_range handles an open-ended range', Mdb_Signed_Url_Core::parse_range('bytes=50-', 100), array('start' => 50, 'end' => 99));
++mrd_assert('parse_range handles a suffix range', Mdb_Signed_Url_Core::parse_range('bytes=-10', 100), array('start' => 90, 'end' => 99));
++mrd_assert('parse_range clamps a suffix larger than the file', Mdb_Signed_Url_Core::parse_range('bytes=-500', 100), array('start' => 0, 'end' => 99));
++mrd_assert('parse_range clamps an end beyond the file', Mdb_Signed_Url_Core::parse_range('bytes=0-1000', 100), array('start' => 0, 'end' => 99));
++mrd_assert('parse_range tolerates surrounding whitespace', Mdb_Signed_Url_Core::parse_range(' bytes=0-49 ', 100), array('start' => 0, 'end' => 49));
++mrd_assert('parse_range is case-insensitive on the unit', Mdb_Signed_Url_Core::parse_range('BYTES=0-49', 100), array('start' => 0, 'end' => 49));
++
++// چندبازه‌ای: فقط اولی سرو می‌شود (multipart/byteranges برای پلیر بی‌فایده است).
++mrd_assert(
++    'parse_range serves only the first of several ranges',
++    Mdb_Signed_Url_Core::parse_range('bytes=0-9, 20-29', 100),
++    array('start' => 0, 'end' => 9)
++);
++
++mrd_assert('parse_range rejects start beyond the file', Mdb_Signed_Url_Core::parse_range('bytes=100-', 100), false);
++mrd_assert('parse_range rejects a reversed range', Mdb_Signed_Url_Core::parse_range('bytes=50-10', 100), false);
++mrd_assert('parse_range rejects a zero-length suffix', Mdb_Signed_Url_Core::parse_range('bytes=-0', 100), false);
++mrd_assert('parse_range rejects any range on an empty file', Mdb_Signed_Url_Core::parse_range('bytes=0-49', 0), false);
++mrd_assert('parse_range on an empty file with no header is fine', Mdb_Signed_Url_Core::parse_range('', 0), null);
++
++mrd_assert(
++    'content_range_header has the right shape',
++    Mdb_Signed_Url_Core::content_range_header(0, 49, 100),
++    'bytes 0-49/100'
++);
++
++// ─── ۷) evaluate — کدهای وضعیت دروازه ──────────────────────────────────────
++
++$config = array(
++    'secret' => MRD_SECRET,
++    'media_root' => $root,
++    'allowed_extensions' => Mdb_Signed_Url_Core::default_allowed_extensions(),
++    'max_ttl_seconds' => 86400,
++);
++
++$good = array(
++    'f' => '/FA/lesson-01.mp4',
++    'e' => (string) MRD_EXPIRES,
++    'u' => (string) MRD_UID,
++    't' => MRD_SIG,
++);
++
++$r = Mdb_Signed_Url_Gateway::evaluate($config, $good, $now);
++mrd_assert('evaluate returns 200 for a valid request', $r['status'], 200);
++mrd_assert('evaluate resolves the file for a valid request', $r['path'], realpath($root . '/FA/lesson-01.mp4'));
++mrd_assert('evaluate reports no range for a plain request', $r['range'], null);
++
++$r = Mdb_Signed_Url_Gateway::evaluate($config, $good, $now, 'bytes=0-4');
++mrd_assert('evaluate returns 206 for a range request', $r['status'], 206);
++mrd_assert('evaluate returns the parsed range', $r['range'], array('start' => 0, 'end' => 4));
++
++$r = Mdb_Signed_Url_Gateway::evaluate($config, $good, $now, 'bytes=99999-');
++mrd_assert('evaluate returns 416 for an unsatisfiable range', $r['status'], 416);
++
++$bad_sig = $good;
++$bad_sig['t'] = str_repeat('a', 64);
++mrd_assert('evaluate returns 403 for a bad signature', Mdb_Signed_Url_Gateway::evaluate($config, $bad_sig, $now)['status'], 403);
++
++$expired = $good;
++$expired['e'] = (string) ($now - 1);
++mrd_assert('evaluate returns 403 for an expired signature', Mdb_Signed_Url_Gateway::evaluate($config, $expired, $now)['status'], 403);
++
++$missing = $good;
++unset($missing['t']);
++mrd_assert('evaluate returns 400 when a parameter is missing', Mdb_Signed_Url_Gateway::evaluate($config, $missing, $now)['status'], 400);
++
++$malformed = $good;
++$malformed['e'] = 'soon';
++mrd_assert('evaluate returns 400 for a non-numeric expiry', Mdb_Signed_Url_Gateway::evaluate($config, $malformed, $now)['status'], 400);
++
++$missing_file = $good;
++$missing_file['f'] = '/FA/nope.mp4';
++// امضا هم برای همان مسیر بازمحاسبه می‌شود تا تست واقعاً «فایل نیست» را بسنجد.
++$missing_file['t'] = Mdb_Signed_Url_Core::signature('/FA/nope.mp4', MRD_EXPIRES, MRD_UID, MRD_SECRET);
++mrd_assert('evaluate returns 404 for a missing file', Mdb_Signed_Url_Gateway::evaluate($config, $missing_file, $now)['status'], 404);
++
++$traversal = array(
++    'f' => '/FA/../../notes.txt',
++    'e' => (string) MRD_EXPIRES,
++    'u' => (string) MRD_UID,
++    't' => Mdb_Signed_Url_Core::signature('/FA/../../notes.txt', MRD_EXPIRES, MRD_UID, MRD_SECRET),
++);
++// حتی با امضای معتبر، traversal رد می‌شود — یعنی امضا مجوز خواندن هر فایلی نیست.
++mrd_assert('evaluate rejects traversal even with a valid signature', Mdb_Signed_Url_Gateway::evaluate($config, $traversal, $now)['status'], 404);
++
++$beyond = $good;
++$beyond['e'] = (string) ($now + 100000);
++$beyond['t'] = Mdb_Signed_Url_Core::signature('/FA/lesson-01.mp4', $now + 100000, MRD_UID, MRD_SECRET);
++mrd_assert('evaluate rejects an expiry beyond max_ttl even when signed', Mdb_Signed_Url_Gateway::evaluate($config, $beyond, $now)['status'], 403);
++
++$no_secret = array('secret' => '', 'media_root' => $root);
++mrd_assert('evaluate fails closed when the secret is not configured', Mdb_Signed_Url_Gateway::evaluate($no_secret, $good, $now)['status'], 400);
++
++$no_root = array('secret' => MRD_SECRET, 'media_root' => '');
++mrd_assert('evaluate fails closed when the media root is not configured', Mdb_Signed_Url_Gateway::evaluate($no_root, $good, $now)['status'], 400);
++
++// مهمان: شناسهٔ کاربر صفر. امضا باید با u=0 معتبر باشد (پیش‌نمایش رایگان).
++$guest_sig = Mdb_Signed_Url_Core::signature('/FA/lesson-01.mp4', MRD_EXPIRES, 0, MRD_SECRET);
++$guest = array('f' => '/FA/lesson-01.mp4', 'e' => (string) MRD_EXPIRES, 'u' => '0', 't' => $guest_sig);
++mrd_assert('evaluate accepts a guest (u=0) signature', Mdb_Signed_Url_Gateway::evaluate($config, $guest, $now)['status'], 200);
++
++// ─── ۸) parse_query — حفظ «+» ──────────────────────────────────────────────
++
++$q = Mdb_Signed_Url_Gateway::parse_query('f=%2FFA%2Fa%2Bb.mp4&e=1&u=2&t=x');
++mrd_assert('parse_query keeps + as a literal plus', $q['f'], '/FA/a+b.mp4');
++
++$q = Mdb_Signed_Url_Gateway::parse_query('f=%2FFA%2F%D8%AF%D8%B1%D8%B3.mp4');
++mrd_assert('parse_query decodes percent-encoded utf-8', $q['f'], '/FA/درس.mp4');
++
++$q = Mdb_Signed_Url_Gateway::parse_query('');
++mrd_assert('parse_query on an empty string', $q, array());
++
++$q = Mdb_Signed_Url_Gateway::parse_query('a=1&b=2');
++mrd_assert('parse_query handles several parameters', $q, array('a' => '1', 'b' => '2'));
++
++// ─── ۹) پیکربندی افزونه ────────────────────────────────────────────────────
++
++$GLOBALS['mrd_test_options'] = array();
++$GLOBALS['mrd_test_filters'] = array();
++
++mrd_assert('signed urls are OFF by default (safe rollout order)', MrDastbaaf_Signed_Url_Service::is_enabled(), false);
++
++mrd_assert(
++    'maybe_sign is a no-op while disabled',
++    MrDastbaaf_Signed_Url_Service::maybe_sign('https://dll.mrdastbaaf.com/FA/a.mp4', MRD_UID),
++    'https://dll.mrdastbaaf.com/FA/a.mp4'
++);
++
++$secret = MrDastbaaf_Signed_Url_Service::get_secret();
++mrd_assert('get_secret generates a secret on first use', strlen($secret) > 0, true);
++mrd_assert('get_secret is stable across calls', MrDastbaaf_Signed_Url_Service::get_secret(), $secret);
++
++// پرچم روشن ولی دروازه تنظیم‌نشده ⇒ عمداً خاموش می‌ماند، وگرنه آدرس ناقص ساخته
++// می‌شود و پخش می‌شکند.
++$GLOBALS['mrd_test_options'][MrDastbaaf_Signed_Url_Service::ENABLED_OPTION] = true;
++mrd_assert('enabling without a configured gateway stays OFF', MrDastbaaf_Signed_Url_Service::is_enabled(), false);
++
++$GLOBALS['mrd_test_options'][MrDastbaaf_Signed_Url_Service::GATEWAY_OPTION] = MRD_GATEWAY;
++mrd_assert('enabling with a gateway turns signing on', MrDastbaaf_Signed_Url_Service::is_enabled(), true);
++
++$auto = MrDastbaaf_Signed_Url_Service::maybe_sign('https://dll.mrdastbaaf.com/FA/lesson-01.mp4', 7);
++mrd_assert('maybe_sign produces a gateway url once enabled', (strpos($auto, MRD_GATEWAY . '?f=') === 0), true);
++mrd_assert('maybe_sign embeds the user id', (strpos($auto, '&u=7&') !== false), true);
++
++// رفت‌وبرگشت نهایی: آدرسی که افزونه می‌سازد باید در دروازه معتبر باشد. این
++// همان قراردادی است که اگر بشکند، همهٔ پخش‌ها ۴۰۳ می‌شوند.
++//
++// پیکربندی دروازه اینجا با **کلید واقعی افزونه** ساخته می‌شود، نه با ثابت تست:
++// آنچه باید بسنجیم این است که «هر کلیدی افزونه امضا می‌کند، همان دروازه تأیید
++// می‌کند» — نه اینکه تست بتواند یک کلید دلخواه را دو طرف جا بیندازد.
++$plugin_config = $config;
++$plugin_config['secret'] = MrDastbaaf_Signed_Url_Service::get_secret();
++
++$auto_params = Mdb_Signed_Url_Gateway::parse_query(parse_url($auto, PHP_URL_QUERY));
++mrd_assert(
++    'a url minted by the plugin validates in the gateway',
++    Mdb_Signed_Url_Gateway::evaluate($plugin_config, $auto_params, (int) $auto_params['e'] - 10)['status'],
++    200
++);
++
++// و برعکس: با کلید اشتباه، همان آدرس رد می‌شود. بدون این، تست بالا می‌توانست
++// به‌اشتباه سبز شود اگر بررسی امضا کلاً از کار افتاده باشد.
++mrd_assert(
++    'the same url is rejected by a gateway holding a different secret',
++    Mdb_Signed_Url_Gateway::evaluate($config, $auto_params, (int) $auto_params['e'] - 10)['status'],
++    403
++);
++
++$GLOBALS['mrd_test_filters']['mrdastbaaf_signed_urls_enabled'] = false;
++mrd_assert('the filter can force signing off', MrDastbaaf_Signed_Url_Service::is_enabled(), false);
++$GLOBALS['mrd_test_filters'] = array();
++
++mrd_assert(
++    'ttl falls back to the default when unset',
++    MrDastbaaf_Signed_Url_Service::get_ttl(),
++    MrDastbaaf_Signed_Url_Service::DEFAULT_TTL_SECONDS
++);
++
++$GLOBALS['mrd_test_options'][MrDastbaaf_Signed_Url_Service::TTL_OPTION] = -5;
++mrd_assert(
++    'a nonsensical ttl falls back to the default',
++    MrDastbaaf_Signed_Url_Service::get_ttl(),
++    MrDastbaaf_Signed_Url_Service::DEFAULT_TTL_SECONDS
++);
++
++$GLOBALS['mrd_test_options'][MrDastbaaf_Signed_Url_Service::TTL_OPTION] = 999999999;
++mrd_assert(
++    'ttl is capped at MAX_TTL_SECONDS',
++    MrDastbaaf_Signed_Url_Service::get_ttl(),
++    MrDastbaaf_Signed_Url_Service::MAX_TTL_SECONDS
++);
++
++// ─── ۱۰) نگهبان واگرایی ────────────────────────────────────────────────────
++
++// افزونه و دروازه باید **مو‌به‌مو** یک امضا بدهند. امروز افزونه به هستهٔ مشترک
++// واگذار می‌کند، پس این تساوی بدیهی است — و دقیقاً به همین دلیل ارزش قفل‌کردن
++// دارد: اگر روزی کسی یکی از دو طرف را جداگانه پیاده کند، این تست می‌افتد، نه
++// پخش‌های پروداکشن.
++mrd_assert(
++    'the plugin signer and the gateway core agree',
++    MrDastbaaf_Signed_Url_Service::sign(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET),
++    Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET)
++);
++
++mrd_assert(
++    'the plugin verifier accepts what the core signs',
++    MrDastbaaf_Signed_Url_Service::verify(
++        MRD_PATH,
++        MRD_EXPIRES,
++        MRD_UID,
++        Mdb_Signed_Url_Core::signature(MRD_PATH, MRD_EXPIRES, MRD_UID, MRD_SECRET),
++        MRD_SECRET,
++        $now
++    ),
++    true
++);
++
++// پاک‌سازی فایل‌های موقت
++@unlink($root . '/FA/escape.mp4');
++@unlink($root . '/FA/lesson-01.mp4');
++@unlink($root . '/FA/درس-اول.mp4');
++@unlink($root . '/notes.txt');
++@unlink($outside . '/secret.mp4');
++@rmdir($root . '/FA');
++@rmdir($root);
++@rmdir($outside);
++
++echo "\n---- result ----\n";
++echo "PASS: {$pass}\n";
++echo "FAIL: {$fail}\n";
++if ($skip > 0) {
++    echo "SKIP: {$skip}\n";
++}
++
++exit($fail > 0 ? 1 : 0);
+-- 
+2.55.0.windows.3
+

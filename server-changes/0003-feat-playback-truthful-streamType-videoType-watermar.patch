@@ -1,7 +1,7 @@
-From fd28400c1c5b944469c52264394958a6bd70d2b0 Mon Sep 17 00:00:00 2001
+From d476bc73094915f4cdc9e28a7e9273fb42789f50 Mon Sep 17 00:00:00 2001
 From: Mdjavad2nd prf <md.javad01@gmail.com>
 Date: Fri, 16 Oct 2026 20:01:04 +0330
-Subject: [PATCH] feat(playback): truthful streamType, videoType,
+Subject: [PATCH 3/5] feat(playback): truthful streamType, videoType,
  watermarkFullName (v1.8.0)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -563,3 +563,6 @@ index 0000000..14d2740
 +echo "FAIL: {$fail}\n";
 +
 +exit($fail > 0 ? 1 : 0);
+-- 
+2.55.0.windows.3
+
