@@ -20,6 +20,11 @@ gradlew.bat text eol=crlf
 *.jks binary
 *.keystore binary
 
+# Patch files must survive byte-for-byte: normalising line endings inside a
+# diff corrupts the context lines and makes `git am` fail.
+*.patch -text
+*.diff  -text
+
 # Keep generated/verbose files out of diffs and language stats.
 gradle/wrapper/gradle-wrapper.jar binary
 *.lock binary

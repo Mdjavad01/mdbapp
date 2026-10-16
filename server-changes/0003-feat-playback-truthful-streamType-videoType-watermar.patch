@@ -1,0 +1,565 @@
+From fd28400c1c5b944469c52264394958a6bd70d2b0 Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Fri, 16 Oct 2026 20:01:04 +0330
+Subject: [PATCH] feat(playback): truthful streamType, videoType,
+ watermarkFullName (v1.8.0)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Three additive keys on the playback contract. No schema change; every existing
+key is unchanged, so the shipped web PWA is unaffected.
+
+1. streamType was hard-coded "hls" while the server serves MP4. A client
+   trusting it would initialise an HLS player against a plain MP4. It is now
+   derived from the lesson's own video_url via detect_video_type().
+
+   The rule is deliberately conservative: ONLY a .m3u8 suffix means HLS,
+   everything else is MP4. The admin can paste any URL into the video field —
+   the plugin validates only https and the host allowlist, never the extension
+   — and in proxy mode the URL has no extension at all. webm/mov therefore
+   report mp4; Media3 uses the same data source for all of them, so the
+   distinction has no behavioural consequence and a third type would widen the
+   contract for nothing. A filter (mrdastbaaf_stream_video_type) covers the
+   real-HLS future, and an unsupported value from it is rejected back to mp4
+   rather than leaking through.
+
+2. watermarkFullName. The client needed name + id + masked phone for the
+   watermark, but the name only existed in GET /auth/me — which an anonymous
+   free-preview playback never calls, so a guest got no name at all.
+   build_watermark() now returns a name key, surfaced on both the ticket and
+   the playback responses, with a fallback for an empty display_name so the
+   watermark never renders a blank segment. Identity stays server-provided,
+   never derived client-side.
+
+3. qualities[].type — per-quality discriminator, since a client must not sniff
+   the extension (proxy URLs have none).
+
+Also: build_watermark() is now called once per playback response instead of
+separately in each branch.
+
+Tests: tests/php/test-video-type.php — 16 assertions covering the MP4 default,
+the .m3u8 rule including case-insensitivity and signed query strings, the
+extension-less proxy shape, malformed/empty URLs, a path segment literally
+named m3u8, a .mp4 segment under an hls/ directory, and all three filter
+outcomes. Suite totals 100 assertions across four files.
+
+Docs: docs/PLUGIN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md
+---
+ ...IN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md | 142 +++++++++++++
+ .../includes/class-courses-controller.php     | 104 +++++++++-
+ .../tests/php/test-video-type.php             | 186 ++++++++++++++++++
+ 3 files changed, 426 insertions(+), 6 deletions(-)
+ create mode 100644 docs/PLUGIN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/test-video-type.php
+
+diff --git a/docs/PLUGIN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md b/docs/PLUGIN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md
+new file mode 100644
+index 0000000..8bf0ee7
+--- /dev/null
++++ b/docs/PLUGIN_v1.8.0_VIDEO_TYPE_AND_WATERMARK_NAME.md
+@@ -0,0 +1,142 @@
++# Plugin change — `videoType` and `watermarkFullName`
++
++**Version:** bridge `1.8.0` · **Schema:** unchanged (`1.7.0`)
++**Unblocks:** a single-source watermark and a reliable MP4↔HLS switch in the player.
++
++Two small additive changes to the playback contract. No schema change, no
++behaviour change for existing clients — every new key is optional and every
++existing key is unchanged.
++
++---
++
++## 1. `streamType` was lying
++
++`POST /lessons/{id}/playback-ticket` hard-coded `"streamType": "hls"` while the
++server serves **MP4**. A client that trusted that field would initialise an HLS
++player against a plain MP4 file.
++
++It is now derived from the lesson's own `video_url` via
++`MrDastbaaf_Courses_Controller::detect_video_type()`.
++
++### The detection rule
++
++**Only a `.m3u8` suffix means HLS. Everything else is MP4.**
++
++This is deliberately conservative. The admin can paste any URL into a lesson's
++video field — the plugin validates only `https://` and the host allowlist, never
++the extension — and in proxy mode the URL has no extension at all
++(`/lessons/{id}/stream?token=…`). An optimistic guess would be wrong exactly when
++it matters.
++
++`webm`, `mov` and friends therefore report `mp4`. Media3 uses the same
++`DefaultHttpDataSource` for all of them, so the distinction has no behavioural
++consequence, and adding a third type would widen the contract for nothing.
++
++A filter is provided for when real HLS (or DASH) lands, so no core code needs to
++change:
++
++```php
++add_filter('mrdastbaaf_stream_video_type', function ($type, $url, $lesson_id) {
++    return 'hls';
++}, 10, 3);
++```
++
++An unsupported value from the filter is rejected back to `mp4` rather than
++leaking through.
++
++---
++
++## 2. `watermarkFullName`
++
++The app needed **name + user id + masked phone** for the player watermark, but
++the full name only existed in `GET /auth/me` — which an anonymous free-preview
++playback never calls. The client was forced to merge two sources, and got no name
++at all for a guest.
++
++`build_watermark()` now returns a `name` key, surfaced as `watermarkFullName` on
++both the ticket and the playback responses.
++
++| Caller | `watermarkText` | `watermarkUserId` | `watermarkFullName` |
++|---|---|---|---|
++| Signed in | `0912***4567 \| ID: 42` | `"42"` | the user's `display_name` |
++| Guest (free preview) | `مهمان \| مستر دستباف` | `"guest"` | `مهمان` |
++
++The name comes from the server, never derived client-side — the same rule that
++already applied to `text` and `user_id`. A user whose `display_name` is empty
++falls back to `هنرجو` so the watermark never renders a blank segment.
++
++---
++
++## Full response shapes
++
++### `POST /lessons/{id}/playback-ticket`
++
++```jsonc
++{
++  "ticketId": "tkt_aB3xY9kLmN2pQ4rT",
++  "lessonId": "12",
++  "expiresInSeconds": 900,
++  "issuedAt": "2026-10-16T08:00:00+00:00",
++  "expiresAt": "2026-10-16T08:15:00+00:00",
++  "watermarkText": "0912***4567 | ID: 42",
++  "watermarkUserId": "42",
++  "watermarkFullName": "محمدجواد فلان",   // NEW
++  "streamType": "mp4"                     // was hard-coded "hls"
++}
++```
++
++### `POST /lessons/{id}/playback` — direct mode (default)
++
++```jsonc
++{
++  "videoUrl": "https://dll.mrdastbaaf.com/FA/lesson-01.mp4",
++  "videoType": "mp4",                     // NEW
++  "watermarkText": "0912***4567 | ID: 42",
++  "watermarkUserId": "42",
++  "watermarkFullName": "محمدجواد فلان",   // NEW
++  "expiresAt": "2026-10-16T08:15:00+00:00",
++  "qualities": [
++    { "label": "1080p", "url": "https://…/lesson-01-1080.mp4", "type": "mp4" }  // `type` NEW
++  ],
++  "proxyMode": false
++}
++```
++
++### `POST /lessons/{id}/playback` — proxy mode
++
++Same keys; `videoType` reflects the **source** type, because the proxy streams the
++source bytes through unchanged.
++
++---
++
++## Client guidance
++
++- **Do not sniff the extension.** Read `videoType`; fall back to `streamType` from
++  the ticket; only then guess. In proxy mode the URL has no extension, so sniffing
++  fails outright.
++- `watermarkFullName` is authoritative — do not substitute the locally cached
++  profile name, which may be stale or absent for a guest.
++
++## Tests
++
++`tests/php/test-video-type.php` — 16 assertions, no WordPress required (the two
++WordPress functions it needs are stubbed in the file, the same way the other
++tests stub `ABSPATH`):
++
++```bash
++./tests/php/run-all.sh
++```
++
++Covers the MP4 default, the `.m3u8` rule including case-insensitivity and signed
++query strings, the extension-less proxy shape, malformed and empty URLs, a path
++segment literally named `m3u8`, a `.mp4` segment under an `hls/` directory, and
++all three filter outcomes (promote to HLS, reject an unsupported type, reject
++null).
++
++## Staging checklist
++
++- [ ] `POST /lessons/{id}/playback-ticket` on an MP4 lesson returns `streamType: "mp4"`.
++- [ ] Same endpoint returns `watermarkFullName` matching the account's display name.
++- [ ] A free preview while signed out returns `watermarkFullName: "مهمان"`.
++- [ ] `POST /lessons/{id}/playback` returns `videoType` and a `type` on each quality.
++- [ ] The shipped web PWA still plays (it ignores every new key).
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
+index 4175f84..718ecaf 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
+@@ -446,7 +446,16 @@ class MrDastbaaf_Courses_Controller {
+             'expiresAt' => gmdate('c', time() + self::TICKET_TTL), // BUG-12: زمان مطلق انقضا
+             'watermarkText' => $watermark['text'],
+             'watermarkUserId' => $watermark['user_id'],
+-            'streamType' => 'hls',
++            // v1.8.0: نام کامل نمایشی — تا کلاینت برای ساختن واترمارک به یک
++            // منبع تکیه کند (پیش‌تر فقط در GET /auth/me بود و مهمان هرگز آن را
++            // صدا نمی‌زد).
++            'watermarkFullName' => $watermark['name'],
++            // v1.8.0: مقدار پیش‌تر هاردکد 'hls' بود در حالی که MP4 سرو می‌شد —
++            // یعنی کلاینتِ اعتمادکننده به این فیلد، پلیر اشتباهی انتخاب می‌کرد.
++            // اکنون از خود آدرس ویدیوی درس مشتق می‌شود.
++            'streamType' => $lesson_row
++                ? self::detect_video_type((string) $lesson_row->video_url, $lesson_id)
++                : 'mp4',
+         ));
+     }
+ 
+@@ -486,6 +495,10 @@ class MrDastbaaf_Courses_Controller {
+ 
+         $issued_at = isset($ticket['issued_at']) ? (int) $ticket['issued_at'] : time();
+ 
++        // v1.8.0: یک‌بار محاسبه می‌شود (پیش‌تر در هر شاخه جداگانه صدا زده
++        // می‌شد) و شامل نام کامل هم هست.
++        $watermark = $this->build_watermark($user_id);
++
+         /**
+          * v1.2.0 (یافتهٔ ۱-۸): فیلتر ارائه‌دهندهٔ استریم — لایهٔ provider برای URLهای
+          * امضاشدهٔ CDN (نقطهٔ اتصال ArvanCloud؛ نیاز به کلیدها در کار آینده). امروز
+@@ -537,24 +550,46 @@ class MrDastbaaf_Courses_Controller {
+                 $proxy_qualities[] = array(
+                     'label' => $q['label'],
+                     'url'   => add_query_arg('token', $q_token, $base_url),
++                    // v1.8.0: نوع هر کیفیت — پروکسی همان بایت‌های منبع را
++                    // می‌فرستد، پس نوع = نوع منبع.
++                    'type'  => self::detect_video_type($q['url'], $lesson_id),
+                 );
+             }
+ 
+             return rest_ensure_response(array(
+                 'videoUrl'     => $proxy_video_url,
+-                'watermarkText' => $this->build_watermark($user_id)['text'],
++                // پروکسی بایت‌های منبع را عبور می‌دهد؛ نوع = نوع منبع.
++                'videoType'    => self::detect_video_type($video_url, $lesson_id),
++                'watermarkText' => $watermark['text'],
++                'watermarkUserId' => $watermark['user_id'],
++                'watermarkFullName' => $watermark['name'],
+                 'expiresAt'    => gmdate('c', $issued_at + self::TICKET_TTL),
+                 'qualities'    => $proxy_qualities,
+                 'proxyMode'    => true,
+             ));
+         }
+ 
++        // v1.8.0: نوع هر کیفیت — کلاینت نباید برای تشخیص MP4/HLS به پسوند
++        // تکیه کند (در حالت پروکسی اصلاً پسوندی وجود ندارد).
++        $typed_qualities = array();
++        foreach ($stored_qualities as $q) {
++            $typed_qualities[] = array(
++                'label' => $q['label'],
++                'url'   => $q['url'],
++                'type'  => self::detect_video_type($q['url'], $lesson_id),
++            );
++        }
++
+         return rest_ensure_response(array(
+             'videoUrl' => $video_url,
+-            'watermarkText' => $this->build_watermark($user_id)['text'],
++            'videoType' => self::detect_video_type($video_url, $lesson_id),
++            'watermarkText' => $watermark['text'],
++            'watermarkUserId' => $watermark['user_id'],
++            'watermarkFullName' => $watermark['name'],
+             'expiresAt' => gmdate('c', $issued_at + self::TICKET_TTL),
+             // v1.4.0: [{label,url}, …] — ممکن است خالی باشد (فقط «خودکار»)
+-            'qualities' => $stored_qualities,
++            // v1.8.0: کلید type به هر آیتم اضافه شد
++            'qualities' => $typed_qualities,
+             'proxyMode' => false,
+         ));
+     }
+@@ -778,6 +813,42 @@ class MrDastbaaf_Courses_Controller {
+      * @param string $raw_json محتوای ستون qualities_json
+      * @return array آرایهٔ [{label,url}, …] (ممکن است خالی)
+      */
++    /**
++     * v1.8.0: تشخیص نوع استریم از روی آدرس ویدیو.
++     *
++     * قرارداد عمدی و محافظه‌کارانه: **فقط** پسوند `.m3u8` یعنی HLS؛ هر چیز
++     * دیگری MP4 فرض می‌شود. دلیل: مدیر سایت می‌تواند هر آدرسی را در فیلد ویدیو
++     * بگذارد (پلاگین فقط https و لیست سفید هاست را چک می‌کند، نه پسوند را) و
++     * در حالت پروکسی اصلاً پسوندی وجود ندارد (`/stream?token=…`). پس «حدس
++     * خوش‌بینانه» خطرناک است و پیش‌فرض MP4 کم‌ریسک‌ترین انتخاب است.
++     *
++     * فیلتر `mrdastbaaf_stream_video_type` برای وقتی است که لایهٔ HLS واقعی
++     * اضافه شود (یا DASH) — بدون تغییر این تابع.
++     *
++     * @param string   $url    آدرس ویدیو
++     * @param int|null $lesson_id برای فیلتر
++     * @return string 'mp4' | 'hls'
++     */
++    public static function detect_video_type($url, $lesson_id = null) {
++        $type = 'mp4';
++
++        $path = (string) wp_parse_url((string) $url, PHP_URL_PATH);
++        if ('' !== $path && preg_match('/\.m3u8$/i', $path)) {
++            $type = 'hls';
++        }
++
++        /**
++         * فیلتر نوع استریم — نقطهٔ اتصال لایهٔ HLS آینده.
++         *
++         * @param string   $type      'mp4' | 'hls'
++         * @param string   $url       آدرس ویدیو
++         * @param int|null $lesson_id شناسهٔ درس
++         */
++        $type = apply_filters('mrdastbaaf_stream_video_type', $type, $url, $lesson_id);
++
++        return in_array($type, array('mp4', 'hls'), true) ? $type : 'mp4';
++    }
++
+     private function sanitize_stored_qualities($raw_json) {
+         $decoded = json_decode((string) $raw_json, true);
+         if (!is_array($decoded)) {
+@@ -1253,20 +1324,41 @@ class MrDastbaaf_Courses_Controller {
+      * واترمارک پیش‌فرض کاربر — PRIVACY FIX (BUG-01) دست‌نخورده:
+      * user_login شماره تلفن خام است و فقط شکل ماسک‌شده مجاز به خروج از سرور است.
+      *
++     * v1.8.0: کلید NEW «name» — نام کامل نمایشی کاربر.
++     *
++     * چرا: کلاینت برای ساختن واترمارک به «نام + شناسه + شمارهٔ ماسک‌شده» نیاز
++     * داشت، اما نام کامل فقط در GET /auth/me بود و بلیط پخش آن را نداشت. یعنی
++     * اپ مجبور بود دو منبع را ترکیب کند و برای مهمان (پیش‌نمایش رایگان بدون
++     * ورود) هیچ‌وقت /auth/me صدا زده نمی‌شد. اکنون هویت از یک منبع می‌آید.
++     *
++     * نام اینجا «منبع سرور» است، نه چیزی که کلاینت استنتاج کند — همان قاعده‌ای
++     * که برای text/user_id حاکم بود.
++     *
+      * @param int $user_id
+-     * @return array آرایه با کلیدهای text و user_id
++     * @return array آرایه با کلیدهای text، user_id و name
+      */
+     private function build_watermark($user_id) {
+         $user = $user_id ? get_user_by('ID', $user_id) : false;
+         if (!$user) {
+-            return array('text' => 'مهمان | مستر دستباف', 'user_id' => 'guest');
++            return array(
++                'text' => 'مهمان | مستر دستباف',
++                'user_id' => 'guest',
++                'name' => 'مهمان',
++            );
+         }
+ 
+         $phone = (string) $user->user_login;
+         $masked_phone = substr($phone, 0, 4) . '***' . substr($phone, -4);
++
++        $display_name = trim((string) $user->display_name);
++
+         return array(
+             'text' => $masked_phone . ' | ID: ' . $user->ID,
+             'user_id' => (string) $user_id,
++            // نام نمایشی خالی ⇒ fallback به همان برچسب مهمان، تا واترمارک هرگز
++            // بخش خالی نگیرد (کاربرانی که با نسخه‌های قدیمی و بدون نام ساخته
++            // شده‌اند display_name معتبر «هنرجو NNNN» دارند، اما احتیاط).
++            'name' => ('' !== $display_name) ? $display_name : 'هنرجو',
+         );
+     }
+ }
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-video-type.php b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-video-type.php
+new file mode 100644
+index 0000000..14d2740
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-video-type.php
+@@ -0,0 +1,186 @@
++<?php
++/**
++ * تست مستقل تشخیص نوع استریم (test-video-type) — بدون وردپرس
++ *
++ * اجرای روی سرور: php tests/php/test-video-type.php
++ *
++ * فقط متد استاتیک و خالص MrDastbaaf_Courses_Controller::detect_video_type()
++ * آزموده می‌شود. دو تابع وردپرس که این متد لازم دارد (wp_parse_url و
++ * apply_filters) در همین فایل با پیاده‌سازی حداقلی جایگزین می‌شوند — همان
++ * الگویی که تست‌های دیگر برای ABSPATH به‌کار می‌برند.
++ *
++ * چرا این تست مهم است: پیش از v1.8.0، فیلد streamType در پاسخ بلیط **هاردکد
++ * 'hls'** بود در حالی که سرور MP4 سرو می‌کرد. کلاینتی که به آن اعتماد می‌کرد،
++ * پلیر HLS را روی یک فایل MP4 راه می‌انداخت. این تست تضمین می‌کند مقدار
++ * خروجی از خود آدرس مشتق شود و پیش‌فرض هم محافظه‌کارانه بماند.
++ */
++
++define('ABSPATH', '/tmp/');
++
++if (!defined('MINUTE_IN_SECONDS')) {
++    define('MINUTE_IN_SECONDS', 60);
++}
++if (!defined('HOUR_IN_SECONDS')) {
++    define('HOUR_IN_SECONDS', 3600);
++}
++if (!defined('DAY_IN_SECONDS')) {
++    define('DAY_IN_SECONDS', 86400);
++}
++
++/**
++ * جایگزین wp_parse_url — همان رفتار هستهٔ وردپرس روی parse_url.
++ */
++if (!function_exists('wp_parse_url')) {
++    function wp_parse_url($url, $component = -1) {
++        return parse_url($url, $component);
++    }
++}
++
++/**
++ * جایگزین apply_filters — با یک رجیستری حداقلی تا مسیر فیلتر هم آزمون‌پذیر باشد.
++ */
++$GLOBALS['mrd_test_filters'] = array();
++if (!function_exists('apply_filters')) {
++    function apply_filters($tag, $value) {
++        if (isset($GLOBALS['mrd_test_filters'][$tag])) {
++            return $GLOBALS['mrd_test_filters'][$tag];
++        }
++        return $value;
++    }
++}
++
++require_once __DIR__ . '/../../includes/class-courses-controller.php';
++
++$pass = 0;
++$fail = 0;
++
++/**
++ * اجرای یک assertion و ثبت نتیجه
++ */
++function mrd_assert($label, $actual, $expected) {
++    global $pass, $fail;
++    if ($actual === $expected) {
++        $pass++;
++        echo "PASS: {$label}\n";
++    } else {
++        $fail++;
++        echo "FAIL: {$label} — expected: " . var_export($expected, true) . " | got: " . var_export($actual, true) . "\n";
++    }
++}
++
++// ─── ۱) پیش‌فرض محافظه‌کارانه: هر چیزی جز .m3u8 یعنی MP4 ────────────────────
++
++mrd_assert(
++    'plain mp4',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/lesson-01.mp4'),
++    'mp4'
++);
++
++mrd_assert(
++    'mp4 with a dot in the filename',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/lesson.01.mp4'),
++    'mp4'
++);
++
++// سایر فرمت‌های ویدیویی عمداً MP4 گزارش می‌شوند: پلیر Media3 همان داده‌سورس را
++// می‌گیرد و تفاوت رفتاری ندارد، در حالی که افزودن نوع سوم، سطح قرارداد را
++// بی‌دلیل بزرگ می‌کند.
++mrd_assert(
++    'webm falls back to mp4 by contract',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/lesson-01.webm'),
++    'mp4'
++);
++
++mrd_assert(
++    'extension-less url (proxy shape) is mp4',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://mrdastbaaf.com/wp-json/mrdastbaaf/v1/lessons/12/stream?token=XyZ123'),
++    'mp4'
++);
++
++mrd_assert(
++    'empty url is mp4',
++    MrDastbaaf_Courses_Controller::detect_video_type(''),
++    'mp4'
++);
++
++mrd_assert(
++    'malformed url is mp4',
++    MrDastbaaf_Courses_Controller::detect_video_type('not a url at all'),
++    'mp4'
++);
++
++mrd_assert(
++    'a path segment named m3u8 without the extension is mp4',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/m3u8/segment.mp4'),
++    'mp4'
++);
++
++mrd_assert(
++    'the literal filename m3u8 without a dot is mp4',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/m3u8'),
++    'mp4'
++);
++
++// ─── ۲) HLS فقط با پسوند .m3u8 ─────────────────────────────────────────────
++
++mrd_assert(
++    'hls master playlist',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/master.m3u8'),
++    'hls'
++);
++
++mrd_assert(
++    'hls is case insensitive',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/master.M3U8'),
++    'hls'
++);
++
++mrd_assert(
++    'hls with signed query params',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/master.m3u8?token=abc&exp=1800000000'),
++    'hls'
++);
++
++mrd_assert(
++    'hls variant playlist in a subdirectory',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/1080p/index.m3u8'),
++    'hls'
++);
++
++mrd_assert(
++    'a .mp4 segment is still mp4 even under an hls folder',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/hls/segment-001.mp4'),
++    'mp4'
++);
++
++// ─── ۳) فیلتر توسعه ────────────────────────────────────────────────────────
++
++$GLOBALS['mrd_test_filters']['mrdastbaaf_stream_video_type'] = 'hls';
++mrd_assert(
++    'filter can promote a url to hls (future signed-HLS provider)',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/lesson.mp4'),
++    'hls'
++);
++
++$GLOBALS['mrd_test_filters']['mrdastbaaf_stream_video_type'] = 'dash';
++mrd_assert(
++    'an unsupported type from the filter is rejected back to mp4',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/lesson.mp4'),
++    'mp4'
++);
++
++$GLOBALS['mrd_test_filters']['mrdastbaaf_stream_video_type'] = null;
++mrd_assert(
++    'a null filter result falls back to mp4 rather than leaking null',
++    MrDastbaaf_Courses_Controller::detect_video_type('https://dll.mrdastbaaf.com/FA/lesson.mp4'),
++    'mp4'
++);
++
++// پاک‌سازی رجیستری فیلتر تا آزمون‌های بعدی تحت تأثیر نباشند
++$GLOBALS['mrd_test_filters'] = array();
++
++echo "\n---- result ----\n";
++echo "PASS: {$pass}\n";
++echo "FAIL: {$fail}\n";
++
++exit($fail > 0 ? 1 : 0);

@@ -1,0 +1,1738 @@
+From 7b32f41926c2070608291aa23fffadb9593c32d5 Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Fri, 16 Oct 2026 19:46:00 +0330
+Subject: [PATCH] feat(auth): multi-device Bearer tokens (v1.8.0, schema 1.6.0)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Release blocker for the Android app.
+
+Problem: the bridge kept ONE token per user in a single usermeta slot, so
+verify-otp overwrote it on every login. Signing in on the phone silently
+signed the user out of the web PWA and vice versa — and since subscriptions
+are bought on the website, a user has to be signed in on both.
+
+Tokens now live in wp_mrdastbaaf_api_tokens, one row per device:
+  token_hash (sha256, never the raw secret) · device_id · device_name
+  platform · app_version · issued_at · last_used_at · expires_at · revoked_at
+
+- MAX_DEVICES = 3; a 4th login revokes the OLDEST session, never the newest.
+- 30-day lifetime and the {user_id}.{secret} format are unchanged, so the
+  shipped PWA 1.5.6 needs no update. verify-otp gains only optional params
+  and three additive response keys (sessionId, expiresAt, expiresInSeconds).
+- POST /auth/logout now revokes only the current session (or every session of
+  a given device_id), instead of nuking the shared meta.
+- New: GET /auth/sessions, DELETE /auth/sessions (all but current),
+  DELETE /auth/sessions/{id}. Ownership is enforced in the SQL, so guessing
+  another user's session id is a 404 rather than an IDOR.
+- Fail-closed: if the token row cannot be inserted, verify-otp returns
+  500 token_storage_failed instead of handing out a token that was never
+  persisted.
+
+Migration is lazy and lossless. Pre-upgrade tokens exist only as sha256 in
+usermeta, which is exactly what token_hash stores — so the existing
+constant-time comparison still validates them. The row is created on each
+user's next authenticated request (an eager migration would be a full
+usermeta scan, and most tokens belong to users who never return), then the
+legacy meta is deleted. No user is logged out.
+
+Operational:
+- daily cron mrdastbaaf_tokens_prune removes revoked/expired rows after 90
+  days; scheduled on activate/upgrade, cleared on deactivate.
+- last_used_at is throttled to one write per session per 10 minutes. This
+  plugin has a production incident on record caused by frequent writes to
+  shared rows on shared hosting (v1.7.9-1.7.13); writing on every request
+  would reintroduce it.
+
+Tests: tests/php/test-token-store.php — 40 assertions covering parsing,
+hashing, constant-time comparison, legacy compatibility, the fail-closed
+rules in is_usable(), oldest-session selection with deterministic tie-break,
+the 30-day expiry, and the touch throttle. Added tests/php/run-all.sh so the
+suite is runnable on a bare PHP CLI.
+
+Not covered by unit tests: issue/find_by_token/revoke/enforce_device_limit —
+they need a live $wpdb. A staging checklist is in the doc.
+
+Docs: docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md
+---
+ docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md     | 199 +++++++
+ .../includes/class-auth-controller.php        | 364 +++++++++++-
+ .../includes/class-database.php               |  37 ++
+ .../includes/class-token-store.php            | 559 ++++++++++++++++++
+ .../mrdastbaaf-bridge/mrdastbaaf-bridge.php   |  41 +-
+ .../mrdastbaaf-bridge/tests/php/run-all.sh    |  70 +++
+ .../tests/php/test-token-store.php            | 230 +++++++
+ 7 files changed, 1469 insertions(+), 31 deletions(-)
+ create mode 100644 docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/includes/class-token-store.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/run-all.sh
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/test-token-store.php
+
+diff --git a/docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md b/docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md
+new file mode 100644
+index 0000000..80640a7
+--- /dev/null
++++ b/docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md
+@@ -0,0 +1,199 @@
++# Plugin change — multi-device Bearer tokens
++
++**Version:** bridge `1.7.13` → `1.8.0` · **Schema:** `1.5.1` → `1.6.0`
++**Status:** release blocker for the Android app.
++
++---
++
++## Why
++
++Before this change the bridge kept **one token per user**, in a single usermeta
++slot (`mrdastbaaf_api_token`). `verify-otp` overwrote it on every login.
++
++The consequence is the problem: **signing in on the Android app silently signs
++the user out of the web PWA, and vice versa.** Subscriptions are purchased on the
++website — so a user has to be signed in on the web to buy, and on the phone to
++watch. With one slot, that is impossible.
++
++## What changed
++
++Tokens now live in a dedicated table, one row per device.
++
++```
++wp_mrdastbaaf_api_tokens
++  id · user_id · token_hash · device_id · device_name · platform · app_version
++  issued_at · last_used_at · expires_at · revoked_at
++```
++
++- **`token_hash`** — sha256 of the secret. The raw secret is never stored, so a
++  database leak does not yield a usable token.
++- **`device_id`** — a stable per-install identifier supplied by the client,
++  used for "sign out of this device".
++- **`revoked_at`** — soft revoke. Rows are kept 90 days for auditing ("when was
++  this device disconnected?") and then pruned by a daily cron.
++
++**Limits:** `MAX_DEVICES = 3` (phone + tablet + browser). When a fourth login
++arrives, the **oldest** session is revoked — never the newest, so a user is
++never logged out by their own login.
++
++**Lifetime is unchanged:** 30 days, no refresh token. On 401 the client
++re-authenticates with OTP, exactly as before.
++
++---
++
++## API contract
++
++### `POST /auth/verify-otp` — changed
++
++New **optional** request parameters:
++
++| Param | Type | Notes |
++|---|---|---|
++| `device_id` | string ≤64 | stable per-install id; enables "sign out of this device" |
++| `device_name` | string ≤100 | human label, e.g. `Samsung SM-A546` |
++| `platform` | string ≤20 | `android` \| `web` \| `ios` |
++| `app_version` | string ≤20 | e.g. `1.0.0` |
++
++Response — **existing keys unchanged**, three added:
++
++```jsonc
++{
++  "success": true,
++  "token": "42.9xK2mQ…",              // unchanged format: {user_id}.{secret}
++  "sessionId": "17",                   // NEW
++  "expiresAt": "2026-11-15T08:00:00+00:00",   // NEW, ISO 8601
++  "expiresInSeconds": 2592000,         // NEW
++  "user": { … }
++}
++```
++
++> **Backward compatible.** The web PWA 1.5.6 reads only `token` and `user` and
++> needs no change. Omitting the device parameters is fine — the session is simply
++> recorded as `device_id = ""`.
++
++A new error is possible: `500 token_storage_failed`. Fail-closed — the endpoint
++no longer returns a token that was never persisted.
++
++### `POST /auth/logout` — changed behaviour
++
++Now revokes **only the current session**. Other devices stay signed in, which is
++what a user expects from "log out".
++
++Optional body param `device_id` — revokes every session belonging to that device
++instead (for a client that wants "log out of this device" to be absolute).
++
++```jsonc
++{ "success": true, "message": "…", "revokedSessions": 1 }
++```
++
++### `GET /auth/sessions` — new
++
++Requires Bearer. Lists active sessions, newest first.
++
++```jsonc
++{
++  "sessions": [
++    {
++      "id": "17",
++      "deviceName": "Samsung SM-A546",
++      "platform": "android",
++      "appVersion": "1.0.0",
++      "createdAt": "2026-10-16 08:00:00",
++      "lastSeenAt": "2026-10-16 12:31:00",
++      "expiresAt": "2026-11-15 08:00:00",
++      "current": true
++    }
++  ],
++  "count": 1,
++  "maxDevices": 3
++}
++```
++
++No token, hash or secret ever appears in this response. `deviceName` falls back
++to a Persian label derived from `platform` when the client sent none.
++
++### `DELETE /auth/sessions` — new
++
++Revokes every session **except the current one**.
++
++```jsonc
++{ "success": true, "revokedSessions": 2, "message": "نشست‌های سایر دستگاه‌ها بسته شد." }
++```
++
++Returns `409 session_not_identified` when the current session cannot be
++determined — without that guard, "all except current" would silently become
++"all", logging the user out of the device they were using.
++
++### `DELETE /auth/sessions/{id}` — new
++
++Revokes one session. The ownership guard lives in the SQL
++(`WHERE id = ? AND user_id = ?`), so guessing another user's session id does
++nothing.
++
++```jsonc
++{ "success": true, "wasCurrent": false, "message": "نشست انتخاب‌شده بسته شد." }
++```
++
++Errors: `400 invalid_session`, `404 session_not_found`.
++
++---
++
++## Migration
++
++**No action required.** Existing tokens keep working.
++
++Old tokens exist only as `hash('sha256', secret)` in usermeta — the raw secret
++is not stored, and migration does not need it. The stored hash is copied into
++`token_hash`, so the existing constant-time comparison still succeeds.
++
++Migration is **lazy**, performed on each user's next successful authenticated
++request rather than in the upgrade block:
++
++- an eager migration would be a full-table scan over usermeta on a large site,
++- and most stored tokens belong to users who never come back.
++
++On the first successful legacy authentication the row is created with
++`device_id = 'legacy'`, `device_name = 'دستگاه پیشین'`, and the usermeta keys are
++deleted so the fallback path stops being used. **The user is not logged out.**
++
++`get_user_by_api_token()` therefore has two paths: the tokens table first, the
++legacy usermeta comparison as a fallback. Once every active user has migrated,
++the fallback becomes dead code and can be removed in a later release.
++
++## Housekeeping
++
++- **Daily cron** `mrdastbaaf_tokens_prune` deletes revoked/expired rows older
++  than 90 days. Scheduled on activation, on upgrade, and cleared on deactivation.
++- **`last_used_at` is throttled** to at most one write per session per 10
++  minutes. This plugin's history includes a production incident caused by
++  frequent writes to shared rows on shared hosting (v1.7.9–v1.7.13); a write on
++  every authenticated request would reintroduce exactly that risk.
++
++## Tests
++
++`tests/php/test-token-store.php` — 40 assertions, no WordPress required:
++
++```
++./tests/php/run-all.sh          # or: php tests/php/test-token-store.php
++```
++
++Covers token parsing (including a secret containing a dot), hashing, constant-time
++comparison, legacy-token compatibility, the fail-closed rules in `is_usable()`
++(revoked, expired, expiry-exactly-now, malformed), the oldest-session selection
++policy including deterministic tie-breaking, the 30-day expiry calculation, and
++the `last_used_at` throttle.
++
++The DB-touching paths (`issue`, `find_by_token`, `revoke*`, `enforce_device_limit`)
++are **not** covered by unit tests — they need a live `$wpdb`. They should be
++exercised on staging with the checklist below.
++
++## Staging checklist
++
++- [ ] Log in on the web PWA, then log in on Android → **both stay signed in**.
++- [ ] `GET /auth/sessions` from Android lists both, with `current: true` on the phone.
++- [ ] `POST /auth/logout` from Android → the web session still works.
++- [ ] Log in a 4th time → the oldest session is revoked, the new one works.
++- [ ] `DELETE /auth/sessions/{id}` for another user's id → 404, nothing revoked.
++- [ ] An existing pre-upgrade token still authenticates, and afterwards
++      `wp_usermeta` no longer contains `mrdastbaaf_api_token` for that user.
++- [ ] Confirm `wp_mrdastbaaf_api_tokens` exists with `user_active_idx`.
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php
+index e14c3d6..5eda847 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-auth-controller.php
+@@ -9,6 +9,20 @@ if (!defined('ABSPATH')) {
+ 
+ class MrDastbaaf_Auth_Controller {
+ 
++    /**
++     * v1.8.0: نشست (ردیف جدول توکن) که توکن Bearer جاری به آن تعلق دارد.
++     *
++     * در جریان احراز هویت پر می‌شود تا اندپوینت‌های «خروج» و «فهرست دستگاه‌ها»
++     * بدانند کدام ردیف «دستگاه جاری» است — بدون این، باطل‌کردنِ همه‌به‌جز‌جاری
++     * غیرممکن بود و «خروج» نمی‌توانست دقیقاً یک نشست را ببندد.
++     *
++     * استاتیک است چون احراز هویت در فیلتر determine_current_user (خارج از
++     * نمونهٔ کنترلر) هم اجرا می‌شود و آن مسیر باید همان مقدار را ببیند.
++     *
++     * @var array|null
++     */
++    private static $current_session = null;
++
+     public function register_routes() {
+         register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/request-otp', array(
+             'methods' => 'POST',
+@@ -52,12 +66,52 @@ class MrDastbaaf_Auth_Controller {
+             'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
+         ));
+ 
+-        // v1.2.0: خروج PWA — ابطال توکن Bearer جاری (متیاداتا حذف می‌شود)
++        // v1.2.0: خروج PWA — ابطال توکن Bearer جاری.
++        // v1.8.0: به‌جای حذف متای مشترک، فقط «همین نشست» باطل می‌شود؛ دستگاه‌های
++        // دیگر کاربر (مثلاً وب‌اپ) وارد مانده‌اند. پارامتر اختیاری device_id برای
++        // کلاینتی که می‌خواهد همهٔ نشست‌های همین دستگاه را ببندد.
+         register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/logout', array(
+             'methods' => 'POST',
+             'callback' => array($this, 'handle_logout'),
+             'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
+         ));
++
++        // ─── v1.8.0: مدیریت دستگاه‌ها ─────────────────────────────────────────
++        // با چند-دستگاهی شدن توکن، کاربر باید بتواند ببیند کجا وارد است و
++        // نشست‌های ناخواسته را ببندد. بدون این، سقف ۳ دستگاه برای کاربر
++        // «نامرئی» می‌شد و فقط می‌دید که یک دستگاه قدیمی بی‌دلیل خارج شده است.
++
++        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/sessions', array(
++            array(
++                'methods' => 'GET',
++                'callback' => array($this, 'handle_list_sessions'),
++                'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
++            ),
++            array(
++                // حذف همهٔ نشست‌ها به‌جز دستگاه جاری — «از همهٔ دستگاه‌های دیگر خارج شو».
++                'methods' => 'DELETE',
++                'callback' => array($this, 'handle_revoke_other_sessions'),
++                'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
++            ),
++        ));
++
++        register_rest_route(
++            MRDASTBAAF_API_NAMESPACE,
++            '/auth/sessions/(?P<id>[0-9]+)',
++            array(
++                'methods' => 'DELETE',
++                'callback' => array($this, 'handle_revoke_session'),
++                'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
++                'args' => array(
++                    'id' => array(
++                        'required' => true,
++                        'validate_callback' => function ($value) {
++                            return ctype_digit((string) $value) && (int) $value > 0;
++                        },
++                    ),
++                ),
++            )
++        );
+     }
+ 
+     /**
+@@ -468,43 +522,274 @@ class MrDastbaaf_Auth_Controller {
+         }
+ 
+         // v1.2.0 (یافتهٔ ۲-۱۲): توکن سخت‌شده — فرمت «{user_id}.{secret}»؛ سرور فقط
+-        // hash('sha256', secret) را در usermeta نگه می‌دارد (نشت DB ≠ استفاده مجدد
+-        // از توکن) و مقایسه با hash_equals زمان-ثابت انجام می‌شود. هر ورود regenerate
+-        // می‌شود و ۳۰ روز اعتبار دارد. شکل پاسخ verify-otp تغییر نکرده است.
++        // hash('sha256', secret) را نگه می‌دارد (نشت DB ≠ استفاده مجدد از توکن) و
++        // مقایسه با hash_equals زمان-ثابت انجام می‌شود. ۳۰ روز اعتبار دارد.
++        //
++        // v1.8.0: ذخیره‌سازی از «یک اسلات usermeta» به «ردیف مستقل در جدول توکن‌ها»
++        // منتقل شد. دلیل: با یک اسلات، ورود در اپ اندروید نشست وب‌اپ را باطل
++        // می‌کرد و برعکس — و چون اشتراک در وب‌اپ خریداری می‌شود، کاربر عملاً
++        // نمی‌توانست هر دو جا وارد بماند. فرمت توکن و شکل پاسخ تغییر نکرده است
++        // (فقط کلیدهای جدید sessionId/expiresAt اضافه شده‌اند)، پس PWA 1.5.6
++        // بدون هیچ تغییری کار می‌کند.
+         $secret = wp_generate_password(32, false, false);
+         $api_token = $user->ID . '.' . $secret;
+-        update_user_meta($user->ID, 'mrdastbaaf_api_token', hash('sha256', $secret));
+-        update_user_meta($user->ID, 'mrdastbaaf_api_token_issued', time());
++
++        $session_id = MrDastbaaf_Token_Store::issue(
++            (int) $user->ID,
++            $secret,
++            array(
++                'device_id'   => $request->get_param('device_id'),
++                'device_name' => $request->get_param('device_name'),
++                'platform'    => $request->get_param('platform'),
++                'app_version' => $request->get_param('app_version'),
++            )
++        );
++
++        if (false === $session_id) {
++            // درج ناموفق ⇒ توکنی که به کلاینت داده می‌شود هیچ‌وقت معتبر نمی‌شد.
++            // fail-closed: خطای ساختارمند به‌جای پاسخ ۲۰۰ با توکن مرده.
++            error_log('MrDastbaaf: token row INSERT failed — ' . $GLOBALS['wpdb']->last_error);
++            return new WP_Error(
++                'token_storage_failed',
++                'ثبت نشست ورود ممکن نشد؛ لطفاً چند لحظه بعد دوباره تلاش کنید.',
++                array('status' => 500)
++            );
++        }
++
++        // متاهای نسخه‌های قبل پاک می‌شوند تا مسیر fallback دیگر اجرا نشود و
++        // «دو منبع حقیقت» برای توکن باقی نماند.
++        delete_user_meta($user->ID, 'mrdastbaaf_api_token');
++        delete_user_meta($user->ID, 'mrdastbaaf_api_token_issued');
+ 
+         return rest_ensure_response(array(
+             'success' => true,
+             'token' => $api_token,
++            // v1.8.0: اطلاعات نشست — کلاینت با sessionId می‌تواند دستگاه جاری را
++            // در فهرست تشخیص دهد و «خروج از دستگاه دیگر» را هدف بگیرد.
++            'sessionId' => (string) $session_id,
++            'expiresAt' => gmdate('c', time() + MrDastbaaf_Token_Store::TOKEN_LIFETIME_SECONDS),
++            'expiresInSeconds' => MrDastbaaf_Token_Store::TOKEN_LIFETIME_SECONDS,
+             'user' => $this->format_user_profile($user),
+         ));
+     }
+ 
+     /**
+-     * v1.2.0: خروج PWA — ابطال توکن Bearer با حذف هر دو متیای توکن.
+-     * (کوکی سشن وردپرس مسیر جداگانه‌ای است و در این اندپوینت دست نمی‌خورد.)
++     * v1.2.0: خروج PWA — ابطال توکن Bearer.
++     *
++     * v1.8.0: با چند-دستگاهی شدن توکن، «خروج» فقط نشست جاری را می‌بندد؛
++     * دستگاه‌های دیگر کاربر (مثلاً وب‌اپ) وارد می‌مانند. این همان رفتاری است
++     * که کاربر از «خروج» انتظار دارد.
++     *
++     * دو مسیر:
++     *  - پیش‌فرض: فقط نشست همین توکن باطل می‌شود.
++     *  - `device_id` ارسالی: همهٔ نشست‌های همان دستگاه بسته می‌شوند. برای
++     *    کلاینتی که device_id پایدار دارد و می‌خواهد «از این دستگاه خارج شو»
++     *    را قطعی کند (مثلاً پس از پاک‌کردن حافظهٔ اپ).
++     *
++     * اگر توکن جاری به هیچ ردیفی نگاشت نشود (مثلاً توکنی که پیش از ارتقا صادر
++     * شده و مهاجرت نشده)، به رفتار قدیمی برمی‌گردیم و متاهای legacy پاک
++     * می‌شوند تا کاربر در حالت «وارد ولی غیرقابل‌خروج» نماند.
++     *
++     * @param WP_REST_Request $request
++     * @return WP_REST_Response|WP_Error
+      */
+-    public function handle_logout() {
++    public function handle_logout(WP_REST_Request $request = null) {
+         $user_id = self::maybe_authenticate_bearer();
+         if ($user_id <= 0) {
+             return new WP_Error('unauthorized', 'برای خروج ابتدا وارد حساب کاربری خود شوید.', array('status' => 401));
+         }
+ 
++        $device_id = (null !== $request) ? $request->get_param('device_id') : '';
++        $revoked = 0;
++        $scope = 'session';
++
++        if (is_string($device_id) && '' !== trim($device_id)) {
++            $revoked = MrDastbaaf_Token_Store::revoke_by_device($user_id, $device_id);
++            $scope = 'device';
++        } else {
++            $session = self::current_session();
++            if (null !== $session && !empty($session['id'])) {
++                $revoked = MrDastbaaf_Token_Store::revoke((int) $session['id'], $user_id) ? 1 : 0;
++            }
++        }
++
++        // پاک‌سازی دفاعی مسیر قدیمی — روی نصب‌هایی که توکن هنوز مهاجرت نکرده
++        // (یا نشست جاری نگاشت نشد) تا خروج همیشه اثر داشته باشد.
+         delete_user_meta($user_id, 'mrdastbaaf_api_token');
+         delete_user_meta($user_id, 'mrdastbaaf_api_token_issued');
+ 
++        self::$current_session = null;
++
+         // v1.2.0: ردپای ممیزی خروج
+-        MrDastbaaf_Admin_Controller::write_audit('auth_logout', 'user', (string) $user_id, 'خروج از اپ هنرجو و ابطال توکن Bearer');
++        MrDastbaaf_Admin_Controller::write_audit(
++            'auth_logout',
++            'user',
++            (string) $user_id,
++            sprintf('خروج از حساب کاربری و ابطال %d نشست (دامنه: %s)', (int) $revoked, $scope)
++        );
+ 
+         return rest_ensure_response(array(
+             'success' => true,
+             'message' => 'با موفقیت از حساب کاربری خارج شدید.',
++            'revokedSessions' => (int) $revoked,
++        ));
++    }
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // v1.8.0: مدیریت نشست‌ها/دستگاه‌ها
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * GET /auth/sessions — فهرست دستگاه‌های واردشدهٔ کاربر.
++     *
++     * هیچ توکن/هشی در پاسخ نیست: فقط برچسب دستگاه، پلتفرم، زمان‌ها و اینکه
++     * کدام ردیف «دستگاه جاری» است.
++     *
++     * @return WP_REST_Response|WP_Error
++     */
++    public function handle_list_sessions() {
++        $user_id = get_current_user_id();
++        if ($user_id <= 0) {
++            return new WP_Error('unauthorized', 'برای مشاهدهٔ دستگاه‌ها ابتدا وارد حساب کاربری خود شوید.', array('status' => 401));
++        }
++
++        $current = self::current_session();
++        $current_id = (null !== $current && !empty($current['id'])) ? (int) $current['id'] : 0;
++
++        $sessions = array();
++        foreach (MrDastbaaf_Token_Store::list_for_user($user_id) as $row) {
++            $sessions[] = array(
++                'id'          => (string) (int) $row['id'],
++                'deviceName'  => $this->session_device_label($row),
++                'platform'    => (string) $row['platform'],
++                'appVersion'  => (string) $row['app_version'],
++                'createdAt'   => (string) $row['issued_at'],
++                'lastSeenAt'  => !empty($row['last_used_at']) ? (string) $row['last_used_at'] : (string) $row['issued_at'],
++                'expiresAt'   => (string) $row['expires_at'],
++                'current'     => ((int) $row['id'] === $current_id),
++            );
++        }
++
++        return rest_ensure_response(array(
++            'sessions' => $sessions,
++            'count'    => count($sessions),
++            'maxDevices' => MrDastbaaf_Token_Store::MAX_DEVICES,
+         ));
+     }
+ 
++    /**
++     * DELETE /auth/sessions — ابطال همهٔ نشست‌ها به‌جز دستگاه جاری.
++     *
++     * @return WP_REST_Response|WP_Error
++     */
++    public function handle_revoke_other_sessions() {
++        $user_id = get_current_user_id();
++        if ($user_id <= 0) {
++            return new WP_Error('unauthorized', 'برای این کار ابتدا وارد حساب کاربری خود شوید.', array('status' => 401));
++        }
++
++        $current = self::current_session();
++        $except_id = (null !== $current && !empty($current['id'])) ? (int) $current['id'] : null;
++
++        if (null === $except_id) {
++            // بدون شناسایی دستگاه جاری، «همه به‌جز جاری» به «همه» تبدیل می‌شد و
++            // کاربر خودش را هم بیرون می‌انداخت. fail-closed.
++            return new WP_Error(
++                'session_not_identified',
++                'دستگاه جاری شناسایی نشد؛ لطفاً دوباره وارد شوید.',
++                array('status' => 409)
++            );
++        }
++
++        $revoked = MrDastbaaf_Token_Store::revoke_all($user_id, $except_id);
++
++        MrDastbaaf_Admin_Controller::write_audit(
++            'auth_revoke_other_sessions',
++            'user',
++            (string) $user_id,
++            sprintf('ابطال %d نشست دیگر', (int) $revoked)
++        );
++
++        return rest_ensure_response(array(
++            'success' => true,
++            'revokedSessions' => (int) $revoked,
++            'message' => 'نشست‌های سایر دستگاه‌ها بسته شد.',
++        ));
++    }
++
++    /**
++     * DELETE /auth/sessions/{id} — ابطال یک نشست مشخص.
++     *
++     * گارد مالکیت در خود Token_Store::revoke اعمال می‌شود (WHERE user_id = …)،
++     * پس حدس‌زدن شناسهٔ نشست کاربر دیگر بی‌اثر است (IDOR).
++     *
++     * @param WP_REST_Request $request
++     * @return WP_REST_Response|WP_Error
++     */
++    public function handle_revoke_session(WP_REST_Request $request) {
++        $user_id = get_current_user_id();
++        if ($user_id <= 0) {
++            return new WP_Error('unauthorized', 'برای این کار ابتدا وارد حساب کاربری خود شوید.', array('status' => 401));
++        }
++
++        $session_id = (int) $request->get_param('id');
++        if ($session_id <= 0) {
++            return new WP_Error('invalid_session', 'شناسهٔ نشست نامعتبر است.', array('status' => 400));
++        }
++
++        $current = self::current_session();
++        $is_current = (null !== $current && !empty($current['id']) && (int) $current['id'] === $session_id);
++
++        if (!MrDastbaaf_Token_Store::revoke($session_id, $user_id)) {
++            return new WP_Error('session_not_found', 'نشست مورد نظر یافت نشد یا قبلاً بسته شده است.', array('status' => 404));
++        }
++
++        MrDastbaaf_Admin_Controller::write_audit(
++            'auth_revoke_session',
++            'session',
++            (string) $session_id,
++            $is_current ? 'بستن نشست جاری' : 'بستن نشست دستگاه دیگر'
++        );
++
++        return rest_ensure_response(array(
++            'success' => true,
++            'wasCurrent' => $is_current,
++            'message' => $is_current
++                ? 'نشست جاری بسته شد.'
++                : 'نشست انتخاب‌شده بسته شد.',
++        ));
++    }
++
++    /**
++     * برچسب نمایشی یک نشست.
++     *
++     * اگر کلاینت نام دستگاه نداده باشد، از پلتفرم یک برچسب فارسی ساخته می‌شود
++     * تا فهرست دستگاه‌ها هرگز ردیف بی‌نام نشان ندهد.
++     */
++    private function session_device_label($row) {
++        $name = isset($row['device_name']) ? trim((string) $row['device_name']) : '';
++        if ('' !== $name) {
++            return $name;
++        }
++
++        $platform = isset($row['platform']) ? strtolower(trim((string) $row['platform'])) : '';
++        $labels = array(
++            'android' => 'اپ اندروید',
++            'web'     => 'مرورگر وب',
++            'ios'     => 'اپ آی‌اواس',
++            'legacy'  => 'دستگاه پیشین',
++        );
++
++        return isset($labels[$platform]) ? $labels[$platform] : 'دستگاه ناشناس';
++    }
++
++    /**
++     * نشست متناظر با توکن Bearer درخواست جاری.
++     */
++    public static function current_session() {
++        return self::$current_session;
++    }
++
+     /**
+      * v1.4.0: پاکسازی نام اختیاری هنرجو — تگ‌ها حذف، فقط حروف فارسی/فاصله/نیم‌فاصله
+      * (ZWNJ) باقی می‌مانند؛ فاصله‌های تکراری جمع و سقف ۶۰ کاراکتر اعمال می‌شود.
+@@ -773,32 +1058,55 @@ class MrDastbaaf_Auth_Controller {
+      * @param string $token توکن دریافتی از هدر
+      * @return WP_User|null
+      */
++    /**
++     * بازیابی کاربر از توکن — نسخهٔ چند-دستگاهی (v1.8.0).
++     *
++     * ترتیب بررسی:
++     *  ۱) جدول توکن‌ها: شناسهٔ کاربر از خود توکن پارس می‌شود (بدون جست‌وجوی متا)
++     *     و سپس فقط ردیف‌های همان کاربر بررسی می‌شوند — با سقف ۳ دستگاه،
++     *     حداکثر سه مقایسهٔ زمان-ثابت.
++     *  ۲) fallback به usermeta: برای توکنی که پیش از ارتقا صادر شده و هنوز
++     *     مهاجرت نکرده. در نخستین موفقیت، «تنبل» مهاجرت می‌شود و از آن پس
++     *     مسیر ۱ پاسخ می‌دهد.
++     *
++     * @param string $token توکن دریافتی از هدر
++     * @return WP_User|null
++     */
+     private static function get_user_by_api_token($token) {
+-        if ('' === $token) {
+-            return null;
+-        }
+-        $parts = explode('.', $token, 2);
+-        if (count($parts) !== 2) {
++        $parsed = MrDastbaaf_Token_Store::parse_token($token);
++        if (null === $parsed) {
+             return null;
+         }
+-        $user_id = absint($parts[0]);
+-        $secret = (string) $parts[1];
+-        if ($user_id <= 0 || '' === $secret) {
+-            return null;
+-        }
+-        $user = get_user_by('ID', $user_id);
++
++        $user = get_user_by('ID', $parsed['user_id']);
+         if (!$user) {
+             return null;
+         }
+-        $stored_hash = (string) get_user_meta($user->ID, 'mrdastbaaf_api_token', true);
+-        if ('' === $stored_hash || !hash_equals($stored_hash, hash('sha256', $secret))) {
+-            return null;
++
++        // ── مسیر ۱: جدول توکن‌ها ──
++        $session = MrDastbaaf_Token_Store::find_by_token($token);
++        if (null !== $session) {
++            self::$current_session = $session;
++            return $user;
+         }
+-        $issued = (int) get_user_meta($user->ID, 'mrdastbaaf_api_token_issued', true);
+-        if ($issued <= 0 || (time() - $issued) > (30 * DAY_IN_SECONDS)) {
+-            return null; // توکن منقضی است
++
++        // ── مسیر ۲: fallback توکن‌های پیش از ارتقا ──
++        $legacy_hash = (string) get_user_meta($user->ID, 'mrdastbaaf_api_token', true);
++        if ('' !== $legacy_hash && MrDastbaaf_Token_Store::secret_matches($parsed['secret'], $legacy_hash)) {
++            $issued = (int) get_user_meta($user->ID, 'mrdastbaaf_api_token_issued', true);
++            if ($issued > 0 && (time() - $issued) <= MrDastbaaf_Token_Store::TOKEN_LIFETIME_SECONDS) {
++                // مهاجرت تنبل: ردیف ساخته می‌شود و متاهای قدیمی پاک می‌شوند،
++                // بدون ابطال نشست کاربر. از این پس مسیر ۱ پاسخ می‌دهد.
++                MrDastbaaf_Token_Store::migrate_legacy_token($user->ID);
++                $session = MrDastbaaf_Token_Store::find_by_token($token);
++                if (null !== $session) {
++                    self::$current_session = $session;
++                }
++                return $user;
++            }
+         }
+-        return $user;
++
++        return null;
+     }
+ 
+     /**
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php
+index 1bd8d6e..ae63146 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php
+@@ -208,6 +208,43 @@ class MrDastbaaf_Database {
+         ) $charset_collate;";
+         dbDelta($sql_otp);
+ 
++        // ۹. توکن‌های Bearer چند-دستگاهی (v1.8.0 — اسکیما ۱.۶.۰)
++        //
++        // پیش از این، توکن در usermeta و در «یک اسلات» نگه داشته می‌شد
++        // (mrdastbaaf_api_token). پیامدش این بود که ورود در اپ اندروید، نشست
++        // وب‌اپ را باطل می‌کرد — و چون اشتراک در وب‌اپ خریداری می‌شود، کاربر
++        // عملاً نمی‌توانست هر دو جا وارد بماند.
++        //
++        // اکنون هر دستگاه یک ردیف مستقل دارد؛ سقف ۳ دستگاه در لایهٔ کلاس
++        // MrDastbaaf_Token_Store اعمال می‌شود (قدیمی‌ترین باطل می‌شود).
++        //
++        // token_hash: فقط sha256 — هیچ‌وقت secret خام ذخیره نمی‌شود.
++        // device_id: شناسهٔ پایدار نصب‌شده در کلاینت (برای «خروج از این دستگاه»).
++        // revoked_at: باطل‌سازی نرم — ردیف برای ممیزی می‌ماند و در prune ۹۰روزه حذف می‌شود.
++        //
++        // ایندکس user_active_idx مبنای پرس‌وجوی داغ مسیر احراز هویت است
++        // (user_id + revoked_at + expires_at) — بدون آن هر درخواست Bearer به
++        // اسکن جدول تبدیل می‌شد.
++        $table_tokens = $wpdb->prefix . 'mrdastbaaf_api_tokens';
++        $sql_tokens = "CREATE TABLE $table_tokens (
++            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
++            user_id bigint(20) unsigned NOT NULL,
++            token_hash char(64) NOT NULL,
++            device_id varchar(64) DEFAULT '' NOT NULL,
++            device_name varchar(100) DEFAULT '' NOT NULL,
++            platform varchar(20) DEFAULT '' NOT NULL,
++            app_version varchar(20) DEFAULT '' NOT NULL,
++            issued_at datetime NOT NULL,
++            last_used_at datetime NULL,
++            expires_at datetime NOT NULL,
++            revoked_at datetime NULL,
++            PRIMARY KEY  (id),
++            KEY user_active_idx (user_id, revoked_at, expires_at),
++            KEY device_idx (user_id, device_id),
++            KEY token_hash_idx (token_hash)
++        ) $charset_collate;";
++        dbDelta($sql_tokens);
++
+         // درج پلن‌های پیش‌فرض در صورت خالی بودن جدول
+         self::seed_initial_plans();
+     }
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-token-store.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-token-store.php
+new file mode 100644
+index 0000000..a6facef
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-token-store.php
+@@ -0,0 +1,559 @@
++<?php
++/**
++ * مخزن توکن‌های Bearer چند-دستگاهی (v1.8.0 — اسکیما ۱.۶.۰)
++ *
++ * پیش از این نسخه، هر کاربر «یک» توکن داشت: verify-otp مقدار usermeta
++ * mrdastbaaf_api_token را بازنویسی می‌کرد. پیامدش این بود که ورود در اپ
++ * اندروید، نشست وب‌اپ را باطل می‌کرد و برعکس — چون هر دو یک اسلات مشترک
++ * داشتند. با توجه به اینکه اشتراک در وب‌اپ خریداری می‌شود، کاربر ناچار است
++ * هر دو جا وارد بماند؛ پس یک اسلات کافی نیست.
++ *
++ * این کلاس توکن‌ها را به‌جای usermeta در جدول اختصاصی نگه می‌دارد:
++ *   - هر دستگاه یک ردیف مستقل (برچسب دستگاه + پلتفرم + نسخهٔ اپ)
++ *   - سقف تعداد دستگاه‌ها؛ قدیمی‌ترین به‌صورت خودکار باطل می‌شود
++ *   - باطل‌کردن انتخابی (یک دستگاه) یا گروهی (همه به‌جز دستگاه جاری)
++ *
++ * ─── سازگاری با توکن‌های موجود ───
++ * فرمت توکن تغییر نکرده است: «{user_id}.{secret}». روی نصب‌های موجود، توکنِ
++ * in-flight فقط به‌شکل hash در usermeta وجود دارد و secret خام در دسترس نیست —
++ * اما برای مهاجرت لازم هم نیست: همین hash در ستون token_hash نوشته می‌شود و
++ * مقایسهٔ زمان-ثابت بعدی (hash('sha256', $secret) در برابر مقدار ذخیره‌شده)
++ * بدون تغییر کار می‌کند. مهاجرت «تنبل» است: در نخستین درخواست موفقِ هر کاربر
++ * انجام می‌شود، نه در بلوک ارتقا (که روی سایت پرکاربر به یک پرس‌وجوی سنگین
++ * تبدیل می‌شد).
++ *
++ * امنیت: هیچ‌جا secret خام ذخیره نمی‌شود؛ فقط sha256 آن. نشت دیتابیس به
++ * استفادهٔ مجدد از توکن منجر نمی‌شود.
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++class MrDastbaaf_Token_Store {
++
++    /**
++     * سقف دستگاه‌های هم‌زمان برای هر کاربر.
++     *
++     * سه دستگاه: گوشی + تبلت + مرورگر، که سناریوی واقعی «اشتراک را در وب
++     * می‌خرم و در اپ تماشا می‌کنم» را پوشش می‌دهد بدون اینکه اشتراک‌گذاری
++     * گسترده ممکن شود. با عبور از سقف، قدیمی‌ترین نشست باطل می‌شود (نه
++     * جدیدترین) تا کاربر تازه‌وارد هرگز بیرون انداخته نشود.
++     */
++    const MAX_DEVICES = 3;
++
++    /**
++     * عمر توکن — بدون تغییر نسبت به نسخه‌های قبل (۳۰ روز). این بک‌اند refresh
++     * token ندارد؛ پس از انقضا، تنها راه بازگشت ورود دوباره با OTP است.
++     */
++    const TOKEN_LIFETIME_SECONDS = 30 * DAY_IN_SECONDS;
++
++    /**
++     * حداقل فاصلهٔ دو به‌روزرسانی last_used_at برای یک نشست.
++     *
++     * last_used_at فقط برای نمایش «آخرین فعالیت» در فهرست دستگاه‌هاست و ارزش
++     * یک نوشتن در «هر» درخواست را ندارد. تاریخچهٔ این افزونه نشان می‌دهد که
++     * نوشتن‌های پرتکرار روی ردیف‌های مشترک، روی هاست اشتراکی به تعلیق می‌انجامد
++     * (حادثهٔ ۱.۷.۹–۱.۷.۱۳). این UPDATE روی کلید اصلی و حداکثر هر ۱۰ دقیقه
++     * یک‌بار اجرا می‌شود.
++     */
++    const TOUCH_INTERVAL_SECONDS = 10 * MINUTE_IN_SECONDS;
++
++    const STATUS_ACTIVE = 'active';
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // بخش خالص (بدون وردپرس) — قابل آزمون در tests/php/test-token-store.php
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * تجزیهٔ توکن «{user_id}.{secret}».
++     *
++     * @param string $token توکن دریافتی از هدر Authorization
++     * @return array|null آرایهٔ ['user_id' => int, 'secret' => string] یا null
++     */
++    public static function parse_token($token) {
++        $token = (string) $token;
++        if ('' === $token) {
++            return null;
++        }
++
++        $parts = explode('.', $token, 2);
++        if (count($parts) !== 2) {
++            return null;
++        }
++
++        $user_id = (int) $parts[0];
++        $secret = (string) $parts[1];
++
++        if ($user_id <= 0 || '' === $secret) {
++            return null;
++        }
++
++        return array('user_id' => $user_id, 'secret' => $secret);
++    }
++
++    /**
++     * هش secret — تنها شکلی که از secret روی دیسک می‌ماند.
++     */
++    public static function hash_secret($secret) {
++        return hash('sha256', (string) $secret);
++    }
++
++    /**
++     * مقایسهٔ زمان-ثابت یک secret با هش ذخیره‌شده.
++     */
++    public static function secret_matches($secret, $stored_hash) {
++        $stored_hash = (string) $stored_hash;
++        if ('' === $stored_hash) {
++            return false;
++        }
++        return hash_equals($stored_hash, self::hash_secret($secret));
++    }
++
++    /**
++     * آیا ردیف منقضی/باطل شده است؟ (مرجع زمانی: time() واقعی UTC — ستون‌ها GMT)
++     */
++    public static function is_usable($row, $now = null) {
++        if (!is_array($row)) {
++            return false;
++        }
++        if (!empty($row['revoked_at'])) {
++            return false;
++        }
++        $expires_at = isset($row['expires_at']) ? strtotime((string) $row['expires_at']) : false;
++        if (false === $expires_at) {
++            return false;
++        }
++        $now = (null === $now) ? time() : (int) $now;
++        return $expires_at > $now;
++    }
++
++    /**
++     * انتخاب قدیمی‌ترین نشست از فهرست ردیف‌های فعال.
++     *
++     * مبنای سیاست سقف دستگاه‌ها. tie-break با id تا نتیجه قطعی باشد و دو ردیف
++     * با issued_at یکسان باعث رفتار غیرقطعی نشوند.
++     *
++     * @param array $rows ردیف‌های فعال
++     * @return int|null شناسهٔ ردیف قدیمی‌تر، یا null اگر فهرست خالی باشد
++     */
++    public static function oldest_row_id($rows) {
++        $oldest = null;
++        $oldest_ts = null;
++
++        foreach ((array) $rows as $row) {
++            if (!is_array($row) || !isset($row['id'])) {
++                continue;
++            }
++            $issued = isset($row['issued_at']) ? strtotime((string) $row['issued_at']) : false;
++            if (false === $issued) {
++                $issued = 0;
++            }
++
++            $is_older = (null === $oldest_ts)
++                || ($issued < $oldest_ts)
++                || ($issued === $oldest_ts && (int) $row['id'] < (int) $oldest);
++
++            if ($is_older) {
++                $oldest_ts = $issued;
++                $oldest = (int) $row['id'];
++            }
++        }
++
++        return $oldest;
++    }
++
++    /**
++     * محاسبهٔ زمان انقضای توکن از لحظهٔ صدور (فرمت MySQL، مرجع UTC).
++     */
++    public static function expiry_from($issued_timestamp) {
++        return gmdate('Y-m-d H:i:s', (int) $issued_timestamp + self::TOKEN_LIFETIME_SECONDS);
++    }
++
++    /**
++     * آیا باید last_used_at را به‌روز کرد؟
++     */
++    public static function should_touch($last_used_at, $now = null) {
++        $now = (null === $now) ? time() : (int) $now;
++        if (empty($last_used_at)) {
++            return true;
++        }
++        $last = strtotime((string) $last_used_at);
++        if (false === $last) {
++            return true;
++        }
++        return ($now - $last) >= self::TOUCH_INTERVAL_SECONDS;
++    }
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // بخش DB-محور
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * نام کامل جدول.
++     */
++    public static function table() {
++        global $wpdb;
++        return $wpdb->prefix . 'mrdastbaaf_api_tokens';
++    }
++
++    /**
++     * صدور توکن برای یک دستگاه.
++     *
++     * پس از درج، سقف دستگاه‌ها اعمال می‌شود: قدیمی‌ترین نشستِ فعال باطل
++     * می‌شود تا تعداد نشست‌های فعال حداکثر MAX_DEVICES بماند.
++     *
++     * @param int    $user_id شناسهٔ کاربر
++     * @param string $secret  secret خام (فقط هش آن ذخیره می‌شود)
++     * @param array  $meta    device_id / device_name / platform / app_version
++     * @return int|false شناسهٔ ردیف یا false در شکست
++     */
++    public static function issue($user_id, $secret, $meta = array()) {
++        global $wpdb;
++
++        $user_id = (int) $user_id;
++        if ($user_id <= 0 || '' === (string) $secret) {
++            return false;
++        }
++
++        $now = time();
++        $inserted = $wpdb->insert(
++            self::table(),
++            array(
++                'user_id'     => $user_id,
++                'token_hash'  => self::hash_secret($secret),
++                'device_id'   => self::sanitize_label(isset($meta['device_id']) ? $meta['device_id'] : '', 64),
++                'device_name' => self::sanitize_label(isset($meta['device_name']) ? $meta['device_name'] : '', 100),
++                'platform'    => self::sanitize_label(isset($meta['platform']) ? $meta['platform'] : '', 20),
++                'app_version' => self::sanitize_label(isset($meta['app_version']) ? $meta['app_version'] : '', 20),
++                'issued_at'   => gmdate('Y-m-d H:i:s', $now),
++                'expires_at'  => self::expiry_from($now),
++                'revoked_at'  => null,
++            ),
++            array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
++        );
++
++        if (false === $inserted) {
++            return false;
++        }
++
++        $row_id = (int) $wpdb->insert_id;
++        self::enforce_device_limit($user_id);
++
++        return $row_id;
++    }
++
++    /**
++     * یافتن نشست متناظر با یک توکن.
++     *
++     * مسیر سریع: شناسهٔ کاربر از خود توکن پارس می‌شود (بدون جست‌وجوی متا) و
++     * سپس فقط ردیف‌های همان کاربر بررسی می‌شوند — با سقف ۳ دستگاه، حداکثر سه
++     * مقایسهٔ زمان-ثابت.
++     *
++     * @param string $token توکن خام
++     * @return array|null ردیف + کلید user_id، یا null
++     */
++    public static function find_by_token($token) {
++        global $wpdb;
++
++        $parsed = self::parse_token($token);
++        if (null === $parsed) {
++            return null;
++        }
++
++        $rows = $wpdb->get_results(
++            $wpdb->prepare(
++                'SELECT * FROM ' . self::table() . ' WHERE user_id = %d AND revoked_at IS NULL ORDER BY issued_at DESC, id DESC',
++                $parsed['user_id']
++            ),
++            ARRAY_A
++        );
++
++        foreach ((array) $rows as $row) {
++            if (!self::is_usable($row)) {
++                continue;
++            }
++            if (self::secret_matches($parsed['secret'], $row['token_hash'])) {
++                self::touch($row);
++                return $row;
++            }
++        }
++
++        return null;
++    }
++
++    /**
++     * به‌روزرسانی «آخرین فعالیت» — حداکثر هر TOUCH_INTERVAL_SECONDS برای هر نشست.
++     *
++     * @param array $row ردیف نشست
++     */
++    public static function touch($row) {
++        if (!is_array($row) || empty($row['id'])) {
++            return;
++        }
++        if (!self::should_touch(isset($row['last_used_at']) ? $row['last_used_at'] : null)) {
++            return;
++        }
++
++        global $wpdb;
++        $wpdb->update(
++            self::table(),
++            array('last_used_at' => gmdate('Y-m-d H:i:s')),
++            array('id' => (int) $row['id']),
++            array('%s'),
++            array('%d')
++        );
++    }
++
++    /**
++     * فهرست نشست‌های فعال یک کاربر (جدیدترین اول).
++     *
++     * @param int $user_id
++     * @return array
++     */
++    public static function list_for_user($user_id) {
++        global $wpdb;
++
++        $rows = $wpdb->get_results(
++            $wpdb->prepare(
++                'SELECT * FROM ' . self::table() . ' WHERE user_id = %d AND revoked_at IS NULL ORDER BY issued_at DESC, id DESC',
++                (int) $user_id
++            ),
++            ARRAY_A
++        );
++
++        $active = array();
++        foreach ((array) $rows as $row) {
++            if (self::is_usable($row)) {
++                $active[] = $row;
++            }
++        }
++
++        return $active;
++    }
++
++    /**
++     * باطل‌کردن یک نشست مشخص — فقط اگر متعلق به همین کاربر باشد.
++     *
++     * گارد مالکیت عمدی است: بدون آن، یک شناسهٔ حدسی می‌توانست نشست کاربر دیگر
++     * را باطل کند (IDOR).
++     *
++     * @param int $row_id
++     * @param int $user_id
++     * @return bool
++     */
++    public static function revoke($row_id, $user_id) {
++        global $wpdb;
++
++        $row_id = (int) $row_id;
++        $user_id = (int) $user_id;
++        if ($row_id <= 0 || $user_id <= 0) {
++            return false;
++        }
++
++        $updated = $wpdb->update(
++            self::table(),
++            array('revoked_at' => gmdate('Y-m-d H:i:s')),
++            array('id' => $row_id, 'user_id' => $user_id, 'revoked_at' => null),
++            array('%s'),
++            array('%d', '%d', '%s')
++        );
++
++        return (false !== $updated && $updated > 0);
++    }
++
++    /**
++     * باطل‌کردن همهٔ نشست‌های یک کاربر، با امکان استثنای نشست جاری.
++     *
++     * @param int      $user_id
++     * @param int|null $except_row_id نشستی که باید زنده بماند (معمولاً دستگاه جاری)
++     * @return int تعداد ردیف‌های باطل‌شده
++     */
++    public static function revoke_all($user_id, $except_row_id = null) {
++        global $wpdb;
++
++        $user_id = (int) $user_id;
++        if ($user_id <= 0) {
++            return 0;
++        }
++
++        $sql = 'UPDATE ' . self::table() . ' SET revoked_at = %s WHERE user_id = %d AND revoked_at IS NULL';
++        $params = array(gmdate('Y-m-d H:i:s'), $user_id);
++
++        if (null !== $except_row_id && (int) $except_row_id > 0) {
++            $sql .= ' AND id <> %d';
++            $params[] = (int) $except_row_id;
++        }
++
++        $updated = $wpdb->query($wpdb->prepare($sql, $params));
++
++        return (int) $updated;
++    }
++
++    /**
++     * باطل‌کردن نشست‌های یک دستگاه مشخص.
++     *
++     * برای خروج «از این دستگاه» وقتی کلاینت device_id پایدار دارد: اگر کاربر
++     * چند بار روی یک دستگاه وارد شده باشد، همهٔ نشست‌های همان دستگاه بسته
++     * می‌شوند.
++     *
++     * @param int    $user_id
++     * @param string $device_id
++     * @return int
++     */
++    public static function revoke_by_device($user_id, $device_id) {
++        global $wpdb;
++
++        $user_id = (int) $user_id;
++        $device_id = self::sanitize_label($device_id, 64);
++        if ($user_id <= 0 || '' === $device_id) {
++            return 0;
++        }
++
++        $updated = $wpdb->query(
++            $wpdb->prepare(
++                'UPDATE ' . self::table() . ' SET revoked_at = %s WHERE user_id = %d AND device_id = %s AND revoked_at IS NULL',
++                gmdate('Y-m-d H:i:s'),
++                $user_id,
++                $device_id
++            )
++        );
++
++        return (int) $updated;
++    }
++
++    /**
++     * اعمال سقف دستگاه‌ها: تا وقتی نشست فعال بیش از MAX_DEVICES است،
++     * قدیمی‌ترین‌ها باطل می‌شوند.
++     *
++     * @param int $user_id
++     * @return int تعداد باطل‌شده
++     */
++    public static function enforce_device_limit($user_id) {
++        $active = self::list_for_user($user_id);
++        $excess = count($active) - self::MAX_DEVICES;
++        if ($excess <= 0) {
++            return 0;
++        }
++
++        // list_for_user جدیدترین‌اول برمی‌گرداند؛ برای باطل‌کردن قدیمی‌ترین‌ها
++        // همان ترتیب را برمی‌گردانیم.
++        $oldest_first = array_reverse($active);
++        $revoked = 0;
++
++        for ($i = 0; $i < $excess; $i++) {
++            if (!isset($oldest_first[$i]['id'])) {
++                break;
++            }
++            if (self::revoke((int) $oldest_first[$i]['id'], (int) $user_id)) {
++                $revoked++;
++            }
++        }
++
++        return $revoked;
++    }
++
++    /**
++     * مهاجرت تنبل توکن قدیمی (usermeta) به جدول.
++     *
++     * روی نصب‌های موجود، توکن فعال فقط به‌شکل hash در usermeta است. چون برای
++     * درج ردیف به secret خام نیازی نیست (همان hash کافی است)، مهاجرت بدون
++     * دخالت کاربر و بدون ابطال نشست او انجام می‌شود.
++     *
++     * پس از مهاجرت، متاهای قدیمی حذف می‌شوند تا مسیر fallback دیگر اجرا نشود.
++     *
++     * @param int $user_id
++     * @return bool آیا مهاجرتی انجام شد؟
++     */
++    public static function migrate_legacy_token($user_id) {
++        global $wpdb;
++
++        $user_id = (int) $user_id;
++        if ($user_id <= 0) {
++            return false;
++        }
++
++        $legacy_hash = (string) get_user_meta($user_id, 'mrdastbaaf_api_token', true);
++        if ('' === $legacy_hash) {
++            return false;
++        }
++
++        $issued = (int) get_user_meta($user_id, 'mrdastbaaf_api_token_issued', true);
++        if ($issued <= 0) {
++            // مهر زمانی نامعتبر ⇒ توکن قدیمی غیرقابل اعتبار است (همان رفتار
++            // fail-closed نسخه‌های قبل).
++            delete_user_meta($user_id, 'mrdastbaaf_api_token');
++            delete_user_meta($user_id, 'mrdastbaaf_api_token_issued');
++            return false;
++        }
++
++        // اگر همین هش از قبل در جدول هست (مهاجرت تکراری)، دوباره درج نکن.
++        $existing = $wpdb->get_var(
++            $wpdb->prepare(
++                'SELECT id FROM ' . self::table() . ' WHERE user_id = %d AND token_hash = %s LIMIT 1',
++                $user_id,
++                $legacy_hash
++            )
++        );
++
++        if (null === $existing) {
++            $wpdb->insert(
++                self::table(),
++                array(
++                    'user_id'     => $user_id,
++                    'token_hash'  => $legacy_hash,
++                    'device_id'   => 'legacy',
++                    'device_name' => 'دستگاه پیشین',
++                    'platform'    => 'web',
++                    'app_version' => '',
++                    'issued_at'   => gmdate('Y-m-d H:i:s', $issued),
++                    'expires_at'  => self::expiry_from($issued),
++                    'revoked_at'  => null,
++                ),
++                array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
++            );
++        }
++
++        delete_user_meta($user_id, 'mrdastbaaf_api_token');
++        delete_user_meta($user_id, 'mrdastbaaf_api_token_issued');
++
++        return true;
++    }
++
++    /**
++     * حذف ردیف‌های باطل/منقضی قدیمی — جلوگیری از رشد بی‌پایان جدول.
++     *
++     * ردیف‌های باطل‌شده تا ۹۰ روز نگه داشته می‌شوند (ردپای ممیزی «این دستگاه
++     * چه زمانی قطع شد») و سپس حذف می‌شوند. از کرون ۱۰دقیقه‌ای صدا زده می‌شود.
++     *
++     * @return int تعداد حذف‌شده
++     */
++    public static function prune_old_rows() {
++        global $wpdb;
++
++        $cutoff = gmdate('Y-m-d H:i:s', time() - 90 * DAY_IN_SECONDS);
++
++        $deleted = $wpdb->query(
++            $wpdb->prepare(
++                'DELETE FROM ' . self::table() . ' WHERE expires_at < %s AND (revoked_at IS NOT NULL OR expires_at < %s)',
++                $cutoff,
++                $cutoff
++            )
++        );
++
++        return (int) $deleted;
++    }
++
++    /**
++     * پاک‌سازی برچسب دستگاه — بدون تگ، بدون کنترل‌کاراکتر، سقف طول.
++     *
++     * device_name از سمت کلاینت می‌آید و در پاسخ REST نمایش داده می‌شود؛ پس
++     * باید در «نقطهٔ ورود» پاک شود، نه در لحظهٔ نمایش.
++     */
++    private static function sanitize_label($value, $max_length) {
++        $value = wp_strip_all_tags((string) $value);
++        $value = preg_replace('/[\x00-\x1F\x7F]/u', '', $value);
++        $value = trim((string) $value);
++        return mb_substr($value, 0, (int) $max_length);
++    }
++}
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+index 6fa136a..2a03213 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+@@ -3,7 +3,7 @@
+  * Plugin Name: Mr. Dastbaaf PWA Bridge (پل ارتباطی مستر دستباف)
+  * Plugin URI: https://mrdastbaaf.com
+  * Description: افزونه اختصاصی ایجاد اندپوینت‌های REST API ایمن برای ارتباط وب‌اپلیکیشن PWA مستر دستباف با وردپرس، اوتینو، نیاس کورس و درگاه زیبال.
+- * Version: 1.7.13
++ * Version: 1.8.0
+  * Author: تیم فنی مستر دستباف
+  * Author URI: https://mrdastbaaf.com
+  * Text Domain: mrdastbaaf-bridge
+@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
+     exit; // Exit if accessed directly
+ }
+ 
+-define('MRDASTBAAF_BRIDGE_VERSION', '1.7.13');
++define('MRDASTBAAF_BRIDGE_VERSION', '1.8.0');
+ 
+ /**
+  * v1.2.0: نسخهٔ افزونه و ثابت بالا باید همیشه همگام باشند (باگ قبلی همگام‌نبودن تکرار نشود).
+@@ -130,7 +130,7 @@ define('MRDASTBAAF_BRIDGE_VERSION', '1.7.13');
+  *   (courses: منبع billing_phone حساب هم اضافه شد) و woo-bridge (resolve کاربر
+  *   سفارش) به‌کار رفت؛ فال‌بک LIKE روی هستهٔ ۱۰ رقمی فرم‌های «کثیف» را می‌پوشاند.
+  */
+-define('MRDASTBAAF_DB_VERSION', '1.5.1');
++define('MRDASTBAAF_DB_VERSION', '1.6.0');
+ define('MRDASTBAAF_BRIDGE_PATH', plugin_dir_path(__FILE__));
+ define('MRDASTBAAF_BRIDGE_URL', plugin_dir_url(__FILE__));
+ define('MRDASTBAAF_API_NAMESPACE', 'mrdastbaaf/v1');
+@@ -165,6 +165,9 @@ function mrdastbaaf_get_deployed_pwa_version() {
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-database.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-sms-service.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-membership-helper.php';
++// v1.8.0: مخزن توکن چند-دستگاهی — پیش از کنترلر احراز هویت بارگذاری می‌شود
++// (verify-otp برای صدور توکن و لایهٔ Bearer برای اعتبارسنجی به آن نیاز دارند).
++require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-token-store.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-auth-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-courses-controller.php';
+ // v1.4.0: فروشگاه — محصولات فیزیکی دست‌ساز (پیش از کنترلر صفحات ادمین تا
+@@ -694,6 +697,9 @@ function mrdastbaaf_bridge_activate() {
+ 
+     // v1.7.11: کرون sweep صف OTP (خودترمیمی دیسپچ)
+     mrdastbaaf_bridge_schedule_otp_sweep_cron();
++
++    // v1.8.0: کرون روزانهٔ پاک‌سازی نشست‌های باطل/منقضی
++    mrdastbaaf_bridge_schedule_token_prune_cron();
+ }
+ register_activation_hook(__FILE__, 'mrdastbaaf_bridge_activate');
+ 
+@@ -755,6 +761,9 @@ function mrdastbaaf_bridge_maybe_upgrade_db() {
+     // آپشن cron کش‌شده می‌خواند — صفر کوئری اضافه در بارگذاری‌های عادی)
+     mrdastbaaf_bridge_schedule_otp_sweep_cron();
+ 
++    // v1.8.0: اطمینان از موجود بودن کرون روزانهٔ پاک‌سازی توکن‌ها
++    mrdastbaaf_bridge_schedule_token_prune_cron();
++
+     // v1.2.0: توکن اختصاصی اندپوینت GET /cron/reconcile — یک‌بار در نخستین ارتقا
+     // تولید می‌شود؛ هرگز بازتاب داده نمی‌شود و فقط مقدار ثابت hash_equals مقایسه می‌کند.
+     if ('' === (string) get_option('mrdastbaaf_cron_token', '')) {
+@@ -862,6 +871,30 @@ function mrdastbaaf_bridge_schedule_otp_sweep_cron() {
+     }
+ }
+ 
++/**
++ * v1.8.0: حذف روزانهٔ نشست‌های باطل/منقضیِ قدیمی از جدول توکن‌ها.
++ *
++ * جدول توکن‌ها با هر ورود یک ردیف می‌گیرد؛ بدون پاک‌سازی روی سایت پرکاربرد
++ * بی‌پایان رشد می‌کند. بازهٔ روزانه کافی است — ردیف‌های باطل تا ۹۰ روز برای
++ * ممیزی («این دستگاه چه زمانی قطع شد») نگه داشته می‌شوند و بعد حذف می‌شوند.
++ *
++ * چرا در کرون ۱۰دقیقه‌ای ریکنسیلیشن ادغام نشد: آن مسیر با هر اجرا کوئری‌های
++ * مالی می‌زند و یک DELETE اضافه در هر ۱۰ دقیقه، بدون هیچ سودی، فشار بی‌مورد
++ * روی هاست اشتراکی است.
++ */
++add_action('mrdastbaaf_tokens_prune', array('MrDastbaaf_Token_Store', 'prune_old_rows'));
++
++/**
++ * v1.8.0: زمان‌بندی کرون روزانهٔ پاک‌سازی توکن‌ها — idempotent، هم‌الگو با
++ * سایر زمان‌بندی‌های افزونه (wp_next_scheduled از آپشن cron کش‌شده می‌خواند،
++ * پس در بارگذاری‌های عادی صفر کوئری اضافه دارد).
++ */
++function mrdastbaaf_bridge_schedule_token_prune_cron() {
++    if (!wp_next_scheduled('mrdastbaaf_tokens_prune')) {
++        wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'mrdastbaaf_tokens_prune');
++    }
++}
++
+ /**
+  * v1.2.0: پاک‌سازی زمان‌بندی کرون هنگام غیرفعال‌سازی افزونه (رویداد جدید +
+  * رویداد روزانهٔ قدیمی، برای پاک‌سازی کامل مهاجرت‌های ناتمام)
+@@ -871,5 +904,7 @@ function mrdastbaaf_bridge_deactivate() {
+     wp_clear_scheduled_hook('mrdastbaaf_daily_reconciliation');
+     wp_clear_scheduled_hook('mrdastbaaf_otp_async_send');
+     wp_clear_scheduled_hook('mrdastbaaf_otp_sweep');
++    // v1.8.0: پاک‌سازی کرون روزانهٔ توکن‌ها
++    wp_clear_scheduled_hook('mrdastbaaf_tokens_prune');
+ }
+ register_deactivation_hook(__FILE__, 'mrdastbaaf_bridge_deactivate');
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/run-all.sh b/wordpress-plugin/mrdastbaaf-bridge/tests/php/run-all.sh
+new file mode 100644
+index 0000000..dfe75ee
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/run-all.sh
+@@ -0,0 +1,70 @@
++#!/usr/bin/env bash
++#
++# Runs every standalone PHP test in the plugin.
++#
++# These tests deliberately do NOT need WordPress: they define ABSPATH and the
++# WordPress time constants themselves, then exercise only the pure logic of the
++# classes they load. That keeps them runnable on a bare PHP CLI, on the server,
++# and in CI — which is the only way they actually get run.
++#
++# Usage:
++#   ./tests/php/run-all.sh              # uses `php` from PATH
++#   PHP=/path/to/php ./tests/php/run-all.sh
++#
++# Exit code is non-zero if any test file fails.
++
++set -u
++
++PHP_BIN="${PHP:-php}"
++
++if ! command -v "$PHP_BIN" >/dev/null 2>&1; then
++    echo "error: PHP binary not found (looked for '$PHP_BIN')" >&2
++    echo "hint: set PHP=/path/to/php" >&2
++    exit 127
++fi
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++
++echo "PHP: $("$PHP_BIN" -r 'echo PHP_VERSION;')"
++echo
++
++total_pass=0
++total_fail=0
++failed_files=0
++
++for test_file in "$SCRIPT_DIR"/test-*.php; do
++    [ -e "$test_file" ] || continue
++
++    name="$(basename "$test_file")"
++    echo "──────── $name"
++
++    output="$("$PHP_BIN" "$test_file" 2>&1)"
++    status=$?
++
++    # Surface only the summary lines in the aggregate view; the full output of a
++    # failing test is printed so the failure is diagnosable without re-running.
++    if [ $status -eq 0 ]; then
++        echo "$output" | grep -E '^(PASS|FAIL): [0-9]+$'
++    else
++        echo "$output"
++        failed_files=$((failed_files + 1))
++    fi
++
++    file_pass="$(echo "$output" | sed -n 's/^PASS: \([0-9]\+\)$/\1/p' | tail -1)"
++    file_fail="$(echo "$output" | sed -n 's/^FAIL: \([0-9]\+\)$/\1/p' | tail -1)"
++    total_pass=$((total_pass + ${file_pass:-0}))
++    total_fail=$((total_fail + ${file_fail:-0}))
++
++    echo
++done
++
++echo "═══════════════════════════════════════"
++echo "TOTAL PASS: $total_pass"
++echo "TOTAL FAIL: $total_fail"
++echo "FAILED FILES: $failed_files"
++
++if [ "$total_fail" -gt 0 ] || [ "$failed_files" -gt 0 ]; then
++    exit 1
++fi
++
++exit 0
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-token-store.php b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-token-store.php
+new file mode 100644
+index 0000000..64244dc
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-token-store.php
+@@ -0,0 +1,230 @@
++<?php
++/**
++ * تست مستقل مخزن توکن چند-دستگاهی (test-token-store) — بدون وردپرس
++ *
++ * اجرای روی سرور: php tests/php/test-token-store.php
++ *
++ * فقط متدهای «خالص» کلاس MrDastbaaf_Token_Store آزموده می‌شوند — آن‌هایی که به
++ * $wpdb یا توابع وردپرس نیاز ندارند. مسیرهای DB-محور (issue/find/revoke) باید
++ * روی محیط واقعی با تست یکپارچه سنجیده شوند؛ در اینجا فقط «منطق» تضمین می‌شود:
++ *
++ *   - parse_token()      تجزیهٔ «{user_id}.{secret}» و رد ورودی‌های بدشکل
++ *   - hash_secret()      هش قطعی و ۶۴ نویسه‌ای
++ *   - secret_matches()   مقایسهٔ زمان-ثابت + سازگاری با توکن‌های پیش از ارتقا
++ *   - is_usable()        ردیف باطل/منقضی/بدشکل هرگز معتبر نیست (fail-closed)
++ *   - oldest_row_id()    سیاست سقف دستگاه‌ها — همیشه قدیمی‌ترین قربانی می‌شود
++ *   - expiry_from()      عمر دقیق ۳۰ روزه
++ *   - should_touch()     مهار نوشتن last_used_at (محافظت از هاست اشتراکی)
++ *
++ * چرا این تست مهم است: اگر is_usable یا secret_matches اشتباه کنند، خطا در جهت
++ * «باز شدن دسترسی» است نه «بسته شدن» — یعنی توکن باطل‌شده همچنان کار می‌کند.
++ * این تست همان جهت خطا را قفل می‌کند.
++ */
++
++define('ABSPATH', '/tmp/');
++
++// ثابت‌های زمانی وردپرس — در محیط واقعی از هسته می‌آیند؛ اینجا برای بارگذاری
++// کلاس به‌صورت مستقل تعریف می‌شوند (کلاس در ثابت‌های خود از آن‌ها استفاده می‌کند).
++if (!defined('MINUTE_IN_SECONDS')) {
++    define('MINUTE_IN_SECONDS', 60);
++}
++if (!defined('HOUR_IN_SECONDS')) {
++    define('HOUR_IN_SECONDS', 3600);
++}
++if (!defined('DAY_IN_SECONDS')) {
++    define('DAY_IN_SECONDS', 86400);
++}
++
++require_once __DIR__ . '/../../includes/class-token-store.php';
++
++$pass = 0;
++$fail = 0;
++
++/**
++ * اجرای یک assertion و ثبت نتیجه
++ */
++function mrd_assert($label, $actual, $expected) {
++    global $pass, $fail;
++    if ($actual === $expected) {
++        $pass++;
++        echo "PASS: {$label}\n";
++    } else {
++        $fail++;
++        echo "FAIL: {$label} — expected: " . var_export($expected, true) . " | got: " . var_export($actual, true) . "\n";
++    }
++}
++
++// ─── ۱) تجزیهٔ توکن ─────────────────────────────────────────────────────────
++
++mrd_assert(
++    'parse_token: canonical {id}.{secret}',
++    MrDastbaaf_Token_Store::parse_token('42.abcdef123456'),
++    array('user_id' => 42, 'secret' => 'abcdef123456')
++);
++
++mrd_assert(
++    'parse_token: secret containing a dot keeps the remainder intact',
++    MrDastbaaf_Token_Store::parse_token('42.abc.def'),
++    array('user_id' => 42, 'secret' => 'abc.def')
++);
++
++mrd_assert('parse_token: empty string', MrDastbaaf_Token_Store::parse_token(''), null);
++mrd_assert('parse_token: no separator', MrDastbaaf_Token_Store::parse_token('42abcdef'), null);
++mrd_assert('parse_token: zero user id', MrDastbaaf_Token_Store::parse_token('0.abc'), null);
++mrd_assert('parse_token: non numeric user id', MrDastbaaf_Token_Store::parse_token('abc.def'), null);
++mrd_assert('parse_token: empty secret', MrDastbaaf_Token_Store::parse_token('42.'), null);
++mrd_assert('parse_token: trailing dot only', MrDastbaaf_Token_Store::parse_token('42'), null);
++
++// ─── ۲) هش و مقایسه ────────────────────────────────────────────────────────
++
++$hash = MrDastbaaf_Token_Store::hash_secret('secret-value');
++mrd_assert('hash_secret: 64 hex characters', strlen($hash), 64);
++mrd_assert('hash_secret: matches sha256', $hash, hash('sha256', 'secret-value'));
++mrd_assert(
++    'hash_secret: deterministic',
++    MrDastbaaf_Token_Store::hash_secret('secret-value'),
++    MrDastbaaf_Token_Store::hash_secret('secret-value')
++);
++mrd_assert(
++    'hash_secret: different inputs differ',
++    MrDastbaaf_Token_Store::hash_secret('a') === MrDastbaaf_Token_Store::hash_secret('b'),
++    false
++);
++
++mrd_assert('secret_matches: correct secret', MrDastbaaf_Token_Store::secret_matches('secret-value', $hash), true);
++mrd_assert('secret_matches: wrong secret', MrDastbaaf_Token_Store::secret_matches('other-value', $hash), false);
++mrd_assert('secret_matches: empty stored hash is never a match', MrDastbaaf_Token_Store::secret_matches('secret-value', ''), false);
++mrd_assert('secret_matches: empty secret against a real hash', MrDastbaaf_Token_Store::secret_matches('', $hash), false);
++
++// سازگاری با توکن پیش از ارتقا: سرور قدیمی فقط hash را در usermeta داشت.
++// مهاجرت همان hash را در token_hash می‌نویسد، پس همین مقایسه باید کار کند.
++$legacy_secret = wp_stub_generate_secret();
++$legacy_stored = hash('sha256', $legacy_secret);
++mrd_assert(
++    'legacy migration: a pre-upgrade token still validates',
++    MrDastbaaf_Token_Store::secret_matches($legacy_secret, $legacy_stored),
++    true
++);
++
++// ─── ۳) اعتبار ردیف ────────────────────────────────────────────────────────
++
++$now = 1800000000;
++
++$active_row = array(
++    'id' => 7,
++    'revoked_at' => null,
++    'expires_at' => gmdate('Y-m-d H:i:s', $now + 3600),
++);
++mrd_assert('is_usable: active row', MrDastbaaf_Token_Store::is_usable($active_row, $now), true);
++
++$revoked_row = array(
++    'id' => 8,
++    'revoked_at' => gmdate('Y-m-d H:i:s', $now - 10),
++    'expires_at' => gmdate('Y-m-d H:i:s', $now + 3600),
++);
++mrd_assert('is_usable: revoked row is rejected even if unexpired', MrDastbaaf_Token_Store::is_usable($revoked_row, $now), false);
++
++$expired_row = array(
++    'id' => 9,
++    'revoked_at' => null,
++    'expires_at' => gmdate('Y-m-d H:i:s', $now - 1),
++);
++mrd_assert('is_usable: expired row', MrDastbaaf_Token_Store::is_usable($expired_row, $now), false);
++
++// مرز دقیق: انقضا در همان ثانیه یعنی منقضی (fail-closed).
++$boundary_row = array(
++    'id' => 10,
++    'revoked_at' => null,
++    'expires_at' => gmdate('Y-m-d H:i:s', $now),
++);
++mrd_assert('is_usable: expiry exactly at now counts as expired', MrDastbaaf_Token_Store::is_usable($boundary_row, $now), false);
++
++mrd_assert('is_usable: not an array', MrDastbaaf_Token_Store::is_usable('nonsense', $now), false);
++mrd_assert('is_usable: missing expires_at', MrDastbaaf_Token_Store::is_usable(array('id' => 11, 'revoked_at' => null), $now), false);
++mrd_assert('is_usable: malformed expires_at', MrDastbaaf_Token_Store::is_usable(array('id' => 12, 'expires_at' => 'not-a-date'), $now), false);
++
++// ─── ۴) سیاست سقف دستگاه‌ها ────────────────────────────────────────────────
++
++$rows = array(
++    array('id' => 30, 'issued_at' => '2026-10-10 10:00:00'), // جدیدترین
++    array('id' => 10, 'issued_at' => '2026-01-01 10:00:00'), // قدیمی‌ترین
++    array('id' => 20, 'issued_at' => '2026-05-05 10:00:00'),
++);
++mrd_assert('oldest_row_id: picks the earliest issued_at', MrDastbaaf_Token_Store::oldest_row_id($rows), 10);
++
++// tie-break قطعی: دو ردیف با issued_at یکسان ⇒ شناسهٔ کوچک‌تر قربانی می‌شود
++$tied = array(
++    array('id' => 55, 'issued_at' => '2026-01-01 10:00:00'),
++    array('id' => 44, 'issued_at' => '2026-01-01 10:00:00'),
++);
++mrd_assert('oldest_row_id: tie breaks on the lower id deterministically', MrDastbaaf_Token_Store::oldest_row_id($tied), 44);
++
++mrd_assert('oldest_row_id: empty list', MrDastbaaf_Token_Store::oldest_row_id(array()), null);
++mrd_assert('oldest_row_id: skips malformed entries', MrDastbaaf_Token_Store::oldest_row_id(array('junk', array('id' => 3, 'issued_at' => '2026-01-01 00:00:00'))), 3);
++mrd_assert(
++    'oldest_row_id: missing issued_at treated as epoch (oldest)',
++    MrDastbaaf_Token_Store::oldest_row_id(array(array('id' => 99, 'issued_at' => '2026-01-01 00:00:00'), array('id' => 98))),
++    98
++);
++
++// ─── ۵) عمر توکن ───────────────────────────────────────────────────────────
++
++$issued = 1800000000;
++mrd_assert(
++    'expiry_from: exactly 30 days after issue',
++    MrDastbaaf_Token_Store::expiry_from($issued),
++    gmdate('Y-m-d H:i:s', $issued + 30 * 86400)
++);
++mrd_assert('TOKEN_LIFETIME_SECONDS is 30 days', MrDastbaaf_Token_Store::TOKEN_LIFETIME_SECONDS, 2592000);
++mrd_assert('MAX_DEVICES is 3', MrDastbaaf_Token_Store::MAX_DEVICES, 3);
++
++// ─── ۶) مهار نوشتن last_used_at ────────────────────────────────────────────
++
++mrd_assert('should_touch: never touched before', MrDastbaaf_Token_Store::should_touch(null, $now), true);
++mrd_assert('should_touch: empty string', MrDastbaaf_Token_Store::should_touch('', $now), true);
++mrd_assert(
++    'should_touch: touched 1 minute ago is skipped',
++    MrDastbaaf_Token_Store::should_touch(gmdate('Y-m-d H:i:s', $now - 60), $now),
++    false
++);
++mrd_assert(
++    'should_touch: touched 11 minutes ago is written',
++    MrDastbaaf_Token_Store::should_touch(gmdate('Y-m-d H:i:s', $now - 11 * 60), $now),
++    true
++);
++mrd_assert(
++    'should_touch: exactly at the interval boundary writes',
++    MrDastbaaf_Token_Store::should_touch(gmdate('Y-m-d H:i:s', $now - MrDastbaaf_Token_Store::TOUCH_INTERVAL_SECONDS), $now),
++    true
++);
++mrd_assert('should_touch: malformed value falls back to writing', MrDastbaaf_Token_Store::should_touch('garbage', $now), true);
++
++// ─── ۷) هش‌نشدن secret در مسیر ذخیره‌سازی ──────────────────────────────────
++//
++// issue() فقط hash_secret() را در ستون token_hash می‌نویسد. اینجا رفتار هش
++// دوباره تأیید می‌شود تا اگر کسی روزی مقدار خام را جای هش بگذارد، تست بیفتد:
++// هش یک secret هرگز با خود secret برابر نیست.
++
++mrd_assert(
++    'a stored hash never equals the raw secret',
++    MrDastbaaf_Token_Store::hash_secret('plain-secret') === 'plain-secret',
++    false
++);
++mrd_assert(
++    'the stored form is a fixed-length digest regardless of secret length',
++    strlen(MrDastbaaf_Token_Store::hash_secret(str_repeat('x', 512))),
++    64
++);
++
++echo "\n---- result ----\n";
++echo "PASS: {$pass}\n";
++echo "FAIL: {$fail}\n";
++
++exit($fail > 0 ? 1 : 0);
++
++/**
++ * تولید یک secret تصادفی به سبک wp_generate_password() — بدون وابستگی به وردپرس.
++ */
++function wp_stub_generate_secret() {
++    return substr(str_shuffle(str_repeat('abcdefghijklmnopqrstuvwxyz0123456789', 4)), 0, 32);
++}

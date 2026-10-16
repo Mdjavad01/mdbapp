@@ -1,0 +1,1380 @@
+From 165590d53f4cc95c563f08b82326ca9a80e3d5c4 Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Sat, 17 Oct 2026 00:27:56 +0330
+Subject: [PATCH] feat(playback): expiring signed URLs for the download host
+ (v1.8.0, nginx secure_link)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Release blocker. POST /lessons/{id}/playback returned a PERMANENT url
+(https://dll.mrdastbaaf.com/FA/lesson-01.mp4). Anyone who captured it once —
+from the Network tab, a proxy log, a screenshot — could download the file
+forever, with no login. The only protection was Referer-based hotlink
+blocking, defeated by a forged header.
+
+Video URLs are now signed with a short-lived token and verified by nginx
+before the file is served:
+
+  /FA/lesson-01.mp4?md5=<sig>&expires=1800000000
+
+  md5_raw = md5($expires . $uri . $secret, binary=true)
+  md5_url = base64url(md5_raw)          // +/ -> -_ , no padding
+
+which is exactly nginx's own secure_link module:
+  secure_link      $arg_md5,$arg_expires;
+  secure_link_md5  "$secure_link_expires$uri<SECRET>";
+
+Design decisions worth reviewing:
+
+- The signature is computed over the PERCENT-DECODED path, while the emitted
+  URL keeps the original encoded path. nginx evaluates $uri after decoding;
+  PHP sees the raw path. Every filename in this project is Persian, so signing
+  the encoded form would invalidate every signature and 403 all playback.
+  This is the single most likely way to get this wrong, so it is called out in
+  both the class header and the nginx doc, and pinned by a test.
+
+- Rollout order is PHP-first, and is documented as such. If nginx enforces the
+  signature before PHP attaches one, every stream 403s. If PHP attaches one
+  before nginx enforces, nothing breaks. is_enabled() therefore defaults to
+  FALSE and maybe_sign() is a no-op when off, so the call site needs no guard
+  and the switch is reversible in one place.
+
+- The secret comes from MRDASTBAAF_SIGNED_URL_SECRET in wp-config.php when
+  defined, falling back to a generated option. It must be byte-identical to
+  the nginx literal, and keeping it out of the options table keeps it out of
+  database backups and out of alloptions on every request.
+
+- $remote_addr is deliberately NOT part of the signature. Binding to IP makes
+  sharing harder but breaks playback on every 4G<->WiFi handover. The
+  alternative config is included commented in the nginx sample.
+
+- TTL defaults to 900s (matching the playback ticket) with a 24h ceiling, so a
+  misconfiguration cannot quietly restore a permanent URL.
+
+- The response gains signedUrls (bool). The player does not need it; it exists
+  so support can tell "no signature" from "bad signature" without shell access.
+
+Scope: only /playback output is signed. The pre-existing proxy mode is not
+touched, and proxyMode:true remains unsupported by the client by agreement.
+
+Deliverables:
+- docs/DLL_HOST_NGINX_SIGNED_URLS.sample — drop-in server block
+- docs/NGINX_SIGNED_URLS.md — rollout, verification, rollback, and the
+  explicit note that unsigned direct access must be blocked, plus what to
+  check when a 403 appears
+
+Tests: tests/php/test-signed-urls.php — 43 assertions: the fixed cross-checked
+vector, PHP<->Python agreement, base64url edge cases, path decoding (encoded
+vs decoded divergence), empty/malformed URLs, the expiry boundary, TTL
+clamping, and tamper rejection. Suite now totals 143 assertions across five
+files.
+
+Three assertions failed on the first run; all three were my expectations, not
+the code (base64 padding length, parse_url on a non-URL, and the expiry
+arithmetic). Each was verified against the PHP runtime and the test corrected.
+
+The signature vector was also verified independently in Python, and a
+committed test asserts PHP still produces it — so a future refactor that
+silently changes the algorithm fails here instead of in production.
+---
+ docs/DLL_HOST_NGINX_SIGNED_URLS.sample        | 218 +++++++++
+ docs/NGINX_SIGNED_URLS.md                     | 291 ++++++++++++
+ .../includes/class-courses-controller.php     |  14 +-
+ .../includes/class-signed-url-service.php     | 277 ++++++++++++
+ .../mrdastbaaf-bridge/mrdastbaaf-bridge.php   |   3 +
+ .../tests/php/test-signed-urls.php            | 423 ++++++++++++++++++
+ 6 files changed, 1224 insertions(+), 2 deletions(-)
+ create mode 100644 docs/DLL_HOST_NGINX_SIGNED_URLS.sample
+ create mode 100644 docs/NGINX_SIGNED_URLS.md
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php
+
+diff --git a/docs/DLL_HOST_NGINX_SIGNED_URLS.sample b/docs/DLL_HOST_NGINX_SIGNED_URLS.sample
+new file mode 100644
+index 0000000..2532302
+--- /dev/null
++++ b/docs/DLL_HOST_NGINX_SIGNED_URLS.sample
+@@ -0,0 +1,218 @@
++# =============================================================================
++# مستر دستباف — آدرس‌های امضاشده با انقضا روی هاست دانلود
++# فایل نمونهٔ nginx برای dll.mrdastbaaf.com
++# -----------------------------------------------------------------------------
++# این فایل جانشین docs/DLL_HOST_HTACCESS.sample می‌شود.
++#
++# چرا .htaccess کافی نبود: آن لایه بر پایهٔ Referer بود و Referer قابل جعل است.
++# با یک درخواست curl و هدر جعلی، آدرس دائمی ویدیو همچنان کار می‌کرد و هر کسی
++# که آدرس را یک‌بار می‌دید، برای همیشه به فایل دسترسی داشت.
++#
++# این لایه به‌جای «چه کسی درخواست کرده»، «آیا سرور این آدرس را برای این لحظه
++# امضا کرده» را بررسی می‌کند. آدرس بدون امضای معتبر → 403؛ آدرس منقضی → 410.
++#
++# ⚠️ ترتیب راه‌اندازی را رعایت کنید — docs/NGINX_SIGNED_URLS.md
++# =============================================================================
++
++
++# =============================================================================
++# ۰) پیش‌نیاز: ماژول secure_link باید در باینری nginx موجود باشد
++# -----------------------------------------------------------------------------
++# روی سرور اجرا کنید:
++#
++#   nginx -V 2>&1 | tr ' ' '\n' | grep secure_link
++#
++# باید یکی از این دو را ببینید:
++#   --with-http_secure_link_module        (ساخت دستی / nginx.org)
++#   (در بستهٔ nginx-full دبیان/اوبونتو هم موجود است)
++#
++# اگر خروجی خالی بود: بستهٔ nginx-light یا نسخهٔ بدون این ماژول نصب است.
++# راه‌حل: بستهٔ nginx.org یا nginx-full را نصب کنید. بدون این ماژول، ادامه
++# ندهید — کانفیگ بالا نمی‌آید و کل سایت دانلود از کار می‌افتد.
++# =============================================================================
++
++
++# =============================================================================
++# ۱) تعریف کلید مشترک
++# -----------------------------------------------------------------------------
++# این مقدار باید **مو‌به‌مو** با کلید سمت PHP یکی باشد. سمت PHP از این ترتیب
++# می‌خواند:
++#   ۱) ثابت MRDASTBAAF_SIGNED_URL_SECRET در wp-config.php  (توصیه‌شده)
++#   ۲) گزینهٔ mrdastbaaf_signed_url_secret در دیتابیس (خودکار ساخته می‌شود)
++#
++# برای خواندن مقدار خودکارساخته:
++#   wp option get mrdastbaaf_signed_url_secret
++#   — یا —  SELECT option_value FROM wp_options
++#           WHERE option_name = 'mrdastbaaf_signed_url_secret';
++#
++# توصیه: همان مقدار را در wp-config.php هم بگذارید تا یک منبع حقیقت داشته باشید:
++#   define('MRDASTBAAF_SIGNED_URL_SECRET', 'مقدار-دلخواه-بلند-و-تصادفی');
++#
++# ⚠️ اگر کلید دو طرف یکی نباشد، **همهٔ** درخواست‌ها 403 می‌شوند.
++# =============================================================================
++
++map $host $mrd_signed_secret {
++    default "PUT_YOUR_SHARED_SECRET_HERE";
++}
++
++
++server {
++    listen      443 ssl http2;
++    listen      [::]:443 ssl http2;
++    server_name dll.mrdastbaaf.com;
++
++    # ---------------------------------------------------------------------
++    # گواهی TLS — مسیرها را با سرور خود تطبیق دهید
++    # ---------------------------------------------------------------------
++    ssl_certificate     /etc/ssl/mrdastbaaf/dll.crt;
++    ssl_certificate_key /etc/ssl/mrdastbaaf/dll.key;
++    ssl_protocols       TLSv1.2 TLSv1.3;
++    ssl_prefer_server_ciphers off;
++
++    root  /home/mrdastbaaf/dll.mrdastbaaf.com;
++    index index.html;
++
++    # ---------------------------------------------------------------------
++    # فایل‌های ویدیو — قلب این پیکربندی
++    # ---------------------------------------------------------------------
++    # مسیر /FA/ جایی است که ویدیوها قرار دارند. اگر ساختار پوشه‌ها فرق دارد،
++    # این location را متناسب تغییر دهید (امضا روی $uri محاسبه می‌شود، پس
++    # هر مسیری که پوشش دهید به‌طور خودکار محافظت می‌شود).
++    # ---------------------------------------------------------------------
++    location /FA/ {
++
++        # ── امضا را از query string بخوان ──────────────────────────────────
++        # قالب آدرس:  ?md5=<signature>&expires=<unix-timestamp>
++        secure_link $arg_md5,$arg_expires;
++
++        # ── الگوریتم امضا ─────────────────────────────────────────────────
++        # ترتیب اجزا **باید** با PHP یکی باشد:
++        #     $expires . $uri . $secret
++        #
++        # نکتهٔ حیاتی: متغیر $uri در nginx **decode‌شده** است. نام فایل‌های این
++        # پروژه فارسی‌اند و در URL به‌صورت percent-encoded می‌آیند
++        # (/FA/%D8%AF%D8%B1%D8%B3.mp4). سمت PHP هم عمداً مسیر را decode می‌کند
++        # (MrDastbaaf_Signed_Url_Service::path_for_signing) تا با همین متغیر
++        # یکی باشد. اگر امضا روی مسیر encode‌شده محاسبه شود، هیچ امضایی معتبر
++        # شناخته نمی‌شود و همهٔ ویدیوها 403 می‌شوند.
++        secure_link_md5 "$secure_link_expires$uri$mrd_signed_secret";
++
++        # ── نسخهٔ مقید به IP (اختیاری — پیش‌فرض غیرفعال) ───────────────────
++        # bind کردن امضا به IP کاربر، اشتراک‌گذاری آدرس را سخت‌تر می‌کند، اما
++        # برای اپ موبایل خطرناک است: تغییر شبکه (۴G ↔ وای‌فای) وسط پخش، IP را
++        # عوض می‌کند و ویدیو ۴۰۳ می‌شود. اگر فعال می‌کنید، مطمئن شوید که
++        # پلیر در خطا، بلیط تازه می‌گیرد.
++        #
++        # secure_link_md5 "$secure_link_expires$uri$remote_addr$mrd_signed_secret";
++
++        # ── تصمیم دسترسی ──────────────────────────────────────────────────
++        # $secure_link مقادیر زیر را می‌گیرد:
++        #   ""    → امضا غایب یا نامعتبر            → 403
++        #   "0"   → امضا معتبر ولی منقضی            → 410 Gone
++        #   "1"   → معتبر و در بازهٔ اعتبار          → سرو فایل
++        #
++        # ┌─────────────────────────────────────────────────────────────────┐
++        # │ فاز A (راه‌اندازی): دو خط if زیر را کامنت بگذارید.                │
++        # │   nginx آدرس‌های امضاشده و بدون امضا را یکسان سرو می‌کند — یعنی   │
++        # │   می‌توانید مطمئن شوید PHP امضا می‌گذارد و پخش سالم است، بدون     │
++        # │   اینکه اگر جایی از قلم افتاد، کاربر ویدیو از دست بدهد.           │
++        # │                                                                 │
++        # │ فاز B (اعمال): کامنت را بردارید و nginx -s reload.              │
++        # │   از این لحظه دسترسی بدون امضا بسته می‌شود.                       │
++        # └─────────────────────────────────────────────────────────────────┘
++        if ($secure_link = "") { return 403; }
++        if ($secure_link = "0") { return 410; }
++
++        # ── سرو فایل با پشتیبانی از Range ────────────────────────────────
++        # seek در پلیر به Range request وابسته است. nginx برای فایل‌های استاتیک
++        # این را بومی پشتیبانی می‌کند؛ فقط نباید خاموشش کنید.
++        add_header Accept-Ranges bytes always;
++        add_header Cache-Control "private, no-store" always;
++        add_header X-Content-Type-Options nosniff always;
++
++        # ویدیوهای بزرگ: بافر کم و ارسال پیوسته
++        sendfile        on;
++        tcp_nopush      on;
++        tcp_nodelay     on;
++        aio             threads;
++        directio        8m;
++
++        # نبود فایل = 404 (نه صفحهٔ پیش‌فرض سرور)
++        try_files $uri =404;
++    }
++
++    # ---------------------------------------------------------------------
++    # فایل‌های HLS در آینده (.m3u8 و سگمنت‌ها)
++    # ---------------------------------------------------------------------
++    # وقتی پکیجینگ HLS اضافه شد، امضا روی مستر پلی‌لیست هم اعمال می‌شود. توجه:
++    # nginx امضای پلی‌لیست را بررسی می‌کند، اما آدرس سگمنت‌های داخل آن باید
++    # **در همان لحظهٔ ساخت پلی‌لیست** امضا شده باشند (چون هر سگمنت URL جداگانه
++    # است). این کار در لایهٔ PHP انجام می‌شود، نه اینجا.
++    # ---------------------------------------------------------------------
++    location ~* \.(m3u8|ts|m4s)$ {
++        secure_link     $arg_md5,$arg_expires;
++        secure_link_md5 "$secure_link_expires$uri$mrd_signed_secret";
++
++        if ($secure_link = "") { return 403; }
++        if ($secure_link = "0") { return 410; }
++
++        add_header Cache-Control "private, no-store" always;
++        try_files $uri =404;
++    }
++
++    # ---------------------------------------------------------------------
++    # بقیهٔ مسیرها
++    # ---------------------------------------------------------------------
++    # توجه: هر چیزی که در location های بالا پوشش داده نشود، **بدون امضا** سرو
++    # می‌شود. اگر فایل ویدیویی بیرون از /FA/ دارید، یا آن را به /FA/ منتقل
++    # کنید یا location مربوطه را اضافه کنید. برای اطمینان، در پایان راه‌اندازی
++    # این را تست کنید:
++    #     curl -I "https://dll.mrdastbaaf.com/مسیر-دیگر/فایل.mp4"
++    # باید 403 بگیرد، نه 200.
++    # ---------------------------------------------------------------------
++    location / {
++        try_files $uri $uri/ =404;
++    }
++
++    # ---------------------------------------------------------------------
++    # دسترسی به فایل‌های حساس
++    # ---------------------------------------------------------------------
++    location ~ /\.(?!well-known) { deny all; }
++
++    access_log /var/log/nginx/dll.mrdastbaaf.com.access.log;
++    error_log  /var/log/nginx/dll.mrdastbaaf.com.error.log warn;
++}
++
++
++# =============================================================================
++# ۲) اگر هاست دانلود پشت BitNinja/Cloudflare است
++# -----------------------------------------------------------------------------
++# طبق مستندات پروژه، این هاست پشت BitNinja-WafPro قرار دارد. نکته:
++#   - secure_link روی **Apache/nginx مبدأ** اجرا می‌شود، نه روی WAF.
++#   - WAF ممکن است query string را دست‌کاری یا حذف کند. پس از راه‌اندازی،
++#     حتماً با curl واقعی تست کنید که پارامترهای md5 و expires به مبدأ می‌رسند.
++#   - اگر Cloudflare جلوی این هاست است، «Cache Everything» را برای /FA/ خاموش
++#     کنید؛ کش شدن پاسخ ۲۰۰ باعث می‌شود بررسی امضا دور زده شود.
++# =============================================================================
++
++
++# =============================================================================
++# ۳) تست پس از راه‌اندازی
++# -----------------------------------------------------------------------------
++# الف) بدون امضا — باید 403 باشد (پس از فاز B):
++#   curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4"
++#
++# ب) با امضای معتبر — باید 200 و Accept-Ranges: bytes باشد.
++#    (مقدار زیر با secret = test-secret ساخته شده؛ با کلید واقعی خودتان
++#     باید از طریق اپ یا PHP بسازید.)
++#   curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=uydm921XT5rHRgrrCIVrgA&expires=1800000000"
++#
++# ج) با امضای دست‌کاری‌شده — باید 403 باشد:
++#   curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=AAAAAAAAAAAAAAAAAAAAAA&expires=1800000000"
++#
++# د) با مهر زمانی گذشته — باید 410 باشد:
++#   curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=<sig>&expires=1000000000"
++#
++# هـ) Range request با امضای معتبر — باید 206 Partial Content باشد (seek):
++#   curl -I -H "Range: bytes=0-1023" "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=...&expires=..."
++# =============================================================================
+diff --git a/docs/NGINX_SIGNED_URLS.md b/docs/NGINX_SIGNED_URLS.md
+new file mode 100644
+index 0000000..b403910
+--- /dev/null
++++ b/docs/NGINX_SIGNED_URLS.md
+@@ -0,0 +1,291 @@
++# Signed URLs for the download host — install & migration guide
++
++**Version:** bridge `1.8.0` · **Schema:** unchanged (`1.7.0`) · **Host:** `dll.mrdastbaaf.com`
++**Replaces:** `docs/DLL_HOST_HTACCESS.sample` (Referer-based hotlink protection)
++
++---
++
++## The problem this solves
++
++Until now `POST /lessons/{id}/playback` returned a **permanent, unsigned** URL:
++
++```
++https://dll.mrdastbaaf.com/FA/lesson-01.mp4
++```
++
++Anyone who saw that URL once — in the Network tab, in a proxy log, in a
++screenshot — could download the video forever, with no login and no
++subscription. The only defence was Referer-based hotlink protection, and a
++Referer header is trivially forged:
++
++```bash
++curl -e "https://app.mrdastbaaf.com/" https://dll.mrdastbaaf.com/FA/lesson-01.mp4   # 200 OK
++```
++
++The `.htaccess` layer stops casual link-sharing. It stops nothing else.
++
++## What changes
++
++The server now appends a short-lived signature to every video URL:
++
++```
++https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=<sig>&expires=1800000000
++```
++
++nginx validates it **before** serving a single byte. A URL without a valid
++signature is `403`; an expired one is `410`.
++
++This is `ngx_http_secure_link_module`, which nginx ships natively — no extra
++software, no CDN dependency, and it works on the existing shared host.
++
++### The algorithm
++
++Both sides must compute this identically:
++
++```
++signature = base64url( md5( expires . uri . secret , raw ) )
++```
++
++where `base64url` means `+`→`-`, `/`→`_`, and no `=` padding.
++
++nginx:
++
++```nginx
++secure_link      $arg_md5,$arg_expires;
++secure_link_md5  "$secure_link_expires$uri$secret";
++```
++
++PHP (`MrDastbaaf_Signed_Url_Service::sign()`):
++
++```php
++$raw = md5($expires . $resource . $secret, true);
++$sig = rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
++```
++
++A fixed vector is locked down by `tests/php/test-signed-urls.php` and
++independently cross-checked against a separate implementation:
++
++| Input | Value |
++|---|---|
++| `resource` | `/FA/lesson-01.mp4` |
++| `expires` | `1800000000` |
++| `secret` | `test-secret` |
++| **signature** | `uydm921XT5rHRgrrCIVrgA` |
++
++If that test ever fails, **stop** — a mismatch means every video on the platform
++returns 403.
++
++### Two traps, both handled
++
++**1. `$uri` in nginx is percent-decoded.** This project's filenames are Persian,
++so they arrive as `/FA/%D8%AF%D8%B1%D8%B3.mp4`. nginx sees the *decoded* path
++while PHP reads the raw one. Signing the encoded form would make every signature
++invalid — silently, and only in production, and only for non-ASCII filenames.
++`path_for_signing()` decodes, and the signed URL keeps the original encoded path.
++The test suite asserts that the encoded and decoded forms produce different
++signatures, so the distinction cannot be lost by accident.
++
++**2. The signature is not bound to the client IP.** Binding it would make sharing
++harder, but a phone switching from 4G to Wi-Fi mid-playback changes IP and would
++get a 403 in the middle of a lesson. The IP-bound variant is present but commented
++in the sample config.
++
++---
++
++## Rollout — follow this order
++
++> ⚠️ **If nginx enforces the signature before PHP sends it, every video 403s.**
++> The order below makes that impossible: PHP starts signing while nginx is still
++> permissive, so you can verify the happy path before you close the door.
++
++### Step 1 — confirm the module exists
++
++```bash
++nginx -V 2>&1 | tr ' ' '\n' | grep secure_link
++```
++
++Empty output means `nginx-light` or a build without the module. Install
++`nginx-full` or the nginx.org package first — do not continue.
++
++### Step 2 — agree on the secret
++
++Generate one long random value and put it **in both places**.
++
++In `wp-config.php` (recommended — one source of truth, never in a DB dump):
++
++```php
++define('MRDASTBAAF_SIGNED_URL_SECRET', 'a-long-random-value-you-generate');
++```
++
++If you skip this, the plugin generates one and stores it in the option
++`mrdastbaaf_signed_url_secret`; read it with
++`wp option get mrdastbaaf_signed_url_secret`.
++
++Then set the same value in the nginx `map` block.
++
++**A mismatch means every request 403s.** Verify character-for-character.
++
++### Step 3 — install the nginx config in permissive mode
++
++Copy `docs/DLL_HOST_NGINX_SIGNED_URLS.sample` into your server block, and leave
++these two lines **commented out**:
++
++```nginx
++# if ($secure_link = "") { return 403; }
++# if ($secure_link = "0") { return 410; }
++```
++
++```bash
++nginx -t && nginx -s reload
++```
++
++Nothing is blocked yet. Playback should be entirely unaffected.
++
++### Step 4 — turn on signing in PHP
++
++```php
++update_option('mrdastbaaf_signed_urls_enabled', true);
++```
++
++Or filter it in, if you prefer config over database:
++
++```php
++add_filter('mrdastbaaf_signed_urls_enabled', '__return_true');
++```
++
++Now `POST /lessons/{id}/playback` returns URLs carrying `?md5=…&expires=…`, and
++the response also carries `"signedUrls": true`.
++
++**Verify playback works in the web PWA and in the app.** The URLs are signed but
++nginx is not checking them yet, so the only thing that can break here is PHP —
++and if it does, you have not closed anything off yet.
++
++### Step 5 — confirm unsigned access is still open
++
++```bash
++curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4"     # expect 200
++```
++
++If this is already 403, something else is blocking (the old `.htaccess` is still
++in place — see step 7).
++
++### Step 6 — enforce
++
++Uncomment the two `if` lines and reload:
++
++```bash
++nginx -t && nginx -s reload
++```
++
++Now verify, in this order:
++
++```bash
++# 1. No signature → 403
++curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4"
++
++# 2. Valid signature → 200, with "Accept-Ranges: bytes"
++curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=<sig>&expires=<future>"
++
++# 3. Tampered signature → 403
++curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=AAAAAAAAAAAAAAAAAAAAAA&expires=<future>"
++
++# 4. Expired signature → 410
++curl -I "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=<sig>&expires=1000000000"
++
++# 5. Range request (seeking) → 206 Partial Content
++curl -I -H "Range: bytes=0-1023" "https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=<sig>&expires=<future>"
++```
++
++Build the signature for tests 2 and 5 with:
++
++```bash
++php -r 'echo rtrim(strtr(base64_encode(md5((time()+3600)."/FA/lesson-01.mp4"."YOUR_SECRET", true)), "+/", "-_"), "=");'
++```
++
++Then **play a full lesson in the app, seek around, and let it run past the TTL**
++(default 15 minutes) to confirm playback does not stall mid-video.
++
++### Step 7 — remove the old Referer-based protection
++
++Once step 6 passes, delete the `.htaccess` from the `dll.` host root (or remove
++its `SetEnvIf`/`RewriteRule` blocks).
++
++Keeping it causes confusing double-failures: a signed request can still be
++rejected by the Referer rules, and you will be debugging the wrong layer. The
++signed URL is strictly stronger and makes the hotlink layer redundant.
++
++### Step 8 — turn the PHP stream proxy OFF
++
++The stream proxy (`mrdastbaaf_stream_proxy_mode`) existed to hide the CDN URL
++behind a 60-second token. Signed URLs achieve the same goal properly, without
++proxying every byte through PHP.
++
++Turn it off:
++
++```php
++update_option('mrdastbaaf_stream_proxy_mode', false);
++```
++
++The proxy also had two defects that signed URLs do not have: its token was never
++bound to the requesting user, and it expired 60 seconds into a video, killing
++playback mid-lesson.
++
++---
++
++## Rollback
++
++Any step reverses cleanly:
++
++| To undo | Do |
++|---|---|
++| Enforcement | comment the two `if` lines, `nginx -s reload` |
++| Signing | `update_option('mrdastbaaf_signed_urls_enabled', false)` |
++| Everything | restore the previous nginx config and re-enable the proxy |
++
++Rolling back enforcement alone is enough to restore service: with the `if` lines
++commented, both signed and unsigned URLs work again.
++
++---
++
++## What this does and does not achieve
++
++**Does:** makes a leaked URL worthless within minutes. A URL captured from a
++network log, a shared screenshot, or a Telegram group stops working. Combined
++with the 30-day ticket flow, obtaining a *usable* URL now requires an active
++subscription at the moment of the request.
++
++**Does not:** stop a determined attacker. Someone with a valid subscription can
++still play the video and capture it — screen-record it, or re-request a fresh
++signed URL through their own authenticated client. No URL-signing scheme prevents
++that; only DRM would, and DRM is out of scope for this project.
++
++It also does not stop re-recording, which is what the dynamic watermark is for:
++the watermark identifies *who* leaked a recording, the signature limits *how
++long* a leaked URL is useful.
++
++The honest summary: this closes the "one leaked URL is a permanent public
++download" hole, which was the largest practical gap. It does not make the content
++uncopyable, and nothing at this layer can.
++
++---
++
++## Troubleshooting
++
++| Symptom | Likely cause |
++|---|---|
++| **Everything** 403s | Secret mismatch between PHP and nginx, or signing enabled in nginx before PHP |
++| Only **Persian-named** files 403 | The `$uri` decode trap — confirm `path_for_signing()` is in use and the test suite passes |
++| 403 on files **outside `/FA/`** | The `location` does not cover them; add a `location` block or move the files |
++| 200 with no signature | The `if` lines are still commented (step 6 not done) |
++| 200 but no `Accept-Ranges` | Range support was disabled; check `sendfile`/`aio` settings |
++| Playback dies after ~15 min | TTL too short for the lesson; raise `mrdastbaaf_signed_url_ttl` (max 86 400) |
++| Works in the browser, fails in the app | A proxy/WAF stripping the query string — check what reaches the origin |
++
++## Configuration reference
++
++| Option | Default | Notes |
++|---|---|---|
++| `mrdastbaaf_signed_urls_enabled` | `false` | Off by default so the rollout order above is the only way to enable it |
++| `mrdastbaaf_signed_url_ttl` | `900` (15 min) | Clamped to `[1, 86400]` |
++| `mrdastbaaf_signed_url_secret` | auto-generated | Overridden by the `MRDASTBAAF_SIGNED_URL_SECRET` constant |
++| Filter `mrdastbaaf_signed_urls_enabled` | — | Force on/off without touching the database |
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
+index 718ecaf..2002193 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-courses-controller.php
+@@ -569,24 +569,34 @@ class MrDastbaaf_Courses_Controller {
+             ));
+         }
+ 
++        // v1.8.0: آدرس‌های امضاشده با انقضا (nginx secure_link).
++        //
++        // اگر فعال باشد، آدرس دائمی CDN با یک آدرس کوتاه‌عمر جایگزین می‌شود.
++        // اگر خاموش باشد، maybe_sign آدرس را دست‌نخورده برمی‌گرداند — پس این
++        // فراخوانی در هر دو حالت بی‌خطر است و نیازی به شرط بیرونی ندارد.
++        $signed_video_url = MrDastbaaf_Signed_Url_Service::maybe_sign($video_url);
++
+         // v1.8.0: نوع هر کیفیت — کلاینت نباید برای تشخیص MP4/HLS به پسوند
+         // تکیه کند (در حالت پروکسی اصلاً پسوندی وجود ندارد).
+         $typed_qualities = array();
+         foreach ($stored_qualities as $q) {
+             $typed_qualities[] = array(
+                 'label' => $q['label'],
+-                'url'   => $q['url'],
++                'url'   => MrDastbaaf_Signed_Url_Service::maybe_sign($q['url']),
+                 'type'  => self::detect_video_type($q['url'], $lesson_id),
+             );
+         }
+ 
+         return rest_ensure_response(array(
+-            'videoUrl' => $video_url,
++            'videoUrl' => $signed_video_url,
+             'videoType' => self::detect_video_type($video_url, $lesson_id),
+             'watermarkText' => $watermark['text'],
+             'watermarkUserId' => $watermark['user_id'],
+             'watermarkFullName' => $watermark['name'],
+             'expiresAt' => gmdate('c', $issued_at + self::TICKET_TTL),
++            // v1.8.0: آیا آدرس‌ها امضاشده‌اند؟ کلاینت می‌تواند در لاگ/پشتیبانی
++            // از آن استفاده کند؛ برای پخش نیازی به خواندنش ندارد.
++            'signedUrls' => MrDastbaaf_Signed_Url_Service::is_enabled(),
+             // v1.4.0: [{label,url}, …] — ممکن است خالی باشد (فقط «خودکار»)
+             // v1.8.0: کلید type به هر آیتم اضافه شد
+             'qualities' => $typed_qualities,
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php
+new file mode 100644
+index 0000000..27dd84f
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-signed-url-service.php
+@@ -0,0 +1,277 @@
++<?php
++/**
++ * آدرس‌های امضاشده با انقضا برای هاست دانلود (v1.8.0 — بدون تغییر اسکیما)
++ *
++ * ─── مسئله ───
++ * تا پیش از این، POST /lessons/{id}/playback یک آدرس **دائمی** برمی‌گرداند:
++ * https://dll.mrdastbaaf.com/FA/lesson-01.mp4
++ * هر کسی که این آدرس را می‌گرفت (از تب Network، از یک لاگ، از یک اسکرین‌شات)
++ * برای همیشه و بدون ورود می‌توانست ویدیو را دانلود کند. تنها محافظ،
++ * Hotlink Protection مبتنی بر Referer بود که با یک هدر جعلی دور زده می‌شود.
++ *
++ * ─── راه‌حل ───
++ * همان الگوی ماژول secure_link خود nginx: سرور یک امضای کوتاه‌عمر به آدرس
++ * می‌چسباند و nginx پیش از سرو فایل، اعتبار آن را بررسی می‌کند.
++ *
++ *   https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=<sig>&expires=1800000000
++ *
++ * الگوریتم (باید **مو‌به‌مو** با nginx یکی باشد):
++ *   md5_raw  = md5( $expires . $uri . $secret , binary = true )
++ *   md5_url  = base64( md5_raw ) با «-_» به‌جای «+/» و بدون padding
++ *
++ * و در nginx:
++ *   secure_link            $arg_md5,$arg_expires;
++ *   secure_link_md5        "$secure_link_expires$uri<SECRET>";
++ *
++ * ─── نکتهٔ حیاتی: $uri در nginx «decode‌شده» است ───
++ * نام فایل‌های این پروژه فارسی‌اند و در URL به‌صورت percent-encoded می‌آیند
++ * (مثلاً /FA/درس-اول.mp4 → /FA/%D8%AF%D8%B1%D8%B3....mp4). nginx متغیر $uri را
++ * **پس از** percent-decode می‌بیند، در حالی که PHP مسیر خام را می‌خواند.
++ * اگر امضا روی مسیر encode‌شده محاسبه شود، هیچ امضایی در nginx معتبر نیست و
++ * **همهٔ ویدیوها 403 می‌شوند**. به همین دلیل [path_for_signing()] مسیر را
++ * decode می‌کند و [sign_url()] مسیر اصلی (encode‌شده) را در URL نهایی نگه
++ * می‌دارد: امضا روی شکل decode‌شده، آدرس روی شکل اصلی.
++ *
++ * ─── نکتهٔ دوم: $remote_addr عمداً در امضا نیست ───
++ * bind کردن امضا به IP کاربر، اشتراک‌گذاری را سخت‌تر می‌کند اما برای اپ موبایل
++ * شکستن پخش در لحظهٔ تغییر شبکه (۴G → وای‌فای) به‌دنبال دارد. پیکربندی
++ * جایگزین در سند nginx کامنت شده است.
++ *
++ * ─── ترتیب راه‌اندازی (مهم) ───
++ * اگر nginx امضا را اجباری کند ولی PHP آن را نچسباند، **تمام پخش‌ها 403
++ * می‌شوند**. ترتیب امن در docs/NGINX_SIGNED_URLS.md آمده است.
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++class MrDastbaaf_Signed_Url_Service {
++
++    const SECRET_OPTION  = 'mrdastbaaf_signed_url_secret';
++    const ENABLED_OPTION = 'mrdastbaaf_signed_urls_enabled';
++    const TTL_OPTION     = 'mrdastbaaf_signed_url_ttl';
++
++    /**
++     * تعریف ثابت در wp-config.php بر پایگاه‌داده اولویت دارد.
++     *
++     * چرا: این کلید باید **هم** در PHP و **هم** در nginx یکی باشد. نگه‌داشتنش
++     * در wp-config یعنی یک منبع حقیقت، بدون رفت‌وبرگشت دیتابیس، و بدون اینکه
++     * مقدارش در پشتیبان‌گیری دیتابیس یا جدول options بیفتد.
++     */
++    const SECRET_CONSTANT = 'MRDASTBAAF_SIGNED_URL_SECRET';
++
++    /**
++     * عمر پیش‌فرض امضا — ۱۵ دقیقه، هم‌اندازهٔ عمر بلیط پخش.
++     *
++     * کوتاه‌تر از عمر ویدیو است و باید باشد: امضا فقط باید به‌اندازهٔ «شروع و
++     * ادامهٔ یک نشست پخش» زنده بماند. برای ویدیوی طولانی، پلیر در هر درخواست
++     * Range همان امضای اولیه را می‌فرستد؛ پس TTL باید از طول یک درس بیشتر
++     * باشد، نه از طول یک درخواست.
++     */
++    const DEFAULT_TTL_SECONDS = 900;
++
++    /**
++     * سقف TTL — ۲۴ ساعت. جلوگیری از پیکربندی اشتباهی که عملاً آدرس را دائمی
++     * می‌کند (و کل هدف این لایه را بی‌اثر می‌سازد).
++     */
++    const MAX_TTL_SECONDS = 86400;
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // بخش خالص (بدون وردپرس) — قابل آزمون در tests/php/test-signed-urls.php
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * base64 سازگار با URL: «+» → «-»، «/» → «_»، بدون padding.
++     *
++     * nginx همین تبدیل را انجام می‌دهد؛ اگر padding باقی بماند یا «+» تبدیل
++     * نشود، امضا در سمت nginx معتبر شناخته نمی‌شود.
++     */
++    public static function base64_url_encode($raw) {
++        return rtrim(strtr(base64_encode((string) $raw), '+/', '-_'), '=');
++    }
++
++    /**
++     * محاسبهٔ امضا برای یک منبع (مسیر decode‌شده) و یک مهر زمانی.
++     *
++     * @param string $resource مسیر منبع، **decode‌شده** (مثل nginx $uri)
++     * @param int    $expires  مهر زمانی انقضا (ثانیه، UTC)
++     * @param string $secret   کلید مشترک با nginx
++     * @return string امضای آماده برای پارامتر md5
++     */
++    public static function sign($resource, $expires, $secret) {
++        $raw = md5((int) $expires . (string) $resource . (string) $secret, true);
++        return self::base64_url_encode($raw);
++    }
++
++    /**
++     * اعتبارسنجی یک امضا — برای خودآزمایی و تست.
++     *
++     * در پروداکشن، اعتبارسنجی کار nginx است؛ این متد برای تست یکپارچگی
++     * «PHP ↔ nginx» و برای عیب‌یابی (مقایسهٔ امضای محاسبه‌شده با امضای ارسالی)
++     * به‌کار می‌رود.
++     *
++     * @param string   $resource  مسیر decode‌شده
++     * @param int      $expires   مهر زمانی اعلامی
++     * @param string   $signature امضای اعلامی
++     * @param string   $secret    کلید مشترک
++     * @param int|null $now       مرجع زمانی (پیش‌فرض: time())
++     * @return bool
++     */
++    public static function verify($resource, $expires, $signature, $secret, $now = null) {
++        if ('' === (string) $signature || '' === (string) $secret) {
++            return false;
++        }
++
++        $now = (null === $now) ? time() : (int) $now;
++        if ((int) $expires <= $now) {
++            return false; // منقضی
++        }
++
++        $expected = self::sign($resource, $expires, $secret);
++
++        // مقایسهٔ زمان-ثابت — جلوگیری از حملهٔ زمان‌سنجی روی امضا.
++        return hash_equals($expected, (string) $signature);
++    }
++
++    /**
++     * استخراج مسیرِ قابل‌امضا از یک آدرس کامل.
++     *
++     * **decode می‌شود** تا با متغیر $uri در nginx یکی باشد (توضیح کامل در
++     * ابتدای فایل). اگر مسیر خالی باشد، رشتهٔ خالی برمی‌گردد و فراخوان باید
++     * امضا نکند.
++     *
++     * @param string $url آدرس کامل یا مسیر
++     * @return string مسیر decode‌شده، یا '' اگر قابل استخراج نبود
++     */
++    public static function path_for_signing($url) {
++        $url = (string) $url;
++        if ('' === $url) {
++            return '';
++        }
++
++        $path = wp_parse_url($url, PHP_URL_PATH);
++        if (!is_string($path) || '' === $path) {
++            return '';
++        }
++
++        return rawurldecode($path);
++    }
++
++    /**
++     * افزودن امضا و انقضا به یک آدرس — بدون دست‌زدن به شکل اصلی مسیر.
++     *
++     * @param string   $url        آدرس کامل منبع
++     * @param string   $secret     کلید مشترک
++     * @param int|null $ttl        عمر امضا (ثانیه)؛ پیش‌فرض DEFAULT_TTL_SECONDS
++     * @param int|null $now        مرجع زمانی (برای تست قطعی)
++     * @return string آدرس امضاشده، یا آدرس اصلی اگر قابل امضا نبود
++     */
++    public static function sign_url($url, $secret, $ttl = null, $now = null) {
++        $url = (string) $url;
++        if ('' === $url || '' === (string) $secret) {
++            return $url;
++        }
++
++        $path = self::path_for_signing($url);
++        if ('' === $path) {
++            return $url; // آدرس بی‌مسیر (نسبی/خراب) — دست‌نخورده برگردانده می‌شود
++        }
++
++        $ttl = (null === $ttl) ? self::DEFAULT_TTL_SECONDS : (int) $ttl;
++        $ttl = max(1, min($ttl, self::MAX_TTL_SECONDS));
++
++        $now = (null === $now) ? time() : (int) $now;
++        $expires = $now + $ttl;
++
++        $signature = self::sign($path, $expires, $secret);
++
++        return add_query_arg(
++            array(
++                'md5'     => $signature,
++                'expires' => $expires,
++            ),
++            $url
++        );
++    }
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // پیکربندی (وردپرس)
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * کلید مشترک با nginx — ثابت wp-config اولویت دارد، وگرنه گزینهٔ دیتابیس.
++     *
++     * روی نخستین فراخوانی، اگر هیچ‌کدام نبود، کلید تصادفی ساخته و ذخیره
++     * می‌شود (همان الگوی mrdastbaaf_cron_token). ذخیره با autoload=false تا در
++     * alloptions هر درخواست بارگذاری نشود.
++     *
++     * @return string
++     */
++    public static function get_secret() {
++        if (defined(self::SECRET_CONSTANT)) {
++            $from_constant = (string) constant(self::SECRET_CONSTANT);
++            if ('' !== $from_constant) {
++                return $from_constant;
++            }
++        }
++
++        $stored = (string) get_option(self::SECRET_OPTION, '');
++        if ('' !== $stored) {
++            return $stored;
++        }
++
++        $generated = wp_generate_password(48, false, false);
++        update_option(self::SECRET_OPTION, $generated, false);
++
++        return $generated;
++    }
++
++    /**
++     * آیا امضاگذاری فعال است؟
++     *
++     * پیش‌فرض **خاموش** است. دلیل عملیاتی: اگر PHP امضا بگذارد ولی nginx هنوز
++     * بررسی نکند، همه‌چیز کار می‌کند؛ اما اگر nginx بررسی کند و PHP امضا
++     * نگذارد، **تمام پخش‌ها 403 می‌شوند**. پس راه‌اندازی همیشه از سمت PHP
++     * شروع می‌شود و با یک سوئیچ قابل بازگشت است.
++     *
++     * @return bool
++     */
++    public static function is_enabled() {
++        return (bool) apply_filters(
++            'mrdastbaaf_signed_urls_enabled',
++            (bool) get_option(self::ENABLED_OPTION, false)
++        );
++    }
++
++    /**
++     * عمر امضا — با سقف MAX_TTL_SECONDS.
++     *
++     * @return int
++     */
++    public static function get_ttl() {
++        $ttl = (int) get_option(self::TTL_OPTION, self::DEFAULT_TTL_SECONDS);
++        if ($ttl <= 0) {
++            $ttl = self::DEFAULT_TTL_SECONDS;
++        }
++
++        return max(1, min($ttl, self::MAX_TTL_SECONDS));
++    }
++
++    /**
++     * امضای یک آدرس با پیکربندی فعلی.
++     *
++     * اگر امضاگذاری خاموش باشد، آدرس **دست‌نخورده** برگردانده می‌شود — تا
++     * فراخوان لازم نباشد شرط فعال‌بودن را تکرار کند.
++     *
++     * @param string $url
++     * @return string
++     */
++    public static function maybe_sign($url) {
++        if (!self::is_enabled()) {
++            return (string) $url;
++        }
++
++        return self::sign_url($url, self::get_secret(), self::get_ttl());
++    }
++}
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+index 8d26145..7db2579 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+@@ -168,6 +168,9 @@ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-membership-helper.php';
+ // v1.8.0: مخزن توکن چند-دستگاهی — پیش از کنترلر احراز هویت بارگذاری می‌شود
+ // (verify-otp برای صدور توکن و لایهٔ Bearer برای اعتبارسنجی به آن نیاز دارند).
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-token-store.php';
++// v1.8.0: آدرس‌های امضاشده (nginx secure_link) — پیش از کنترلر دوره‌ها، چون
++// مسیر playback در همان کنترلر امضا می‌گذارد.
++require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-signed-url-service.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-auth-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-courses-controller.php';
+ // v1.4.0: فروشگاه — محصولات فیزیکی دست‌ساز (پیش از کنترلر صفحات ادمین تا
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php
+new file mode 100644
+index 0000000..fe8535b
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-signed-urls.php
+@@ -0,0 +1,423 @@
++<?php
++/**
++ * تست مستقل امضای آدرس (test-signed-urls) — بدون وردپرس
++ *
++ * اجرای روی سرور: php tests/php/test-signed-urls.php
++ *
++ * ─── چرا این تست حیاتی است ───
++ * الگوریتم امضا باید **مو‌به‌مو** با ماژول secure_link خود nginx یکی باشد.
++ * اگر یک کاراکتر اختلاف باشد (مثلاً padding در base64 یا «+» تبدیل‌نشده)،
++ * nginx **همهٔ** درخواست‌ها را 403 می‌کند و کل ویدیوی پلتفرم از کار می‌افتد.
++ * این تست آن قرارداد را با یک بردار ثابت قفل می‌کند.
++ *
++ * بردار ثابت:
++ *   resource = /FA/lesson-01.mp4
++ *   expires  = 1800000000
++ *   secret   = test-secret
++ *   ⇒ uydm921XT5rHRgrrCIVrgA
++ *
++ * این مقدار مستقل هم با پایتون بازمحاسبه و تأیید شده است:
++ *   base64(md5("1800000000/FA/lesson-01.mp4test-secret", raw))
++ *   با «-_» به‌جای «+/» و بدون padding
++ *
++ * توابع وردپرس موردنیاز با پیاده‌سازی حداقلی جایگزین می‌شوند — همان الگویی که
++ * تست‌های دیگر برای ABSPATH به‌کار می‌برند.
++ */
++
++define('ABSPATH', '/tmp/');
++
++if (!defined('MINUTE_IN_SECONDS')) {
++    define('MINUTE_IN_SECONDS', 60);
++}
++if (!defined('HOUR_IN_SECONDS')) {
++    define('HOUR_IN_SECONDS', 3600);
++}
++if (!defined('DAY_IN_SECONDS')) {
++    define('DAY_IN_SECONDS', 86400);
++}
++
++if (!function_exists('wp_parse_url')) {
++    function wp_parse_url($url, $component = -1) {
++        return parse_url($url, $component);
++    }
++}
++
++if (!function_exists('add_query_arg')) {
++    function add_query_arg($args, $url) {
++        $separator = (strpos($url, '?') === false) ? '?' : '&';
++        return $url . $separator . http_build_query($args);
++    }
++}
++
++$GLOBALS['mrd_test_options'] = array();
++$GLOBALS['mrd_test_filters'] = array();
++
++if (!function_exists('get_option')) {
++    function get_option($name, $default = false) {
++        return isset($GLOBALS['mrd_test_options'][$name]) ? $GLOBALS['mrd_test_options'][$name] : $default;
++    }
++}
++if (!function_exists('update_option')) {
++    function update_option($name, $value, $autoload = null) {
++        $GLOBALS['mrd_test_options'][$name] = $value;
++        return true;
++    }
++}
++if (!function_exists('apply_filters')) {
++    function apply_filters($tag, $value) {
++        return isset($GLOBALS['mrd_test_filters'][$tag]) ? $GLOBALS['mrd_test_filters'][$tag] : $value;
++    }
++}
++if (!function_exists('wp_generate_password')) {
++    function wp_generate_password($length = 12, $special = true, $extra = true) {
++        return substr(str_repeat('abcdef0123456789', 8), 0, $length);
++    }
++}
++
++require_once __DIR__ . '/../../includes/class-signed-url-service.php';
++
++$pass = 0;
++$fail = 0;
++
++/**
++ * اجرای یک assertion و ثبت نتیجه
++ */
++function mrd_assert($label, $actual, $expected) {
++    global $pass, $fail;
++    if ($actual === $expected) {
++        $pass++;
++        echo "PASS: {$label}\n";
++    } else {
++        $fail++;
++        echo "FAIL: {$label} — expected: " . var_export($expected, true) . " | got: " . var_export($actual, true) . "\n";
++    }
++}
++
++const MRD_TEST_SECRET = 'test-secret';
++const MRD_TEST_EXPIRES = 1800000000;
++const MRD_TEST_RESOURCE = '/FA/lesson-01.mp4';
++const MRD_TEST_SIGNATURE = 'uydm921XT5rHRgrrCIVrgA';
++
++// ─── ۱) base64 سازگار با URL ───────────────────────────────────────────────
++
++mrd_assert(
++    'base64_url_encode strips padding',
++    MrDastbaaf_Signed_Url_Service::base64_url_encode('a'),
++    'YQ'
++);
++
++// base64("\xfb\xff\xfe") == "+//+" — یعنی هم «+» و هم «/» در خروجی حاضرند و
++// تبدیل به «-» و «_» واقعاً آزموده می‌شود (با ورودی‌ای که فقط یکی را تولید
++// کند، نیمی از تبدیل تست نمی‌شد).
++mrd_assert(
++    'base64_url_encode maps + and / to - and _',
++    MrDastbaaf_Signed_Url_Service::base64_url_encode("\xfb\xff\xfe"),
++    '-__-'
++);
++mrd_assert(
++    'base64_url_encode produces no +, / or = at all',
++    (bool) preg_match('#^[A-Za-z0-9_-]+$#', MrDastbaaf_Signed_Url_Service::base64_url_encode("\xfb\xff\xfe\xff\xfb")),
++    true
++);
++
++// ─── ۲) بردار ثابت سازگاری با nginx ────────────────────────────────────────
++
++mrd_assert(
++    'sign matches the fixed nginx-compatible vector',
++    MrDastbaaf_Signed_Url_Service::sign(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SECRET),
++    MRD_TEST_SIGNATURE
++);
++
++mrd_assert(
++    'sign is deterministic',
++    MrDastbaaf_Signed_Url_Service::sign(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SECRET),
++    MrDastbaaf_Signed_Url_Service::sign(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SECRET)
++);
++
++mrd_assert(
++    'sign produces a 22 character url-safe string for a 16 byte digest',
++    strlen(MRD_TEST_SIGNATURE),
++    22
++);
++
++mrd_assert(
++    'sign output contains no base64 padding or unsafe characters',
++    (bool) preg_match('/^[A-Za-z0-9_-]+$/', MrDastbaaf_Signed_Url_Service::sign(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SECRET)),
++    true
++);
++
++// هر جزء ورودی باید در امضا اثر داشته باشد — وگرنه امضا قابل جعل می‌شد
++mrd_assert(
++    'a different secret yields a different signature',
++    MrDastbaaf_Signed_Url_Service::sign(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, 'other-secret') === MRD_TEST_SIGNATURE,
++    false
++);
++mrd_assert(
++    'a different expiry yields a different signature',
++    MrDastbaaf_Signed_Url_Service::sign(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES + 1, MRD_TEST_SECRET) === MRD_TEST_SIGNATURE,
++    false
++);
++mrd_assert(
++    'a different resource yields a different signature',
++    MrDastbaaf_Signed_Url_Service::sign('/FA/lesson-02.mp4', MRD_TEST_EXPIRES, MRD_TEST_SECRET) === MRD_TEST_SIGNATURE,
++    false
++);
++
++// ─── ۳) استخراج مسیر ───────────────────────────────────────────────────────
++
++mrd_assert(
++    'path_for_signing strips the query string',
++    MrDastbaaf_Signed_Url_Service::path_for_signing('https://dll.mrdastbaaf.com/FA/lesson-01.mp4?foo=bar'),
++    '/FA/lesson-01.mp4'
++);
++
++mrd_assert(
++    'path_for_signing percent-decodes to match nginx $uri',
++    MrDastbaaf_Signed_Url_Service::path_for_signing('https://dll.mrdastbaaf.com/FA/%D8%AF%D8%B1%D8%B3-%DB%B1.mp4'),
++    '/FA/درس-۱.mp4'
++);
++
++// این تفاوت، دلیل وجود decode است: اگر روی مسیر encode‌شده امضا می‌شد، هیچ
++// امضایی در nginx معتبر نبود و همهٔ ویدیوها 403 می‌شدند.
++mrd_assert(
++    'an encoded and a decoded path produce different signatures',
++    MrDastbaaf_Signed_Url_Service::sign('/FA/%D8%AF%D8%B1%D8%B3.mp4', MRD_TEST_EXPIRES, MRD_TEST_SECRET)
++        === MrDastbaaf_Signed_Url_Service::sign('/FA/درس.mp4', MRD_TEST_EXPIRES, MRD_TEST_SECRET),
++    false
++);
++
++mrd_assert(
++    'path_for_signing on an empty string',
++    MrDastbaaf_Signed_Url_Service::path_for_signing(''),
++    ''
++);
++
++// PHP رشتهٔ بدون scheme را «مسیر نسبی» می‌بیند، نه ورودی خراب:
++// parse_url('not a url') === ['path' => 'not a url'].
++// پس برگرداندن همان رشته رفتار درست است، نه باگ. این را عمداً قفل می‌کنیم تا
++// کسی بعداً «سخت‌گیرانه‌ترش» نکند و مسیرهای نسبی مشروع را نشکند.
++mrd_assert(
++    'path_for_signing treats a scheme-less string as a relative path',
++    MrDastbaaf_Signed_Url_Service::path_for_signing('not a url'),
++    'not a url'
++);
++
++mrd_assert(
++    'path_for_signing accepts a bare relative path',
++    MrDastbaaf_Signed_Url_Service::path_for_signing('/FA/a.mp4'),
++    '/FA/a.mp4'
++);
++
++mrd_assert(
++    'path_for_signing on a host with no path',
++    MrDastbaaf_Signed_Url_Service::path_for_signing('https://dll.mrdastbaaf.com'),
++    ''
++);
++
++// ─── ۴) اعتبارسنجی ─────────────────────────────────────────────────────────
++
++// مرجع زمانی طوری انتخاب شده که now + ttl(900) دقیقاً برابر مهر زمانی بردار
++// ثابت شود، تا همان امضای تأییدشده در آزمون‌های sign_url هم قابل استفاده باشد.
++$now = MRD_TEST_EXPIRES - 900;
++
++mrd_assert(
++    'verify accepts a valid, unexpired signature',
++    MrDastbaaf_Signed_Url_Service::verify(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SIGNATURE, MRD_TEST_SECRET, $now),
++    true
++);
++
++mrd_assert(
++    'verify rejects a tampered signature',
++    MrDastbaaf_Signed_Url_Service::verify(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, 'AAAAAAAAAAAAAAAAAAAAAA', MRD_TEST_SECRET, $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects a signature made with a different secret',
++    MrDastbaaf_Signed_Url_Service::verify(
++        MRD_TEST_RESOURCE,
++        MRD_TEST_EXPIRES,
++        MrDastbaaf_Signed_Url_Service::sign(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, 'attacker'),
++        MRD_TEST_SECRET,
++        $now
++    ),
++    false
++);
++
++mrd_assert(
++    'verify rejects an expired signature',
++    MrDastbaaf_Signed_Url_Service::verify(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SIGNATURE, MRD_TEST_SECRET, MRD_TEST_EXPIRES + 1),
++    false
++);
++
++mrd_assert(
++    'verify treats expiry exactly at now as expired (fail-closed)',
++    MrDastbaaf_Signed_Url_Service::verify(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SIGNATURE, MRD_TEST_SECRET, MRD_TEST_EXPIRES),
++    false
++);
++
++mrd_assert(
++    'verify rejects an extended expiry with the original signature',
++    // سناریوی حمله: مهاجم expires را جلو می‌برد ولی امضا را ندارد.
++    MrDastbaaf_Signed_Url_Service::verify(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES + 86400, MRD_TEST_SIGNATURE, MRD_TEST_SECRET, $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects an empty signature',
++    MrDastbaaf_Signed_Url_Service::verify(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, '', MRD_TEST_SECRET, $now),
++    false
++);
++
++mrd_assert(
++    'verify rejects an empty secret',
++    MrDastbaaf_Signed_Url_Service::verify(MRD_TEST_RESOURCE, MRD_TEST_EXPIRES, MRD_TEST_SIGNATURE, '', $now),
++    false
++);
++
++// ─── ۵) ساخت آدرس امضاشده ─────────────────────────────────────────────────
++
++$signed = MrDastbaaf_Signed_Url_Service::sign_url(
++    'https://dll.mrdastbaaf.com/FA/lesson-01.mp4',
++    MRD_TEST_SECRET,
++    900,
++    $now
++);
++
++mrd_assert(
++    'sign_url appends md5 and expires',
++    $signed,
++    'https://dll.mrdastbaaf.com/FA/lesson-01.mp4?md5=' . MRD_TEST_SIGNATURE . '&expires=' . ($now + 900)
++);
++
++mrd_assert(
++    'sign_url keeps the original percent-encoded path in the url',
++    (strpos(
++        MrDastbaaf_Signed_Url_Service::sign_url('https://dll.mrdastbaaf.com/FA/%D8%AF%D8%B1%D8%B3.mp4', MRD_TEST_SECRET, 900, $now),
++        '/FA/%D8%AF%D8%B1%D8%B3.mp4?md5='
++    ) !== false),
++    true
++);
++
++mrd_assert(
++    'sign_url preserves an existing query string',
++    (strpos(
++        MrDastbaaf_Signed_Url_Service::sign_url('https://dll.mrdastbaaf.com/FA/a.mp4?v=2', MRD_TEST_SECRET, 900, $now),
++        '?v=2&md5='
++    ) !== false),
++    true
++);
++
++mrd_assert(
++    'sign_url clamps an absurd ttl to MAX_TTL_SECONDS',
++    (strpos(
++        MrDastbaaf_Signed_Url_Service::sign_url('https://dll.mrdastbaaf.com/FA/a.mp4', MRD_TEST_SECRET, 999999999, $now),
++        'expires=' . ($now + MrDastbaaf_Signed_Url_Service::MAX_TTL_SECONDS)
++    ) !== false),
++    true
++);
++
++mrd_assert(
++    'sign_url clamps a zero ttl to at least one second',
++    (strpos(
++        MrDastbaaf_Signed_Url_Service::sign_url('https://dll.mrdastbaaf.com/FA/a.mp4', MRD_TEST_SECRET, 0, $now),
++        'expires=' . ($now + 1)
++    ) !== false),
++    true
++);
++
++mrd_assert(
++    'sign_url returns the url unchanged when the secret is empty',
++    MrDastbaaf_Signed_Url_Service::sign_url('https://dll.mrdastbaaf.com/FA/a.mp4', '', 900, $now),
++    'https://dll.mrdastbaaf.com/FA/a.mp4'
++);
++
++mrd_assert(
++    'sign_url returns the url unchanged when there is no path',
++    MrDastbaaf_Signed_Url_Service::sign_url('https://dll.mrdastbaaf.com', MRD_TEST_SECRET, 900, $now),
++    'https://dll.mrdastbaaf.com'
++);
++
++// ─── ۶) پیکربندی ───────────────────────────────────────────────────────────
++
++$GLOBALS['mrd_test_options'] = array();
++
++mrd_assert(
++    'signed urls are OFF by default (safe rollout order)',
++    MrDastbaaf_Signed_Url_Service::is_enabled(),
++    false
++);
++
++mrd_assert(
++    'maybe_sign is a no-op while disabled',
++    MrDastbaaf_Signed_Url_Service::maybe_sign('https://dll.mrdastbaaf.com/FA/a.mp4'),
++    'https://dll.mrdastbaaf.com/FA/a.mp4'
++);
++
++$secret = MrDastbaaf_Signed_Url_Service::get_secret();
++mrd_assert('get_secret generates a secret on first use', strlen($secret) > 0, true);
++mrd_assert(
++    'get_secret is stable across calls',
++    MrDastbaaf_Signed_Url_Service::get_secret(),
++    $secret
++);
++
++$GLOBALS['mrd_test_options'][MrDastbaaf_Signed_Url_Service::ENABLED_OPTION] = true;
++mrd_assert('is_enabled reads the option', MrDastbaaf_Signed_Url_Service::is_enabled(), true);
++
++$signed_auto = MrDastbaaf_Signed_Url_Service::maybe_sign('https://dll.mrdastbaaf.com/FA/a.mp4');
++mrd_assert('maybe_sign signs once enabled', (strpos($signed_auto, 'md5=') !== false), true);
++
++// خودآزمایی رفت‌وبرگشت: آدرسی که خودمان می‌سازیم باید با همان پارامترها معتبر
++// شناخته شود. این دقیقاً همان کاری است که nginx با $arg_md5 و $arg_expires
++// انجام می‌دهد — پس اگر این تست بیفتد، پخش در پروداکشن 403 می‌شود.
++$manual = MrDastbaaf_Signed_Url_Service::sign_url(
++    'https://dll.mrdastbaaf.com/FA/a.mp4',
++    $secret,
++    900,
++    1800000000
++);
++$query = array();
++parse_str((string) parse_url($manual, PHP_URL_QUERY), $query);
++
++mrd_assert(
++    'a signed url self-verifies (php round trip, as nginx would)',
++    MrDastbaaf_Signed_Url_Service::verify(
++        '/FA/a.mp4',
++        (int) $query['expires'],
++        (string) $query['md5'],
++        $secret,
++        1800000000
++    ),
++    true
++);
++
++$GLOBALS['mrd_test_filters']['mrdastbaaf_signed_urls_enabled'] = false;
++mrd_assert('the filter can force signing off', MrDastbaaf_Signed_Url_Service::is_enabled(), false);
++$GLOBALS['mrd_test_filters'] = array();
++
++mrd_assert(
++    'ttl falls back to the default when unset',
++    MrDastbaaf_Signed_Url_Service::get_ttl(),
++    MrDastbaaf_Signed_Url_Service::DEFAULT_TTL_SECONDS
++);
++
++$GLOBALS['mrd_test_options'][MrDastbaaf_Signed_Url_Service::TTL_OPTION] = -5;
++mrd_assert(
++    'a nonsensical ttl falls back to the default',
++    MrDastbaaf_Signed_Url_Service::get_ttl(),
++    MrDastbaaf_Signed_Url_Service::DEFAULT_TTL_SECONDS
++);
++
++$GLOBALS['mrd_test_options'][MrDastbaaf_Signed_Url_Service::TTL_OPTION] = 999999999;
++mrd_assert(
++    'ttl is capped at MAX_TTL_SECONDS',
++    MrDastbaaf_Signed_Url_Service::get_ttl(),
++    MrDastbaaf_Signed_Url_Service::MAX_TTL_SECONDS
++);
++
++echo "\n---- result ----\n";
++echo "PASS: {$pass}\n";
++echo "FAIL: {$fail}\n";
++
++exit($fail > 0 ? 1 : 0);

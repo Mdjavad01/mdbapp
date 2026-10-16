@@ -1,0 +1,981 @@
+From b27f1fa803139b3bfbb7acbe8bee8c029f37946b Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Fri, 16 Oct 2026 19:54:20 +0330
+Subject: [PATCH] feat(progress): lesson playback position GET/PUT (v1.8.0,
+ schema 1.7.0)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Blocks the app's "resume from last position". Until now the only persisted
+progress was completed/bookmarked lesson ids — nothing stored a timestamp, so
+a user who watched half of a lesson and closed the app started over.
+
+New: GET/PUT /lessons/{id}/progress, backed by
+wp_mrdastbaaf_lesson_progress (UNIQUE user_id+lesson_id).
+
+Why a table and not usermeta: a position is per-lesson, so usermeta would mean
+re-serialising one large JSON blob per user every few seconds during playback
+— a heavy write to a shared row, which is the exact pattern behind this
+plugin's v1.7.9-1.7.13 suspension incident. Each write here is a small
+INSERT ... ON DUPLICATE KEY UPDATE on a unique key, which also makes two
+concurrent PUTs (player + app-background event) idempotent.
+
+Behaviour:
+- position is clamped to [0, 86400] and never exceeds duration.
+- completed at ceil(duration * 0.95). 100% is unrealistic (credits/trailing
+  silence), and duration == 0 never completes — with no duration there is no
+  ratio and a false "completed" on the dashboard is worse than none.
+- completion is mirrored into completedLessonIds in the same usermeta blob
+  GET /me/progress reads, so the player and the dashboard cannot disagree.
+- ineffective writes are suppressed: no change or a step under 5s is skipped,
+  but a seek, a first real position, and any completion transition are stored.
+  A transient 2s open never overwrites real progress, and a sub-5s position
+  never creates a row at all (resuming at 2s is worse than starting over).
+- PUT without durationSeconds keeps the stored duration instead of zeroing it.
+- the response always reports what is actually on the server, plus a `stored`
+  flag, so the client can tell a skipped write from an accepted one.
+
+Deliberate decision: this endpoint checks login, not entitlement. Playback
+already required a ticket, and a hand-crafted request can only pollute the
+caller's own dashboard. Documented in the doc with the condition under which
+it should be revisited.
+
+mark_lesson_completed() is a new public method on the memberships controller
+rather than a parallel write from the progress controller: the usermeta blob's
+shape, sanitisation and 500-item cap belong to that class, and two
+implementations would drift. At the cap it drops the oldest entry so the
+newest completion is never the one discarded.
+
+Tests: tests/php/test-lesson-progress.php — 33 assertions on clamping, the
+completion threshold (including the ceil boundary at 31/33 vs 32/33 and the
+zero-duration rule), every branch of the write throttle, and lesson-id
+validation including path-traversal shapes. Suite now totals 84 assertions
+across three files via tests/php/run-all.sh.
+
+One assertion failed on first run and the test was corrected, not the code:
+a 2-second position does not create a row. That is intended, and the test now
+documents it explicitly.
+
+Docs: docs/PLUGIN_v1.8.0_PLAYBACK_POSITION.md
+---
+ docs/PLUGIN_v1.8.0_PLAYBACK_POSITION.md       | 179 +++++++++
+ .../includes/class-database.php               |  31 ++
+ .../class-lesson-progress-controller.php      | 359 ++++++++++++++++++
+ .../includes/class-memberships-controller.php |  59 +++
+ .../mrdastbaaf-bridge/mrdastbaaf-bridge.php   |   9 +-
+ .../tests/php/test-lesson-progress.php        | 207 ++++++++++
+ 6 files changed, 843 insertions(+), 1 deletion(-)
+ create mode 100644 docs/PLUGIN_v1.8.0_PLAYBACK_POSITION.md
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/includes/class-lesson-progress-controller.php
+ create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/test-lesson-progress.php
+
+diff --git a/docs/PLUGIN_v1.8.0_PLAYBACK_POSITION.md b/docs/PLUGIN_v1.8.0_PLAYBACK_POSITION.md
+new file mode 100644
+index 0000000..5f650da
+--- /dev/null
++++ b/docs/PLUGIN_v1.8.0_PLAYBACK_POSITION.md
+@@ -0,0 +1,179 @@
++# Plugin change — lesson playback position
++
++**Version:** bridge `1.8.0` · **Schema:** `1.6.0` → `1.7.0`
++**Blocks:** the Android app's "resume from last position" feature.
++
++---
++
++## Why
++
++The only persisted progress was *completed* and *bookmarked* lesson ids
++(`PUT /me/progress`). Nothing anywhere stored a timestamp. A user who watched
++half of an hour-long lesson and closed the app started from the beginning next
++time — the server had no idea where they were.
++
++## Storage
++
++```
++wp_mrdastbaaf_lesson_progress
++  id · user_id · lesson_id · position_seconds · duration_seconds
++  completed · updated_at
++  UNIQUE KEY user_lesson_idx (user_id, lesson_id)
++```
++
++**Why a table rather than usermeta.** A position is per-lesson. Storing it in
++usermeta would mean one JSON blob per user, re-serialised and rewritten every few
++seconds during playback — a heavy write to a shared row. That is the exact
++pattern behind this plugin's v1.7.9–v1.7.13 suspension incident. Here each write
++is a small `INSERT … ON DUPLICATE KEY UPDATE` on a unique key.
++
++`lesson_id` is `varchar(64)`, not `bigint`: the legacy filter path accepted
++non-numeric lesson ids and that contract is preserved.
++
++---
++
++## API contract
++
++### `GET /lessons/{id}/progress` — new
++
++Requires Bearer. Returns the stored position, or a zeroed shape if the lesson was
++never opened.
++
++```jsonc
++{
++  "lessonId": "12",
++  "positionSeconds": 431,
++  "durationSeconds": 1420,
++  "completed": false,
++  "updatedAt": "2026-10-16 12:31:00"     // MySQL local time; null if never watched
++}
++```
++
++Errors: `400 invalid_lesson` (id fails `^[a-zA-Z0-9_-]{1,64}$`), `401 unauthorized`.
++
++### `PUT /lessons/{id}/progress` — new
++
++Requires Bearer.
++
++```jsonc
++// Request
++{ "positionSeconds": 431, "durationSeconds": 1420 }
++```
++
++`durationSeconds` is optional. When omitted, the stored duration is kept — a
++request without it would otherwise zero the duration and break the completion
++threshold.
++
++```jsonc
++// 200 — always the state that is actually on the server
++{
++  "lessonId": "12",
++  "positionSeconds": 431,
++  "durationSeconds": 1420,
++  "completed": false,
++  "updatedAt": "2026-10-16 12:31:00",
++  "stored": true
++}
++```
++
++`stored: false` means the write was skipped as ineffective (see below) and the
++returned position is the unchanged stored one. **The client should treat the
++response, not its own request, as the truth.**
++
++Errors: `400 invalid_lesson`, `400 invalid_position` (missing / non-numeric),
++`401 unauthorized`, `500 db_error`.
++
++---
++
++## Behaviour
++
++### Clamping
++
++- position is clamped to `[0, MAX_POSITION_SECONDS]` (86 400 — a sanity cap
++  against a broken client, which would otherwise send a user to the end of a
++  video on resume)
++- **position never exceeds duration**; if a client reports a shorter duration,
++  the position is clamped to it
++
++### Completion
++
++`completed` is set when `position >= ceil(duration × 0.95)`.
++
++95 % rather than 100 % because end credits and trailing silence mean a user
++realistically never reaches the last frame — at 100 % lessons would never be
++marked complete.
++
++**`duration == 0` never completes.** With no duration there is no ratio, and a
++completion flag appearing on the dashboard for an unmeasured lesson is worse than
++no flag.
++
++**Completion is mirrored into `/me/progress`.** When the flag flips to true, the
++lesson id is also appended to `completedLessonIds` in the same usermeta blob that
++`GET /me/progress` and the dashboard read. Without this, the player and the
++dashboard would disagree about what has been finished.
++
++### Write throttling
++
++The player sends a `PUT` every few seconds. Two rules suppress ineffective writes:
++
++| Situation | Stored? |
++|---|---|
++| First real position (≥ 5 s) | ✅ |
++| No change, or a step < 5 s | ❌ |
++| Forward or backward seek ≥ 5 s | ✅ |
++| Crossing the completion threshold, however small the step | ✅ |
++| A transient 2 s open **over** real progress | ❌ — progress is preserved |
++| A position below 5 s when there is no progress yet | ❌ — nothing worth resuming |
++
++The last two are the ones that matter to users: a momentary open must not wipe a
++30-minute position, and a 2-second position must not become the resume point.
++
++---
++
++## Deliberate decision: no entitlement check
++
++This endpoint validates **login**, not **access to the lesson**.
++
++Reasoning:
++
++1. Playback already required a valid ticket, and the position is only sent during
++   that playback flow.
++2. Someone crafting the request by hand can only pollute their own dashboard.
++   They gain no access and touch no other user's data.
++3. The access check is private to the courses controller; exposing it for a
++   cosmetic flag would add coupling for no security benefit.
++
++**Revisit this if lesson completion ever gates something real** — a certificate,
++a score, or a discount.
++
++---
++
++## Tests
++
++`tests/php/test-lesson-progress.php` — 33 assertions, no WordPress required:
++
++```bash
++./tests/php/run-all.sh
++```
++
++Covers clamping (negative, beyond-duration, absurd, zero-duration, non-numeric),
++the completion threshold including the `ceil` boundary (31/33 vs 32/33) and the
++zero-duration rule, every branch of the write throttle, and lesson-id validation
++(including path-traversal shapes and the 64-character column limit).
++
++One assertion initially failed and was corrected rather than the code: a 2-second
++position does **not** create a row. That is intended — resuming at 2 seconds is
++worse than starting over — and the test now documents it explicitly.
++
++Not covered by unit tests: `fetch_row` / `upsert_row` / `handle_put_progress` —
++they need a live `$wpdb`.
++
++## Staging checklist
++
++- [ ] Play a lesson to ~2 minutes, close the app, reopen → `GET /lessons/{id}/progress` returns ~120.
++- [ ] Resume plays from that position.
++- [ ] Open a lesson for 2 seconds → the stored position is **unchanged**.
++- [ ] Watch to the end → `completed: true`, and `GET /me/progress` lists the lesson.
++- [ ] `PUT` without `durationSeconds` → the stored duration is preserved.
++- [ ] Two concurrent `PUT`s (player + app-background event) → exactly one row.
++- [ ] `wp_mrdastbaaf_lesson_progress` exists with `user_lesson_idx` UNIQUE.
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php
+index ae63146..8e695b9 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php
+@@ -245,6 +245,37 @@ class MrDastbaaf_Database {
+         ) $charset_collate;";
+         dbDelta($sql_tokens);
+ 
++        // ۱۰. موقعیت پخش درس (v1.8.0 — اسکیما ۱.۷.۰)
++        //
++        // پیش از این، تنها وضعیت پیشرفتِ ذخیره‌شدنی «تکمیل‌شده» و «نشان‌شده» بود
++        // (usermeta mrdastbaaf_progress). کاربری که نیمهٔ یک درس یک‌ساعته را
++        // می‌دید و اپ را می‌بست، بار بعد از ابتدا شروع می‌کرد.
++        //
++        // چرا جدول و نه usermeta: موقعیت «هر درس» یک ردیف است؛ در usermeta این
++        // به یک آرایهٔ JSON بزرگ و بازنویسی کل آن در هر ۵ ثانیه تبدیل می‌شد
++        // (نوشتن سنگین روی ردیف مشترک — همان الگویی که حادثهٔ تعلیق ۱.۷.۹ را
++        // ساخت). اینجا هر نوشتن یک UPSERT کوچک روی کلید یکتاست.
++        //
++        // UNIQUE(user_id, lesson_id): تضمین دیتابیس در برابر ردیف تکراری وقتی
++        // پلیر و رویداد «خروج از فورگراند» هم‌زمان PUT می‌فرستند.
++        //
++        // lesson_id از نوع varchar است (نه bigint) چون مسیر فیلتر قدیمی
++        // شناسهٔ رشته‌ای هم می‌پذیرد و باید همان قرارداد باقی بماند.
++        $table_progress = $wpdb->prefix . 'mrdastbaaf_lesson_progress';
++        $sql_progress = "CREATE TABLE $table_progress (
++            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
++            user_id bigint(20) unsigned NOT NULL,
++            lesson_id varchar(64) NOT NULL,
++            position_seconds int(11) unsigned DEFAULT 0 NOT NULL,
++            duration_seconds int(11) unsigned DEFAULT 0 NOT NULL,
++            completed tinyint(1) DEFAULT 0 NOT NULL,
++            updated_at datetime NOT NULL,
++            PRIMARY KEY  (id),
++            UNIQUE KEY user_lesson_idx (user_id, lesson_id),
++            KEY user_updated_idx (user_id, updated_at)
++        ) $charset_collate;";
++        dbDelta($sql_progress);
++
+         // درج پلن‌های پیش‌فرض در صورت خالی بودن جدول
+         self::seed_initial_plans();
+     }
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-lesson-progress-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-lesson-progress-controller.php
+new file mode 100644
+index 0000000..481ac74
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-lesson-progress-controller.php
+@@ -0,0 +1,359 @@
++<?php
++/**
++ * کنترلر موقعیت پخش درس (v1.8.0 — اسکیما ۱.۷.۰)
++ *
++ * چرا این اندپوینت لازم شد: پیش از این، تنها وضعیت پیشرفتِ قابل‌ذخیره
++ * «تکمیل‌شده» و «نشان‌شده» بود (PUT /me/progress). کاربری که نیمهٔ یک درس
++ * یک‌ساعته را می‌دید و بعد اپ را می‌بست، هر بار از ابتدا شروع می‌کرد — چون
++ * سرور هیچ‌جا «ثانیهٔ آخر» را نگه نمی‌داشت.
++ *
++ * این کنترلر موقعیت را جدا از پرچم تکمیل نگه می‌دارد:
++ *   - منبع حقیقت «موقعیت» همین جدول است (هر کاربر، هر درس، یک ردیف)
++ *   - پرچم «تکمیل» پس از عبور از آستانه، در همان مسیر /me/progress هم نوشته
++ *     می‌شود تا داشبورد و پخش هرگز واگرا نشوند
++ *
++ * ─── تصمیم عمدی: بدون گارد دسترسی ───
++ * این اندپوینت «دسترسی به درس» را بررسی نمی‌کند؛ فقط ورود کاربر را لازم دارد.
++ * دلیل: (۱) پخش از قبل با بلیط معتبر انجام شده و موقعیت فقط در همان جریان
++ * فرستاده می‌شود، (۲) کسی که درخواست را دستی می‌سازد فقط داشبورد خودش را
++ * آلوده می‌کند — نه دارایی‌ای می‌گیرد و نه به دادهٔ دیگری دست می‌زند، (۳) گارد
++ * دسترسی در کنترلر دوره‌ها خصوصی است و بیرون‌کشیدنش برای یک اثر «آرایشی»
++ * پیچیدگی بی‌مورد می‌آورد. اگر روزی تکمیل درس به گواهی/امتیاز گره بخورد، این
++ * تصمیم باید بازبینی شود.
++ *
++ * ─── مهار نوشتن ───
++ * پلیر هر چند ثانیه یک PUT می‌فرستد. برای هاست اشتراکی (و با توجه به حادثهٔ
++ * تعلیق ۱.۷.۹–۱.۷.۱۳ که ریشه‌اش نوشتن‌های پرتکرار بود) نوشتن‌های بی‌اثر حذف
++ * می‌شوند: جهش کمتر از MIN_POSITION_DELTA_SECONDS نوشته نمی‌شود.
++ */
++
++if (!defined('ABSPATH')) {
++    exit;
++}
++
++class MrDastbaaf_Lesson_Progress_Controller {
++
++    /**
++     * آستانهٔ «تکمیل» — ۹۵٪ مدت درس.
++     *
++     * دقیقاً ۱۰۰٪ غیرواقعی است: تیتراژ پایانی/سکوت آخر باعث می‌شود کاربر
++     * عملاً هرگز به انتهای فایل نرسد و درس هرگز «تکمیل‌شده» نشود.
++     */
++    const COMPLETION_RATIO = 0.95;
++
++    /**
++     * کمینهٔ موقعیتی که «پیشرفت واقعی» حساب می‌شود.
++     *
++     * اگر کاربری درسی را فقط باز کند و ببندد (۲-۳ ثانیه)، موقعیت ذخیره‌شدهٔ
++     * قبلی‌اش نباید پاک شود. این ثابت همان محافظ است.
++     */
++    const MIN_MEANINGFUL_SECONDS = 5;
++
++    /**
++     * کمینهٔ جهش لازم برای یک نوشتن.
++     *
++     * PUT با فاصلهٔ کمتر از این مقدار نسبت به مقدار ذخیره‌شده، نوشته نمی‌شود.
++     * جست‌وجوی عقب/جلو (جهش بزرگ) همیشه ذخیره می‌شود.
++     */
++    const MIN_POSITION_DELTA_SECONDS = 5;
++
++    /**
++     * سقف سلامت موقعیت — ۲۴ ساعت. مقدار بزرگ‌تر یعنی کلاینت خراب/دستکاری‌شده؛
++     * ذخیرهٔ آن باعث می‌شود بعداً «ادامهٔ پخش» کاربر را به انتهای بی‌معنا ببرد.
++     */
++    const MAX_POSITION_SECONDS = 86400;
++
++    public function register_routes() {
++        register_rest_route(
++            MRDASTBAAF_API_NAMESPACE,
++            '/lessons/(?P<id>[a-zA-Z0-9_-]+)/progress',
++            array(
++                array(
++                    'methods' => 'GET',
++                    'callback' => array($this, 'handle_get_progress'),
++                    'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
++                ),
++                array(
++                    'methods' => 'PUT',
++                    'callback' => array($this, 'handle_put_progress'),
++                    'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
++                ),
++            )
++        );
++    }
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // بخش خالص (بدون وردپرس) — قابل آزمون در tests/php/test-lesson-progress.php
++    // ─────────────────────────────────────────────────────────────────────────
++
++    /**
++     * نرمال‌سازی و کرانه‌گذاری موقعیت/مدت.
++     *
++     * @param mixed $position ثانیهٔ اعلامی کلاینت
++     * @param mixed $duration مدت کل درس
++     * @return array ['position' => int, 'duration' => int]
++     */
++    public static function normalize_values($position, $duration) {
++        $position = (int) $position;
++        $duration = (int) $duration;
++
++        $position = max(0, min($position, self::MAX_POSITION_SECONDS));
++        $duration = max(0, min($duration, self::MAX_POSITION_SECONDS));
++
++        // موقعیت هرگز از مدت جلو نمی‌زند؛ اگر کلاینت مدت را کوچک‌تر فرستاد،
++        // موقعیت به همان مدت بریده می‌شود.
++        if ($duration > 0 && $position > $duration) {
++            $position = $duration;
++        }
++
++        return array('position' => $position, 'duration' => $duration);
++    }
++
++    /**
++     * آیا این موقعیت درس را «تکمیل‌شده» می‌کند؟
++     *
++     * مدت صفر هرگز تکمیل نمی‌شود: بدون مدت، هیچ نسبتی معنا ندارد و «تکمیل»
++     * بی‌دلیل روی داشبورد ظاهر می‌شد.
++     */
++    public static function is_completed($position, $duration) {
++        $values = self::normalize_values($position, $duration);
++        if ($values['duration'] <= 0) {
++            return false;
++        }
++
++        return $values['position'] >= (int) ceil($values['duration'] * self::COMPLETION_RATIO);
++    }
++
++    /**
++     * آیا مقدار تازه باید نوشته شود؟
++     *
++     * @param int $new_position      موقعیت تازه (نرمال‌شده)
++     * @param int $existing_position موقعیت ذخیره‌شده (۰ اگر ردیفی نیست)
++     * @param int $duration          مدت درس
++     * @return bool
++     */
++    public static function should_store($new_position, $existing_position, $duration) {
++        $new_position = (int) $new_position;
++        $existing_position = (int) $existing_position;
++
++        // گذر به «تکمیل‌شده» همیشه نوشته می‌شود — حتی اگر جهش کوچک باشد.
++        if (self::is_completed($new_position, $duration) && !self::is_completed($existing_position, $duration)) {
++            return true;
++        }
++
++        // باز کردن گذرا (زیر آستانهٔ معنادار) پیشرفت واقعی را پاک نمی‌کند.
++        if ($new_position < self::MIN_MEANINGFUL_SECONDS
++            && $existing_position >= self::MIN_MEANINGFUL_SECONDS) {
++            return false;
++        }
++
++        // جهش کافی نداشته ⇒ نوشتن بی‌اثر.
++        if (abs($new_position - $existing_position) < self::MIN_POSITION_DELTA_SECONDS) {
++            return false;
++        }
++
++        return true;
++    }
++
++    /**
++     * شناسهٔ درس معتبر؟
++     *
++     * همان الگوی مسیرهای بلیط/پخش: شناسه‌های جدول عددی‌اند، اما مسیر فیلتر
++     * قدیمی هم شناسهٔ رشته‌ای می‌پذیرفت — پس هر دو شکل مجاز است.
++     */
++    public static function is_valid_lesson_id($lesson_id) {
++        $lesson_id = (string) $lesson_id;
++        if ('' === $lesson_id || strlen($lesson_id) > 64) {
++            return false;
++        }
++        return (bool) preg_match('/^[a-zA-Z0-9_-]+$/', $lesson_id);
++    }
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // بخش DB-محور
++    // ─────────────────────────────────────────────────────────────────────────
++
++    public static function table() {
++        global $wpdb;
++        return $wpdb->prefix . 'mrdastbaaf_lesson_progress';
++    }
++
++    /**
++     * GET /lessons/{id}/progress
++     *
++     * @param WP_REST_Request $request
++     * @return WP_REST_Response|WP_Error
++     */
++    public function handle_get_progress(WP_REST_Request $request) {
++        $lesson_id = (string) $request->get_param('id');
++        if (!self::is_valid_lesson_id($lesson_id)) {
++            return new WP_Error('invalid_lesson', 'شناسهٔ درس نامعتبر است.', array('status' => 400));
++        }
++
++        $user_id = get_current_user_id();
++        $row = self::fetch_row($user_id, $lesson_id);
++
++        return rest_ensure_response(self::format_response($lesson_id, $row));
++    }
++
++    /**
++     * PUT /lessons/{id}/progress
++     *
++     * بدنه: { positionSeconds: number, durationSeconds?: number }
++     *
++     * پاسخ، وضعیت «ذخیره‌شده» را برمی‌گرداند (نه لزوماً ورودی کلاینت) تا اگر
++     * نوشتن به‌دلیل مهار جهش رد شد، کلاینت بداند مقدار واقعی روی سرور چیست.
++     *
++     * @param WP_REST_Request $request
++     * @return WP_REST_Response|WP_Error
++     */
++    public function handle_put_progress(WP_REST_Request $request) {
++        $lesson_id = (string) $request->get_param('id');
++        if (!self::is_valid_lesson_id($lesson_id)) {
++            return new WP_Error('invalid_lesson', 'شناسهٔ درس نامعتبر است.', array('status' => 400));
++        }
++
++        $user_id = get_current_user_id();
++        if ($user_id <= 0) {
++            return new WP_Error('unauthorized', 'برای ثبت پیشرفت ابتدا وارد حساب کاربری خود شوید.', array('status' => 401));
++        }
++
++        $raw_position = $request->get_param('positionSeconds');
++        if (null === $raw_position || !is_numeric($raw_position)) {
++            return new WP_Error('invalid_position', 'موقعیت پخش ارسال نشده است.', array('status' => 400));
++        }
++
++        $raw_duration = $request->get_param('durationSeconds');
++
++        $existing = self::fetch_row($user_id, $lesson_id);
++        $existing_position = $existing ? (int) $existing['position_seconds'] : 0;
++
++        // مدت: مقدار تازه اگر معتبر بود، وگرنه مدتِ ذخیره‌شده. بدون این، یک
++        // درخواست بدون durationSeconds مدت قبلی را صفر می‌کرد و آستانهٔ تکمیل
++        // را از کار می‌انداخت.
++        $duration = is_numeric($raw_duration)
++            ? (int) $raw_duration
++            : ($existing ? (int) $existing['duration_seconds'] : 0);
++
++        $values = self::normalize_values($raw_position, $duration);
++
++        if (!self::should_store($values['position'], $existing_position, $values['duration'])) {
++            // نوشتن بی‌اثر — وضعیت فعلی برگردانده می‌شود (بدون کوئری نوشتن).
++            return rest_ensure_response(
++                array_merge(
++                    self::format_response($lesson_id, $existing),
++                    array('stored' => false)
++                )
++            );
++        }
++
++        $completed = self::is_completed($values['position'], $values['duration']);
++        $now = current_time('mysql');
++
++        $saved = self::upsert_row($user_id, $lesson_id, $values['position'], $values['duration'], $completed, $now);
++        if (false === $saved) {
++            return new WP_Error('db_error', 'ثبت پیشرفت ممکن نشد؛ لطفاً دوباره تلاش کنید.', array('status' => 500));
++        }
++
++        // پرچم تکمیل در همان منبعی نوشته می‌شود که داشبورد از آن می‌خواند، تا
++        // /me/progress و موقعیت پخش هرگز واگرا نشوند.
++        if ($completed) {
++            $memberships = new MrDastbaaf_Memberships_Controller();
++            $memberships->mark_lesson_completed($user_id, $lesson_id);
++        }
++
++        return rest_ensure_response(
++            array(
++                'lessonId'        => $lesson_id,
++                'positionSeconds' => $values['position'],
++                'durationSeconds' => $values['duration'],
++                'completed'       => $completed,
++                'updatedAt'       => $now,
++                'stored'          => true,
++            )
++        );
++    }
++
++    /**
++     * خواندن ردیف پیشرفت (یا null).
++     */
++    private static function fetch_row($user_id, $lesson_id) {
++        global $wpdb;
++
++        $user_id = (int) $user_id;
++        if ($user_id <= 0) {
++            return null;
++        }
++
++        $row = $wpdb->get_row(
++            $wpdb->prepare(
++                'SELECT * FROM ' . self::table() . ' WHERE user_id = %d AND lesson_id = %s LIMIT 1',
++                $user_id,
++                (string) $lesson_id
++            ),
++            ARRAY_A
++        );
++
++        return is_array($row) ? $row : null;
++    }
++
++    /**
++     * درج/به‌روزرسانی اتمیک ردیف پیشرفت.
++     *
++     * از INSERT … ON DUPLICATE KEY UPDATE استفاده می‌کند تا دو PUT هم‌زمان
++     * (پلیر + رویداد خروج از فورگراند) ردیف تکراری نسازند؛ UNIQUE(user_id,
++     * lesson_id) تضمین دیتابیس است و این کوئری همان را به‌کار می‌گیرد.
++     *
++     * @return bool
++     */
++    private static function upsert_row($user_id, $lesson_id, $position, $duration, $completed, $updated_at) {
++        global $wpdb;
++
++        $sql = 'INSERT INTO ' . self::table() . '
++                    (user_id, lesson_id, position_seconds, duration_seconds, completed, updated_at)
++                VALUES (%d, %s, %d, %d, %d, %s)
++                ON DUPLICATE KEY UPDATE
++                    position_seconds = VALUES(position_seconds),
++                    duration_seconds = VALUES(duration_seconds),
++                    completed        = VALUES(completed),
++                    updated_at       = VALUES(updated_at)';
++
++        $result = $wpdb->query(
++            $wpdb->prepare(
++                $sql,
++                (int) $user_id,
++                (string) $lesson_id,
++                (int) $position,
++                (int) $duration,
++                $completed ? 1 : 0,
++                (string) $updated_at
++            )
++        );
++
++        return (false !== $result);
++    }
++
++    /**
++     * شکل قراردادی پاسخ — کلیدها در همهٔ حالت‌ها حاضرند تا کلاینت به کلید
++     * ناموجود برخورد نکند.
++     */
++    private static function format_response($lesson_id, $row) {
++        if (!is_array($row)) {
++            return array(
++                'lessonId'        => (string) $lesson_id,
++                'positionSeconds' => 0,
++                'durationSeconds' => 0,
++                'completed'       => false,
++                'updatedAt'       => null,
++            );
++        }
++
++        return array(
++            'lessonId'        => (string) $row['lesson_id'],
++            'positionSeconds' => (int) $row['position_seconds'],
++            'durationSeconds' => (int) $row['duration_seconds'],
++            'completed'       => ((int) $row['completed'] === 1),
++            'updatedAt'       => !empty($row['updated_at']) ? (string) $row['updated_at'] : null,
++        );
++    }
++}
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
+index 8c9ce98..a6e3d3a 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
+@@ -168,6 +168,65 @@ class MrDastbaaf_Memberships_Controller {
+         );
+     }
+ 
++    /**
++     * v1.8.0: افزودن یک درس به فهرست «تکمیل‌شده»های کاربر — نقطهٔ ورود عمومی.
++     *
++     * از کنترلر موقعیت پخش صدا زده می‌شود: وقتی موقعیت از آستانهٔ تکمیل عبور
++     * کند، همان پرچم در همین منبع (که داشبورد از آن می‌خواند) هم نوشته می‌شود
++     * تا /me/progress و موقعیت پخش هرگز واگرا نشوند.
++     *
++     * چرا متد عمومی روی همین کلاس و نه نوشتن مستقیم در کنترلر پخش: قالب ذخیره
++     * (کلید usermeta، شکل JSON، پالایش و سقف ۵۰۰ مورد) مالِ همین کلاس است؛
++     * نوشتن موازی از جای دیگر یعنی دو پیاده‌سازی که دیر یا زود واگرا می‌شوند.
++     *
++     * idempotent: اگر درس از قبل در فهرست باشد، هیچ نوشتنی انجام نمی‌شود.
++     *
++     * @param int    $user_id
++     * @param string $lesson_id
++     * @return bool آیا نوشتنی انجام شد؟
++     */
++    public function mark_lesson_completed($user_id, $lesson_id) {
++        $user_id = (int) $user_id;
++        $lesson_id = (string) $lesson_id;
++        if ($user_id <= 0 || '' === $lesson_id) {
++            return false;
++        }
++
++        $raw = get_user_meta($user_id, 'mrdastbaaf_progress', true);
++        $data = (is_string($raw) && '' !== $raw) ? json_decode($raw, true) : array();
++        if (!is_array($data)) {
++            $data = array(); // JSON خراب/دستکاری‌شده = صفرِ تمیز (fail-safe)
++        }
++
++        $completed = $this->clean_progress_ids(isset($data['completedLessonIds']) ? $data['completedLessonIds'] : array());
++        $bookmarked = $this->clean_progress_ids(isset($data['bookmarkedLessonIds']) ? $data['bookmarkedLessonIds'] : array());
++
++        if (in_array($lesson_id, $completed, true)) {
++            return false; // از قبل ثبت شده — بدون نوشتن
++        }
++
++        // سقف فهرست: اگر پر است، قدیمی‌ترین حذف می‌شود تا «تازه‌ترین تکمیل»
++        // هرگز قربانی سقف نشود (appending و بعد بریدن، همین را برعکس می‌کرد).
++        if (count($completed) >= self::PROGRESS_MAX_ITEMS) {
++            array_shift($completed);
++        }
++        $completed[] = $lesson_id;
++
++        update_user_meta(
++            $user_id,
++            'mrdastbaaf_progress',
++            wp_json_encode(
++                array(
++                    'completedLessonIds'  => $completed,
++                    'bookmarkedLessonIds' => $bookmarked,
++                ),
++                JSON_UNESCAPED_UNICODE
++            )
++        );
++
++        return true;
++    }
++
+     /**
+      * ذخیرهٔ پیشرفت — replace semantics + اعتبارسنجی سخت
+      *
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+index 2a03213..8d26145 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+@@ -130,7 +130,7 @@ define('MRDASTBAAF_BRIDGE_VERSION', '1.8.0');
+  *   (courses: منبع billing_phone حساب هم اضافه شد) و woo-bridge (resolve کاربر
+  *   سفارش) به‌کار رفت؛ فال‌بک LIKE روی هستهٔ ۱۰ رقمی فرم‌های «کثیف» را می‌پوشاند.
+  */
+-define('MRDASTBAAF_DB_VERSION', '1.6.0');
++define('MRDASTBAAF_DB_VERSION', '1.7.0');
+ define('MRDASTBAAF_BRIDGE_PATH', plugin_dir_path(__FILE__));
+ define('MRDASTBAAF_BRIDGE_URL', plugin_dir_url(__FILE__));
+ define('MRDASTBAAF_API_NAMESPACE', 'mrdastbaaf/v1');
+@@ -180,6 +180,9 @@ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-app-pages-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-app-ui-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-woo-bridge-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-memberships-controller.php';
++// v1.8.0: موقعیت پخش درس — پس از کنترلر عضویت‌ها بارگذاری می‌شود چون در مسیر
++// «تکمیل درس» به متد عمومی mark_lesson_completed همان کنترلر تکیه دارد.
++require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-lesson-progress-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-payment-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-admin-controller.php';
+ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-settings-controller.php';
+@@ -511,6 +514,10 @@ class MrDastbaaf_Bridge_Plugin {
+         $memberships_controller = new MrDastbaaf_Memberships_Controller();
+         $memberships_controller->register_routes();
+ 
++        // v1.8.0: موقعیت پخش درس — GET/PUT /lessons/{id}/progress
++        $lesson_progress_controller = new MrDastbaaf_Lesson_Progress_Controller();
++        $lesson_progress_controller->register_routes();
++
+         $payment_controller = new MrDastbaaf_Payment_Controller();
+         $payment_controller->register_routes();
+ 
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-lesson-progress.php b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-lesson-progress.php
+new file mode 100644
+index 0000000..19f1a2e
+--- /dev/null
++++ b/wordpress-plugin/mrdastbaaf-bridge/tests/php/test-lesson-progress.php
+@@ -0,0 +1,207 @@
++<?php
++/**
++ * تست مستقل منطق موقعیت پخش درس (test-lesson-progress) — بدون وردپرس
++ *
++ * اجرای روی سرور: php tests/php/test-lesson-progress.php
++ *
++ * فقط متدهای «خالص» کلاس MrDastbaaf_Lesson_Progress_Controller آزموده می‌شوند:
++ *
++ *   - normalize_values()   کرانه‌گذاری موقعیت/مدت و جلوگیری از موقعیت > مدت
++ *   - is_completed()       آستانهٔ ۹۵٪ + رفتار ایمن با مدت صفر
++ *   - should_store()       مهار نوشتن‌های بی‌اثر (محافظت از هاست اشتراکی)
++ *                          و محافظت از پیشرفت واقعی در برابر باز کردن گذرا
++ *   - is_valid_lesson_id() اعتبارسنجی شناسهٔ درس
++ *
++ * چرا این تست مهم است: دو رفتار اینجا مستقیماً به تجربهٔ کاربر آسیب می‌زنند —
++ * (۱) اگر should_store اشتباه کند، یک باز کردنِ دو ثانیه‌ای می‌تواند پیشرفت
++ * نیم‌ساعتهٔ کاربر را پاک کند؛ (۲) اگر is_completed اشتباه کند، درس‌ها یا
++ * هرگز «تکمیل‌شده» نمی‌شوند یا با دیدن چند ثانیه، تکمیل علامت می‌خورند.
++ */
++
++define('ABSPATH', '/tmp/');
++
++require_once __DIR__ . '/../../includes/class-lesson-progress-controller.php';
++
++$pass = 0;
++$fail = 0;
++
++/**
++ * اجرای یک assertion و ثبت نتیجه
++ */
++function mrd_assert($label, $actual, $expected) {
++    global $pass, $fail;
++    if ($actual === $expected) {
++        $pass++;
++        echo "PASS: {$label}\n";
++    } else {
++        $fail++;
++        echo "FAIL: {$label} — expected: " . var_export($expected, true) . " | got: " . var_export($actual, true) . "\n";
++    }
++}
++
++// ─── ۱) کرانه‌گذاری ────────────────────────────────────────────────────────
++
++mrd_assert(
++    'normalize: negative position clamps to 0',
++    MrDastbaaf_Lesson_Progress_Controller::normalize_values(-30, 600),
++    array('position' => 0, 'duration' => 600)
++);
++
++mrd_assert(
++    'normalize: position beyond duration is clamped to duration',
++    MrDastbaaf_Lesson_Progress_Controller::normalize_values(900, 600),
++    array('position' => 600, 'duration' => 600)
++);
++
++mrd_assert(
++    'normalize: absurd values are capped',
++    MrDastbaaf_Lesson_Progress_Controller::normalize_values(999999, 999999),
++    array(
++        'position' => MrDastbaaf_Lesson_Progress_Controller::MAX_POSITION_SECONDS,
++        'duration' => MrDastbaaf_Lesson_Progress_Controller::MAX_POSITION_SECONDS,
++    )
++);
++
++mrd_assert(
++    'normalize: unknown duration (0) keeps the position as reported',
++    MrDastbaaf_Lesson_Progress_Controller::normalize_values(120, 0),
++    array('position' => 120, 'duration' => 0)
++);
++
++mrd_assert(
++    'normalize: non numeric input degrades to 0',
++    MrDastbaaf_Lesson_Progress_Controller::normalize_values('abc', 'xyz'),
++    array('position' => 0, 'duration' => 0)
++);
++
++mrd_assert(
++    'normalize: numeric strings are accepted',
++    MrDastbaaf_Lesson_Progress_Controller::normalize_values('431', '1420'),
++    array('position' => 431, 'duration' => 1420)
++);
++
++// ─── ۲) آستانهٔ تکمیل ──────────────────────────────────────────────────────
++
++mrd_assert('completed: 94 of 100 is not complete', MrDastbaaf_Lesson_Progress_Controller::is_completed(94, 100), false);
++mrd_assert('completed: exactly 95 of 100 is complete', MrDastbaaf_Lesson_Progress_Controller::is_completed(95, 100), true);
++mrd_assert('completed: 100 of 100 is complete', MrDastbaaf_Lesson_Progress_Controller::is_completed(100, 100), true);
++mrd_assert('completed: 0 of 100 is not complete', MrDastbaaf_Lesson_Progress_Controller::is_completed(0, 100), false);
++
++// ۳۳ ثانیه × ۰٫۹۵ = ۳۱٫۳۵ ⇒ سقف ۳۲ ⇒ ۳۱ ناکافی، ۳۲ کافی
++mrd_assert('completed: rounding uses ceil (31 of 33)', MrDastbaaf_Lesson_Progress_Controller::is_completed(31, 33), false);
++mrd_assert('completed: rounding uses ceil (32 of 33)', MrDastbaaf_Lesson_Progress_Controller::is_completed(32, 33), true);
++
++// مدت صفر هرگز تکمیل نمی‌شود — بدون مدت، نسبت بی‌معناست
++mrd_assert('completed: zero duration is never complete', MrDastbaaf_Lesson_Progress_Controller::is_completed(0, 0), false);
++mrd_assert('completed: zero duration with a position is never complete', MrDastbaaf_Lesson_Progress_Controller::is_completed(500, 0), false);
++
++// ─── ۳) مهار نوشتن ─────────────────────────────────────────────────────────
++
++mrd_assert('should_store: first real write is stored', MrDastbaaf_Lesson_Progress_Controller::should_store(120, 0, 600), true);
++
++mrd_assert(
++    'should_store: a no-op write is skipped',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(120, 120, 600),
++    false
++);
++
++mrd_assert(
++    'should_store: a small forward step is skipped',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(123, 120, 600),
++    false
++);
++
++mrd_assert(
++    'should_store: a step at the delta boundary is stored',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(
++        120 + MrDastbaaf_Lesson_Progress_Controller::MIN_POSITION_DELTA_SECONDS,
++        120,
++        600
++    ),
++    true
++);
++
++// محافظ پیشرفت: باز کردن گذرای درس، موقعیت واقعی را پاک نمی‌کند
++mrd_assert(
++    'should_store: a transient 2s open does not erase real progress',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(2, 900, 1800),
++    false
++);
++
++// و اگر پیشرفت واقعی هم نباشد، موقعیت ناچیز اصلاً ردیف نمی‌سازد.
++//
++// این «باگ» نیست: ذخیرهٔ ۲ ثانیه یعنی دفعهٔ بعد «ادامهٔ پخش» کاربر را روی
++// ثانیهٔ ۲ می‌گذارد، که بدتر از شروع از ابتداست. ضمناً جهش ۲ ثانیه‌ای از صفر
++// از آستانهٔ MIN_POSITION_DELTA_SECONDS هم کوچک‌تر است، پس همین قاعدهٔ کلی
++// آن را پوشش می‌دهد.
++mrd_assert(
++    'should_store: a sub-threshold position does not create a row at all',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(2, 0, 1800),
++    false
++);
++
++// ضبط پیشرفت از آستانهٔ جهش شروع می‌شود — نه از صفر مطلق
++mrd_assert(
++    'should_store: recording begins at the delta threshold, not before',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(
++        MrDastbaaf_Lesson_Progress_Controller::MIN_POSITION_DELTA_SECONDS - 1,
++        0,
++        1800
++    ),
++    false
++);
++mrd_assert(
++    'should_store: the first storable position is exactly the delta threshold',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(
++        MrDastbaaf_Lesson_Progress_Controller::MIN_POSITION_DELTA_SECONDS,
++        0,
++        1800
++    ),
++    true
++);
++
++// جست‌وجوی عقب (rewind) باید ذخیره شود
++mrd_assert(
++    'should_store: seeking backwards is stored',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(300, 900, 1800),
++    true
++);
++
++// گذر به تکمیل، حتی با جهش کوچک، همیشه ذخیره می‌شود
++mrd_assert(
++    'should_store: crossing the completion threshold overrides the delta rule',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(95, 94, 100),
++    true
++);
++
++// اما وقتی از قبل تکمیل بوده و جهش هم ناچیز است، نوشتن بی‌اثر است
++mrd_assert(
++    'should_store: staying complete with no real change is skipped',
++    MrDastbaaf_Lesson_Progress_Controller::should_store(95, 95, 100),
++    false
++);
++
++// ─── ۴) اعتبار شناسهٔ درس ──────────────────────────────────────────────────
++
++mrd_assert('lesson id: numeric', MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id('12'), true);
++mrd_assert('lesson id: alphanumeric with dash and underscore', MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id('lesson-01_A'), true);
++mrd_assert('lesson id: empty', MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id(''), false);
++mrd_assert('lesson id: contains a slash', MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id('12/../etc'), false);
++mrd_assert('lesson id: contains a space', MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id('12 34'), false);
++mrd_assert('lesson id: contains a percent', MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id('12%00'), false);
++mrd_assert(
++    'lesson id: over the column length is rejected',
++    MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id(str_repeat('9', 65)),
++    false
++);
++mrd_assert(
++    'lesson id: at the column length is accepted',
++    MrDastbaaf_Lesson_Progress_Controller::is_valid_lesson_id(str_repeat('9', 64)),
++    true
++);
++
++echo "\n---- result ----\n";
++echo "PASS: {$pass}\n";
++echo "FAIL: {$fail}\n";
++
++exit($fail > 0 ? 1 : 0);
