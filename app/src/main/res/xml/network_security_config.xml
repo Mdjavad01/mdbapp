@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+
+    <!--
+      HTTPS everywhere. There is no cleartext exception for any host, in any
+      build type: the API and the video CDN are both HTTPS-only, and the app
+      must never silently downgrade.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">mrdastbaaf.com</domain>
+        <domain includeSubdomains="true">dll.mrdastbaaf.com</domain>
+    </domain-config>
+
+    <!--
+      ─────────────────────────────────────────────────────────────────────────
+      CERTIFICATE PINNING — deliberately disabled until real pin values exist.
+
+      Certificate pinning is behind the `ENABLE_CERT_PINNING` build flag. The
+      Kotlin implementation lives in core/network/PinningConfig.kt and reads the
+      same flag, so nothing pins unless BOTH are switched on together.
+
+      To enable:
+        1. Obtain the SPKI hashes for the leaf and the intermediate CA:
+             openssl s_client -connect mrdastbaaf.com:443 -servername mrdastbaaf.com \
+               </dev/null 2>/dev/null | openssl x509 -pubkey -noout \
+               | openssl pkey -pubin -outform der \
+               | openssl dgst -sha256 -binary | openssl enc -base64
+        2. Paste them below as <pin> entries.
+        3. ALWAYS include a backup pin for the next certificate, or an
+           unannounced rotation will brick every installed app.
+        4. Flip ENABLE_CERT_PINNING to true in app/build.gradle.kts.
+
+      <domain-config>
+          <domain includeSubdomains="true">mrdastbaaf.com</domain>
+          <pin-set expiration="2027-12-31">
+              <pin digest="SHA-256">REPLACE_WITH_LEAF_SPKI_HASH=</pin>
+              <pin digest="SHA-256">REPLACE_WITH_BACKUP_SPKI_HASH=</pin>
+          </pin-set>
+      </domain-config>
+      ─────────────────────────────────────────────────────────────────────────
+    -->
+
+    <!-- Debug builds keep the system trust store only; no user CAs. -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </debug-overrides>
+
+</network-security-config>

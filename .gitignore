@@ -1,44 +1,68 @@
-# --- Dependencies ---
-node_modules/
-vendor/
-.pnp.*
-.yarn/*
-
-# --- Build output ---
-dist/
+# =============================================================================
+# Android / Gradle
+# =============================================================================
+.gradle/
 build/
-out/
-*.min.js
-*.min.css
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+output.json
+release/
+debug/
 
-# --- Environment / secrets ---
+# Keystores — NEVER commit these
+*.jks
+*.keystore
+keystore.properties
+
+# R8 mapping output (upload to Play Console, do not commit)
+app/build/outputs/mapping/
+mapping.txt
+build/debug-info/
+
+# =============================================================================
+# IDE
+# =============================================================================
+.idea/
+*.iml
+*.hprof
+.kotlin/
+
+# =============================================================================
+# OS
+# =============================================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =============================================================================
+# Secrets / environment
+# =============================================================================
 .env
 .env.*
 !.env.example
 *.pem
 *.key
 
-# --- Logs ---
-*.log
-logs/
-npm-debug.log*
-yarn-error.log*
-
-# --- Editor / IDE ---
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# --- OS ---
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# --- WorkBuddy local workspace data ---
+# =============================================================================
+# WorkBuddy local workspace data
+# =============================================================================
 .workbuddy-ai/
 
-# --- Caches ---
+# =============================================================================
+# Legacy web-app artefacts (this repository is Android-only; the React PWA
+# lives in the separate `mrdb` repository). Kept so stray files never get in.
+# =============================================================================
+node_modules/
+vendor/
+dist/
+*.log
 .cache/
 .temp/
 tmp/

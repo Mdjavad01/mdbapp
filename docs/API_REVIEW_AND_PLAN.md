@@ -1,14 +1,14 @@
 # mdbapp — API Discovery Report & Implementation Plan
 
-**Revision 2** — rewritten against the updated engineering brief (v1 scope, no refresh token, MP4-now/HLS-later).
+**Revision 2** — rewritten against the updated engineering brief (v1 scope, no refresh token, MP4-now/HLS-later).  
 Revision 1 (which assumed a token-refresh endpoint was needed) is superseded.
 
-| | |
-|---|---|
-| Backend repo | `soldiermr98-commits/mrdb` @ `main`, cloned read-only to `D:\work-webs\0 Build\mrdb-reference` |
-| Source of truth | `wordpress-plugin/mrdastbaaf-bridge/includes/*.php` (plugin v1.7.13) |
-| Base URL | `https://mrdastbaaf.com/wp-json/mrdastbaaf/v1` |
-| Status | **Discovery complete. No app code written yet.** |
+|                 |                                                                                                |
+| --------------- | ---------------------------------------------------------------------------------------------- |
+| Backend repo    | `soldiermr98-commits/mrdb` @ `main`, cloned read-only to `D:\work-webs\0 Build\mrdb-reference` |
+| Source of truth | `wordpress-plugin/mrdastbaaf-bridge/includes/*.php` (plugin v1.7.13)                           |
+| Base URL        | `https://mrdastbaaf.com/wp-json/mrdastbaaf/v1`                                                 |
+| Status          | **Discovery complete. No app code written yet.**                                               |
 
 ---
 
@@ -30,20 +30,20 @@ Revision 1 (which assumed a token-refresh endpoint was needed) is superseded.
 
 ## 1. Sources read
 
-| File | What I took from it |
-|---|---|
-| `includes/class-auth-controller.php` (56 KB) | OTP flow, token format/lifetime, `/auth/me`, logout, bearer resolution, role guard |
-| `includes/class-courses-controller.php` (66 KB) | Catalogue, detail, lessons, ticket, playback, stream proxy, access rules, watermark |
-| `includes/class-memberships-controller.php` | Plans, my-status, progress GET/PUT, orders |
-| `includes/class-shop-controller.php` | Physical product feed |
-| `includes/class-app-ui-controller.php` | Server-driven home config |
-| `includes/class-app-pages-controller.php` | Editorial pages + access filtering |
-| `includes/class-payment-controller.php` | Initiate / verify / manual transfer (out of v1 scope, read for completeness) |
-| `includes/class-database.php` | Table schemas (lessons, memberships, orders, OTP, grants) |
-| `mrdastbaaf-bridge.php` (58 KB) | Namespace, route registration, CORS, version endpoint |
-| `wordpress-plugin/README.md` | Version history, confirmed security model |
-| `FullDoc.MD` §4–§7, `docs/VIDEO_SECURITY.md`, `docs/STREAM_PROXY_DECISION.md` | Intended vs. implemented video security |
-| `src/services/*.ts`, `src/types/index.ts` | Reference for flows/wording only (as instructed) |
+| File                                                                          | What I took from it                                                                 |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `includes/class-auth-controller.php` (56 KB)                                  | OTP flow, token format/lifetime, `/auth/me`, logout, bearer resolution, role guard  |
+| `includes/class-courses-controller.php` (66 KB)                               | Catalogue, detail, lessons, ticket, playback, stream proxy, access rules, watermark |
+| `includes/class-memberships-controller.php`                                   | Plans, my-status, progress GET/PUT, orders                                          |
+| `includes/class-shop-controller.php`                                          | Physical product feed                                                               |
+| `includes/class-app-ui-controller.php`                                        | Server-driven home config                                                           |
+| `includes/class-app-pages-controller.php`                                     | Editorial pages + access filtering                                                  |
+| `includes/class-payment-controller.php`                                       | Initiate / verify / manual transfer (out of v1 scope, read for completeness)        |
+| `includes/class-database.php`                                                 | Table schemas (lessons, memberships, orders, OTP, grants)                           |
+| `mrdastbaaf-bridge.php` (58 KB)                                               | Namespace, route registration, CORS, version endpoint                               |
+| `wordpress-plugin/README.md`                                                  | Version history, confirmed security model                                           |
+| `FullDoc.MD` §4–§7, `docs/VIDEO_SECURITY.md`, `docs/STREAM_PROXY_DECISION.md` | Intended vs. implemented video security                                             |
+| `src/services/*.ts`, `src/types/index.ts`                                     | Reference for flows/wording only (as instructed)                                    |
 
 **Documentation caveat:** `FullDoc.MD` §6 is **stale** in several places — it documents `GET /courses/{id}` (the real routes are `/courses/{slug}` and `/courses/by-id/{id}`), says `verify-otp` "sets a WordPress session cookie" (removed in v1.2.0 — it is Bearer-only now), says the OTP is 5 digits (it is 6), and §7.2 describes HLS segments as the strategy when no HLS exists. **I treated the plugin source as authoritative throughout**, as instructed.
 
@@ -78,12 +78,12 @@ Revision 1 (which assumed a token-refresh endpoint was needed) is superseded.
 }
 ```
 
-| Error | Status | Meaning |
-|---|---|---|
-| `invalid_phone` | 400 | failed `^09[0-9]{9}$` after prefix normalisation |
-| `rate_limited` | 429 | four independent quotas: 2 min/phone, 5/h/phone, 15/day/phone, 10/h/IP |
-| `role_not_allowed` | 403 | the phone belongs to a non-student WordPress role |
-| `otp_storage_failed` | 500 | DB insert failed |
+| Error                | Status | Meaning                                                                |
+| -------------------- | ------ | ---------------------------------------------------------------------- |
+| `invalid_phone`      | 400    | failed `^09[0-9]{9}$` after prefix normalisation                       |
+| `rate_limited`       | 429    | four independent quotas: 2 min/phone, 5/h/phone, 15/day/phone, 10/h/IP |
+| `role_not_allowed`   | 403    | the phone belongs to a non-student WordPress role                      |
+| `otp_storage_failed` | 500    | DB insert failed                                                       |
 
 **Important:** the SMS is sent **asynchronously** in a separate PHP process. This response returns *before* the message leaves the server. The app must not treat "no SMS yet" as an error, and should offer a resend only after the 2-minute window.
 
@@ -113,12 +113,12 @@ Revision 1 (which assumed a token-refresh endpoint was needed) is superseded.
 }
 ```
 
-| Error | Status | Notes |
-|---|---|---|
-| `invalid_otp` | 400 | includes remaining attempts in the message. **400, not 401** — deliberately, so the client does not treat it as a dead session |
-| `otp_locked` | 429 | 5 wrong attempts burned the code; a new code is required |
-| `registration_conflict` | 409 | `wp_insert_user` collided on login/email |
-| `role_not_allowed` | 403 | privileged role |
+| Error                   | Status | Notes                                                                                                                          |
+| ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `invalid_otp`           | 400    | includes remaining attempts in the message. **400, not 401** — deliberately, so the client does not treat it as a dead session |
+| `otp_locked`            | 429    | 5 wrong attempts burned the code; a new code is required                                                                       |
+| `registration_conflict` | 409    | `wp_insert_user` collided on login/email                                                                                       |
+| `role_not_allowed`      | 403    | privileged role                                                                                                                |
 
 **Behavioural facts the app must be built around:**
 
@@ -150,7 +150,9 @@ Revision 1 (which assumed a token-refresh endpoint was needed) is superseded.
 { "success": true, "message": "با موفقیت از حساب کاربری خارج شدید." }
 // 401 unauthorized — if the Bearer token is already invalid
 ```
+
 Revokes the token server-side (deletes both usermeta keys). Always call it, then clear local storage regardless of the outcome.
+
 
 ### 2.2 Content
 
@@ -178,9 +180,9 @@ Revokes the token server-side (deletes both usermeta keys). Always call it, then
 ]
 ```
 
-| Error | Status |
-|---|---|
-| `woocommerce_missing` | 503 |
+| Error                 | Status |
+| --------------------- | ------ |
+| `woocommerce_missing` | 503    |
 
 **`owned` requires the Bearer header.** The route itself is public and never rejects an anonymous caller — it just returns `owned: false` for every course. The brief's instruction to send Bearer here is correct and necessary.
 
@@ -210,10 +212,10 @@ Both hit the same core. `{slug}` tolerates raw, single-, and double-percent-enco
 
 **`video_url` is never present in any course or lesson payload** — `get_product_lessons_public()` selects only `id, title, is_free, required_tier, duration_minutes`. This matches the brief and is enforced by design.
 
-| Error | Status | Notes |
-|---|---|---|
-| `not_found` | 404 | body carries `data.tried` — up to 8 attempted slug/id forms, useful for debugging |
-| `woocommerce_missing` | 503 | |
+| Error                 | Status | Notes                                                                             |
+| --------------------- | ------ | --------------------------------------------------------------------------------- |
+| `not_found`           | 404    | body carries `data.tried` — up to 8 attempted slug/id forms, useful for debugging |
+| `woocommerce_missing` | 503    |                                                                                   |
 
 #### `GET /my/courses` — Bearer required
 
@@ -225,6 +227,7 @@ Both hit the same core. `{slug}` tolerates raw, single-, and double-percent-enco
   "count": 2
 }
 ```
+
 Ownership is resolved from paid WooCommerce orders (`wc-completed`, `wc-processing`) matched by `customer_id` **or** by guest `billing_phone` in five normalised phone forms. Ordered by title ASC, capped at 50.
 
 #### `GET /memberships/plans` — public
@@ -269,6 +272,7 @@ Ownership is resolved from paid WooCommerce orders (`wc-completed`, `wc-processi
   }
 }
 ```
+
 The same `membership` object is embedded in `GET /auth/me` and in the `verify-otp` response (with one extra key, `planName`, in those two).
 
 #### `GET /me/progress` / `PUT /me/progress` — Bearer required
@@ -318,6 +322,7 @@ The same `membership` object is embedded in `GET /auth/me` and in the `verify-ot
   ]
 }
 ```
+
 - `featured` is the slider list (added v1.5.0) and may contain products that are **not** in any category.
 - Uncategorised physical products land in a synthetic bucket `{ "id": 0, "slug": "", "name": "سایر" }`.
 - `url` is the WooCommerce permalink → open it in the external browser for purchase, exactly as the brief requires.
@@ -344,6 +349,7 @@ The same `membership` object is embedded in `GET /auth/me` and in the `verify-ot
   "featuredCourseIds": [123, 456]
 }
 ```
+
 - Section keys: `featured_courses`, `artisan_story`, `membership_plans`, `faq`, `physical_products`. (`categories` is retired and never returned.)
 - Dock keys: `home`, `catalogue`, `membership`, `dashboard`.
 - Guide keys: `about-us`, `guide-membership`, `faq`, `membership`.
@@ -364,6 +370,7 @@ The same `membership` object is embedded in `GET /auth/me` and in the `verify-ot
   "url": "https://…"
 }
 ```
+
 Errors: `not_found` 404 (unknown/inactive record, or the underlying WP page is missing), `forbidden` 403 (access level too high).
 
 #### `GET /version` — public
@@ -378,6 +385,7 @@ Errors: `not_found` 404 (unknown/inactive record, or the underlying WP page is m
   "content_hash": "…"
 }
 ```
+
 Useful as a cheap reachability/health probe. Note the **snake_case** keys here too.
 
 ### 2.3 Playback — the two-step ticket flow
@@ -410,11 +418,11 @@ otherwise                                        → 403
 }
 ```
 
-| Error | Status | `message` (safe to display) |
-|---|---|---|
-| `unauthorized` | 401 | «برای مشاهده این جلسه ابتدا وارد حساب کاربری خود شوید.» |
-| `forbidden` | 403 | «مشاهده این جلسه نیازمند خرید یا تمدید اشتراک معتبر است.» |
-| `rate_limited` | 429 | 30 tickets / hour per (IP + user + lesson) |
+| Error          | Status | `message` (safe to display)                               |
+| -------------- | ------ | --------------------------------------------------------- |
+| `unauthorized` | 401    | «برای مشاهده این جلسه ابتدا وارد حساب کاربری خود شوید.»   |
+| `forbidden`    | 403    | «مشاهده این جلسه نیازمند خرید یا تمدید اشتراک معتبر است.» |
+| `rate_limited` | 429    | 30 tickets / hour per (IP + user + lesson)                |
 
 These two Persian messages already satisfy the brief's "clear Persian message when the user has no access" — **no extra endpoint is needed for that.**
 
@@ -451,10 +459,10 @@ These two Persian messages already satisfy the brief's "clear Persian message wh
 - Each `qualities[].url` is validated as `https://` + host in the video allowlist (`dll.mrdastbaaf.com` by default). **The file extension is not validated** — see §3.3.
 - ⚠️ In proxy mode the token lives in a **60-second** transient, so playback will die ~60 s into a video. See §3.6.
 
-| Error | Status |
-|---|---|
-| `invalid_ticket` | 403 (missing or expired) |
-| `ticket_mismatch` | 403 (wrong user or lesson) |
+| Error              | Status                                         |
+| ------------------ | ---------------------------------------------- |
+| `invalid_ticket`   | 403 (missing or expired)                       |
+| `ticket_mismatch`  | 403 (wrong user or lesson)                     |
 | `lesson_not_found` | 404 (lesson row missing, or `video_url` empty) |
 
 #### `GET /lessons/{id}/stream?token={token}` — proxy transport
@@ -522,16 +530,16 @@ The consequence: **one token slot per user** means the Android app and the web P
 
 ### 3.8 ✅ Other brief statements verified
 
-| Brief statement | Verdict |
-|---|---|
-| `POST /auth/request-otp` returns `isRegistered` | ✅ exact key, camelCase |
-| Opaque Bearer, ~30 days | ✅ exactly 30 days, validated per request |
-| Normalise Persian/Arabic digits before sending | ✅ required — the server's `^09[0-9]{9}$` test is ASCII-only. (Its *outbound* `phone_variants()` does handle Persian digits for lookups, but the inbound validator does not.) |
-| `POST /lessons/{id}/playback {ticketId}` → `videoUrl` + optional `qualities[{label,url}]` | ✅ exact |
-| Videos are plain MP4, one per quality, HLS later | ✅ and the `mrdastbaaf_stream_video_url` filter is already reserved for the HLS provider |
-| Physical products showcase, opens website to buy | ✅ `url` is the WooCommerce permalink |
-| Watermark from `/auth/me` **and** the ticket, not derived locally | ⚠️ partial — see §3.9 |
-| Payment / admin / offline / iOS / push out of scope | ✅ consistent with the API |
+| Brief statement                                                                           | Verdict                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/request-otp` returns `isRegistered`                                           | ✅ exact key, camelCase                                                                                                                                                       |
+| Opaque Bearer, ~30 days                                                                   | ✅ exactly 30 days, validated per request                                                                                                                                     |
+| Normalise Persian/Arabic digits before sending                                            | ✅ required — the server's `^09[0-9]{9}$` test is ASCII-only. (Its *outbound* `phone_variants()` does handle Persian digits for lookups, but the inbound validator does not.) |
+| `POST /lessons/{id}/playback {ticketId}` → `videoUrl` + optional `qualities[{label,url}]` | ✅ exact                                                                                                                                                                      |
+| Videos are plain MP4, one per quality, HLS later                                          | ✅ and the `mrdastbaaf_stream_video_url` filter is already reserved for the HLS provider                                                                                      |
+| Physical products showcase, opens website to buy                                          | ✅ `url` is the WooCommerce permalink                                                                                                                                         |
+| Watermark from `/auth/me` **and** the ticket, not derived locally                         | ⚠️ partial — see §3.9                                                                                                                                                        |
+| Payment / admin / offline / iOS / push out of scope                                       | ✅ consistent with the API                                                                                                                                                    |
 
 ### 3.9 🟠 Watermark identity is split across two sources
 
@@ -623,6 +631,7 @@ Without this the client is forced into extension sniffing + content-type probing
   "watermarkFullName": "محمدجواد فلان"       // ← new; "مهمان" for guests
 }
 ```
+
 Makes identity a single server-provided source, exactly as the brief asks.
 
 ### 4.5 🟡 Optional — enforce first/last name server-side
@@ -631,25 +640,25 @@ If you want the server to be the authority rather than the client: return `422 m
 
 ### 4.6 🟡 One-line fixes worth doing while you are in there
 
-| Fix | Where |
-|---|---|
-| `lessonsCount` is always `0` on the detail route | `serve_single_course()` — set `$course['lessonsCount'] = count($course['lessons'])` |
-| `streamType` is hard-coded `"hls"` while MP4 is served | ticket + playback responses |
-| `lesson.duration` is `null` when 0 — forces a nullable Dart field | `get_product_lessons_public()` — emit `0` |
-| `/auth/me` has no `tokenExpiresAt`, so the client cannot pre-empt a 401 | `format_user_profile()` |
-| `expires_in_seconds` (snake) sits next to `isRegistered` (camel) in the same object | `request-otp` response |
-| `GET /me/orders` omits `success` while every sibling includes it | `handle_get_orders()` |
+| Fix                                                                                 | Where                                                                               |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `lessonsCount` is always `0` on the detail route                                    | `serve_single_course()` — set `$course['lessonsCount'] = count($course['lessons'])` |
+| `streamType` is hard-coded `"hls"` while MP4 is served                              | ticket + playback responses                                                         |
+| `lesson.duration` is `null` when 0 — forces a nullable Dart field                   | `get_product_lessons_public()` — emit `0`                                           |
+| `/auth/me` has no `tokenExpiresAt`, so the client cannot pre-empt a 401             | `format_user_profile()`                                                             |
+| `expires_in_seconds` (snake) sits next to `isRegistered` (camel) in the same object | `request-otp` response                                                              |
+| `GET /me/orders` omits `success` while every sibling includes it                    | `handle_get_orders()`                                                               |
 
 ### 4.7 Summary
 
-| # | Priority | Item | Blocks |
-|---|---|---|---|
-| 4.1 | 🔴 **BLOCKER** | Playback position GET/PUT | "resume position" — an explicit brief requirement |
-| 4.3 | 🟠 | `videoType` / per-quality `type` | clean MP4↔HLS player abstraction |
-| 4.4 | 🟠 | `watermarkFullName` in the ticket | single-source watermark identity |
-| 4.2 | 🟠 | Playback session + heartbeat | only when HLS lands (design for it now) |
-| 4.5 | 🟡 | Server-side name enforcement | optional; client can enforce |
-| 4.6 | 🟡 | Six small contract fixes | developer ergonomics |
+| #   | Priority       | Item                              | Blocks                                            |
+| --- | -------------- | --------------------------------- | ------------------------------------------------- |
+| 4.1 | 🔴 **BLOCKER** | Playback position GET/PUT         | "resume position" — an explicit brief requirement |
+| 4.3 | 🟠             | `videoType` / per-quality `type`  | clean MP4↔HLS player abstraction                  |
+| 4.4 | 🟠             | `watermarkFullName` in the ticket | single-source watermark identity                  |
+| 4.2 | 🟠             | Playback session + heartbeat      | only when HLS lands (design for it now)           |
+| 4.5 | 🟡             | Server-side name enforcement      | optional; client can enforce                      |
+| 4.6 | 🟡             | Six small contract fixes          | developer ergonomics                              |
 
 **Nothing else is missing.** Auth, catalogue, detail, membership, progress lists, orders, shop, app-ui, app-pages and the two-step playback flow are all present and sufficient for v1.
 
@@ -726,34 +735,34 @@ mdbapp/
 
 ### 5.2 Packages
 
-| Concern | Package | Why |
-|---|---|---|
-| State management | `flutter_riverpod` + `riverpod_annotation` | Required by the brief; compile-safe DI, no BuildContext coupling, easy to unit-test repositories |
-| Networking | `dio` | Required; the interceptor chain is exactly the 401/retry design the brief specifies |
-| Navigation | `go_router` | Required; `redirect` guards map cleanly onto the auth guard |
-| Token storage | `flutter_secure_storage` | Required; Android Keystore-backed |
-| Models | `freezed` + `json_serializable` | ~20 DTOs with **inconsistent envelopes and casing** — codegen keeps the mapping honest and reviewable |
-| Codegen | `build_runner` | required by the two above |
-| Localization | `flutter_localizations` + `intl` + ARB | Required; RTL-correct, all strings in ARB |
-| Jalali dates | `shamsi_date` | Actively maintained, pure Dart. Note the server already pre-formats `formattedExpireDateJalali`, so this is mainly for player/order timestamps |
-| Persian font | bundled **Vazirmatn TTF** in `assets/fonts` | Same typeface as the web app; bundling avoids a runtime fetch |
-| Connectivity | `connectivity_plus` | Drives the required offline state |
-| Images | `cached_network_image` | Course thumbnails |
-| Device/app info | `device_info_plus`, `package_info_plus` | Device identity for logs/support; app version for diagnostics |
-| External links | `flutter_custom_tabs` | Shop product `url` and the membership renewal page open in a Custom Tab |
-| Tests | `mocktail`, `flutter_test` | Repository + subscription-logic unit tests, as required |
-| Lints | `flutter_lints`, `custom_lint` | Enforce the architecture |
+| Concern          | Package                                     | Why                                                                                                                                            |
+| ---------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| State management | `flutter_riverpod` + `riverpod_annotation`  | Required by the brief; compile-safe DI, no BuildContext coupling, easy to unit-test repositories                                               |
+| Networking       | `dio`                                       | Required; the interceptor chain is exactly the 401/retry design the brief specifies                                                            |
+| Navigation       | `go_router`                                 | Required; `redirect` guards map cleanly onto the auth guard                                                                                    |
+| Token storage    | `flutter_secure_storage`                    | Required; Android Keystore-backed                                                                                                              |
+| Models           | `freezed` + `json_serializable`             | ~20 DTOs with **inconsistent envelopes and casing** — codegen keeps the mapping honest and reviewable                                          |
+| Codegen          | `build_runner`                              | required by the two above                                                                                                                      |
+| Localization     | `flutter_localizations` + `intl` + ARB      | Required; RTL-correct, all strings in ARB                                                                                                      |
+| Jalali dates     | `shamsi_date`                               | Actively maintained, pure Dart. Note the server already pre-formats `formattedExpireDateJalali`, so this is mainly for player/order timestamps |
+| Persian font     | bundled **Vazirmatn TTF** in `assets/fonts` | Same typeface as the web app; bundling avoids a runtime fetch                                                                                  |
+| Connectivity     | `connectivity_plus`                         | Drives the required offline state                                                                                                              |
+| Images           | `cached_network_image`                      | Course thumbnails                                                                                                                              |
+| Device/app info  | `device_info_plus`, `package_info_plus`     | Device identity for logs/support; app version for diagnostics                                                                                  |
+| External links   | `flutter_custom_tabs`                       | Shop product `url` and the membership renewal page open in a Custom Tab                                                                        |
+| Tests            | `mocktail`, `flutter_test`                  | Repository + subscription-logic unit tests, as required                                                                                        |
+| Lints            | `flutter_lints`, `custom_lint`              | Enforce the architecture                                                                                                                       |
 
 ### 5.3 Player engine — the one real technical decision
 
 **Requirement:** Media3/ExoPlayer-based, MP4 **and** HLS, a quality selector that preserves position/play state, and (later) AES-128 HLS where the **key request carries the auth header**.
 
-| Option | Verdict |
-|---|---|
-| `video_player` (official) | ExoPlayer/Media3 under the hood via `video_player_android`, and it does accept `httpHeaders`. But it exposes **no track/quality-selection API** — there is no way to implement "1080p / 720p / 480p" or to select a variant from a master playlist. |
-| `chewie` | A controls UI on top of `video_player` — inherits the same limitation. Useful later for the control bar only. |
-| `media_kit` | Uses libmpv, not Media3 — contradicts the brief's explicit engine requirement. |
-| `better_player` | Unmaintained. |
+| Option                                                 | Verdict                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `video_player` (official)                              | ExoPlayer/Media3 under the hood via `video_player_android`, and it does accept `httpHeaders`. But it exposes **no track/quality-selection API** — there is no way to implement "1080p / 720p / 480p" or to select a variant from a master playlist.                                            |
+| `chewie`                                               | A controls UI on top of `video_player` — inherits the same limitation. Useful later for the control bar only.                                                                                                                                                                                  |
+| `media_kit`                                            | Uses libmpv, not Media3 — contradicts the brief's explicit engine requirement.                                                                                                                                                                                                                 |
+| `better_player`                                        | Unmaintained.                                                                                                                                                                                                                                                                                  |
 | **Custom Kotlin platform view over `androidx.media3`** | The only option that satisfies all four requirements: `TrackSelectionParameters` for manual variant selection, `DefaultHttpDataSource.Factory` with a default `Authorization` header (which covers the AES-128 key request), full playback-state control, and no third-party abandonment risk. |
 
 **Recommendation: the platform view**, behind a Dart `PlaybackSource` / `SecurePlayerController` interface so the UI never knows which engine is underneath. This also means HLS lands later with **zero UI changes** — exactly what the brief asks for.
@@ -765,6 +774,7 @@ I will not commit to this blind: **Phase 1 opens with a one-day spike** against 
 ```bash
 flutter build appbundle --release --obfuscate --split-debug-info=build/debug-info
 ```
+
 plus `android/app/proguard-rules.pro` with the Media3 keep rules, `isMinifyEnabled = true`, `isShrinkResources = true`, HTTPS-only via `android:usesCleartextTraffic="false"` and a `network_security_config.xml`, and certificate pinning behind a flag (dio `HttpClientAdapter` + `badCertificateCallback`).
 
 ---
@@ -773,43 +783,43 @@ plus `android/app/proguard-rules.pro` with the Media3 keep rules, `isMinifyEnabl
 
 Each phase ends with a commit, a short summary of what was built, how to run it, and what remains — as the brief requires.
 
-| Phase | Deliverable | Exit criteria | Server dependency |
-|---|---|---|---|
-| **P0 — Scaffold** | Flutter project, Material 3 + RTL theme, Vazirmatn, ARB wiring, strict lints, folder skeleton, `--dart-define` env config for staging/production, CI (`analyze` + `test`) | App builds and runs with a Persian RTL screen; `flutter analyze` clean; staging and production base URLs both selectable | none |
-| **P1 — Core infra + player spike** | dio client + interceptor chain (Bearer, 401→wipe→login, GET retry with backoff), `Failure`/`ApiException` mapping every documented `WP_Error` code, secure storage, go_router + auth guard, `AsyncStateView`, `ApiPaths`. **Plus the Media3 platform-view spike.** | Interceptor unit tests pass against a mock adapter; the spike plays a signed HLS stream with a header-authenticated key request and switches quality without losing position | none |
-| **P2 — Security shell** | Kotlin `SecurityChannel`: `FLAG_SECURE` on/off, `RootDetector`, `EmulatorDetector`; Dart facades; config flag to disable blocking | On a rooted emulator the app shows the Persian block screen; on a clean device the player blocks screenshots and shows a black recents preview | none |
-| **P3 — Auth** | OTP request/verify, Persian-digit normalisation, `isRegistered`-driven login vs. signup, conditional name fields with server-matching validation, token in secure storage, session state, logout, profile | Full login against staging; wrong code / rate-limited / locked each show the correct Persian message; token survives an app restart; 401 anywhere returns to login | none |
-| **P4 — Catalogue & course detail** | `/courses` **with Bearer** (category, search), `/courses/{slug}`, `/my/courses`, `/app-ui`-driven home, `/app-pages` viewer; lesson list with free / locked / unlocked badges; `lessons.length` used instead of `lessonsCount` | Live data renders; every screen has loading/empty/error/offline; `owned` is correct when signed in | none |
-| **P5 — Membership & dashboard** | `/memberships/plans`, `/memberships/my-status`, `/me/progress` (completed + bookmarks), `/me/orders`, Jalali dates, renewal button → external browser; unit tests for tier/expiry logic | Subscription card and countdown correct; renewal opens the site; repository tests green | none |
-| **P6 — Shop showcase** | `/shop/products` — `featured` slider + category chips, read-only, product tap → Custom Tab | Matches the web wording and layout; no purchase flow in-app | none |
-| **P7 — Player & content security** | Media3 player, ticket → playback flow, `PlaybackSource` abstraction, quality selector, watermark overlay (name + id + masked phone from the server), background pause, foreground re-check, resume from position | Video plays; watermark moves and survives fullscreen; backgrounding pauses; returning re-checks access; position resumes | **§4.1 (position) blocks resume.** Everything else works without it |
-| **P8 — Hardening & release** | R8 + obfuscation + `split-debug-info`, optional pinning, log hygiene audit (no tokens/tickets/video URLs), full test pass, signed AAB, honest README on security limits | Release AAB passes a device smoke test; grep of release logs shows no secrets; README documents what FLAG_SECURE and the watermark do **not** stop | none |
+| Phase                              | Deliverable                                                                                                                                                                                                                                                        | Exit criteria                                                                                                                                                                | Server dependency                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **P0 — Scaffold**                  | Flutter project, Material 3 + RTL theme, Vazirmatn, ARB wiring, strict lints, folder skeleton, `--dart-define` env config for staging/production, CI (`analyze` + `test`)                                                                                          | App builds and runs with a Persian RTL screen; `flutter analyze` clean; staging and production base URLs both selectable                                                     | none                                                                |
+| **P1 — Core infra + player spike** | dio client + interceptor chain (Bearer, 401→wipe→login, GET retry with backoff), `Failure`/`ApiException` mapping every documented `WP_Error` code, secure storage, go_router + auth guard, `AsyncStateView`, `ApiPaths`. **Plus the Media3 platform-view spike.** | Interceptor unit tests pass against a mock adapter; the spike plays a signed HLS stream with a header-authenticated key request and switches quality without losing position | none                                                                |
+| **P2 — Security shell**            | Kotlin `SecurityChannel`: `FLAG_SECURE` on/off, `RootDetector`, `EmulatorDetector`; Dart facades; config flag to disable blocking                                                                                                                                  | On a rooted emulator the app shows the Persian block screen; on a clean device the player blocks screenshots and shows a black recents preview                               | none                                                                |
+| **P3 — Auth**                      | OTP request/verify, Persian-digit normalisation, `isRegistered`-driven login vs. signup, conditional name fields with server-matching validation, token in secure storage, session state, logout, profile                                                          | Full login against staging; wrong code / rate-limited / locked each show the correct Persian message; token survives an app restart; 401 anywhere returns to login           | none                                                                |
+| **P4 — Catalogue & course detail** | `/courses` **with Bearer** (category, search), `/courses/{slug}`, `/my/courses`, `/app-ui`-driven home, `/app-pages` viewer; lesson list with free / locked / unlocked badges; `lessons.length` used instead of `lessonsCount`                                     | Live data renders; every screen has loading/empty/error/offline; `owned` is correct when signed in                                                                           | none                                                                |
+| **P5 — Membership & dashboard**    | `/memberships/plans`, `/memberships/my-status`, `/me/progress` (completed + bookmarks), `/me/orders`, Jalali dates, renewal button → external browser; unit tests for tier/expiry logic                                                                            | Subscription card and countdown correct; renewal opens the site; repository tests green                                                                                      | none                                                                |
+| **P6 — Shop showcase**             | `/shop/products` — `featured` slider + category chips, read-only, product tap → Custom Tab                                                                                                                                                                         | Matches the web wording and layout; no purchase flow in-app                                                                                                                  | none                                                                |
+| **P7 — Player & content security** | Media3 player, ticket → playback flow, `PlaybackSource` abstraction, quality selector, watermark overlay (name + id + masked phone from the server), background pause, foreground re-check, resume from position                                                   | Video plays; watermark moves and survives fullscreen; backgrounding pauses; returning re-checks access; position resumes                                                     | **§4.1 (position) blocks resume.** Everything else works without it |
+| **P8 — Hardening & release**       | R8 + obfuscation + `split-debug-info`, optional pinning, log hygiene audit (no tokens/tickets/video URLs), full test pass, signed AAB, honest README on security limits                                                                                            | Release AAB passes a device smoke test; grep of release logs shows no secrets; README documents what FLAG_SECURE and the watermark do **not** stop                           | none                                                                |
 
 **Critical path:** P0 → P1 → P3 → P4 → P7. P2, P5 and P6 can run in parallel with P4. Only **P7's resume feature** waits on the server.
 
 ### Server track (independent)
 
-| Item | Effort | Blocks |
-|---|---|---|
-| §4.1 playback position GET/PUT | small — one table column or a usermeta JSON key + two handlers | P7 resume |
-| §4.3 `videoType` fields | tiny — additive | clean player abstraction |
-| §4.4 `watermarkFullName` | tiny — one field | single-source watermark |
-| §4.6 six small contract fixes | tiny | developer ergonomics |
-| §4.2 session + heartbeat | medium | only when HLS ships |
+| Item                           | Effort                                                         | Blocks                   |
+| ------------------------------ | -------------------------------------------------------------- | ------------------------ |
+| §4.1 playback position GET/PUT | small — one table column or a usermeta JSON key + two handlers | P7 resume                |
+| §4.3 `videoType` fields        | tiny — additive                                                | clean player abstraction |
+| §4.4 `watermarkFullName`       | tiny — one field                                               | single-source watermark  |
+| §4.6 six small contract fixes  | tiny                                                           | developer ergonomics     |
+| §4.2 session + heartbeat       | medium                                                         | only when HLS ships      |
 
 ---
 
 ## 7. Risks, and what I need from you
 
-| # | Item | Note |
-|---|---|---|
-| R1 | **Player engine spike** | The single biggest unknown. One day in P1, before committing to the architecture. |
-| R2 | **One token slot per user** | Shipping the app signs the user out of the web PWA. Accept for v1, or ask the server for a multi-device token table? |
-| R3 | **Proxy mode must stay OFF** | Its 60-second, user-unbound token would break playback mid-video. I will add a client-side guard that refuses a `proxyMode: true` response rather than silently producing a broken player. |
-| R4 | **Staging environment** | Is there a staging WordPress host I can point the app at, or do we develop against production? This affects the P1/P3 test loop significantly. |
-| R5 | **`/auth/health`** | Public and useful on staging, but it leaks host internals — I will not wire it into the production build. Confirm that is acceptable. |
-| R6 | **Content-type fallback** | Until §4.3 lands, the player will probe content-type once per URL. Confirm that one extra request per playback is acceptable. |
-| R7 | **Persian numerals / Toman formatting** | Should the UI render `۰۱۲۳` and `۴۹۰٬۰۰۰ تومان`? I will default to Persian digits + thousands separators unless you say otherwise. |
-| R8 | **Renewal destination URL** | Which exact page should the "تمدید اشتراک" button open — `/membership` on the site? |
+| #  | Item                                    | Note                                                                                                                                                                                       |
+| -- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R1 | **Player engine spike**                 | The single biggest unknown. One day in P1, before committing to the architecture.                                                                                                          |
+| R2 | **One token slot per user**             | Shipping the app signs the user out of the web PWA. Accept for v1, or ask the server for a multi-device token table?                                                                       |
+| R3 | **Proxy mode must stay OFF**            | Its 60-second, user-unbound token would break playback mid-video. I will add a client-side guard that refuses a `proxyMode: true` response rather than silently producing a broken player. |
+| R4 | **Staging environment**                 | Is there a staging WordPress host I can point the app at, or do we develop against production? This affects the P1/P3 test loop significantly.                                             |
+| R5 | **`/auth/health`**                      | Public and useful on staging, but it leaks host internals — I will not wire it into the production build. Confirm that is acceptable.                                                      |
+| R6 | **Content-type fallback**               | Until §4.3 lands, the player will probe content-type once per URL. Confirm that one extra request per playback is acceptable.                                                              |
+| R7 | **Persian numerals / Toman formatting** | Should the UI render `۰۱۲۳` and `۴۹۰٬۰۰۰ تومان`? I will default to Persian digits + thousands separators unless you say otherwise.                                                         |
+| R8 | **Renewal destination URL**             | Which exact page should the "تمدید اشتراک" button open — `/membership` on the site?                                                                                                        |
 
 **The only hard blocker is §4.1 (playback position).** Everything else in the brief is buildable against the API as it exists today.

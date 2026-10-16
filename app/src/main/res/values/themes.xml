@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      Base theme. The UI itself is 100% Compose (see core/ui/theme/Theme.kt), so
+      this exists only to give the window a sane background before the first
+      frame and to keep the status/navigation bars transparent for edge-to-edge.
+    -->
+    <style name="Theme.MdbApp" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_window_background_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
+
+    <!--
+      Launch theme. Hands over to Theme.MdbApp as soon as the first frame is
+      drawn, via installSplashScreen() in MainActivity.
+    -->
+    <style name="Theme.MdbApp.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/brand_terracotta</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.MdbApp</item>
+    </style>
+
+</resources>

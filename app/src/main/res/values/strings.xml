@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Default locale resources are Persian: the app is Persian-only, so it must be
+  correct on a device whose locale is anything at all. There is intentionally no
+  values-en fallback — the AndroidManifest declares fa via locales_config.xml.
+
+  NOTE: `app_name` is deliberately absent. It is injected per build flavour via
+  `resValue` in app/build.gradle.kts; declaring it here as well would produce a
+  duplicate-resource failure.
+-->
+<resources>
+
+    <!-- ===================== Generic / shared ===================== -->
+    <string name="action_retry">تلاش مجدد</string>
+    <string name="action_cancel">انصراف</string>
+    <string name="action_confirm">تأیید</string>
+    <string name="action_close">بستن</string>
+    <string name="action_back">بازگشت</string>
+    <string name="action_continue">ادامه</string>
+
+    <!-- ===================== Async states ===================== -->
+    <string name="state_loading">در حال بارگذاری…</string>
+    <string name="state_empty_title">چیزی برای نمایش نیست</string>
+    <string name="state_empty_message">در حال حاضر موردی برای نمایش وجود ندارد.</string>
+    <string name="state_error_title">خطا در دریافت اطلاعات</string>
+    <string name="state_error_message">ارتباط با سرور برقرار نشد. لطفاً دوباره تلاش کنید.</string>
+    <string name="state_offline_title">اتصال اینترنت برقرار نیست</string>
+    <string name="state_offline_message">برای ادامه، اتصال اینترنت خود را بررسی کنید.</string>
+
+    <!-- ===================== Network errors ===================== -->
+    <string name="error_timeout">زمان انتظار پاسخ سرور به پایان رسید. لطفاً دوباره تلاش کنید.</string>
+    <string name="error_no_connection">اتصال اینترنت برقرار نیست.</string>
+    <string name="error_server">خطای سرور رخ داده است. لطفاً کمی بعد دوباره تلاش کنید.</string>
+    <string name="error_unknown">خطای غیرمنتظره‌ای رخ داد.</string>
+    <string name="error_invalid_response">پاسخ سرور نامعتبر بود.</string>
+
+    <!-- ===================== Auth (used from phase P3) ===================== -->
+    <string name="auth_login_title">ورود به مستر دستباف</string>
+    <string name="auth_phone_label">شماره موبایل</string>
+    <string name="auth_phone_hint">۰۹۱۲۳۴۵۶۷۸۹</string>
+    <string name="auth_phone_invalid">شماره موبایل وارد شده معتبر نیست.</string>
+    <string name="auth_request_code">دریافت کد تأیید</string>
+    <string name="auth_otp_label">کد تأیید</string>
+    <string name="auth_verify">ورود</string>
+    <string name="auth_resend_code">ارسال دوبارهٔ کد</string>
+    <string name="auth_resend_wait">ارسال دوباره تا %1$d ثانیه دیگر</string>
+    <string name="auth_first_name_label">نام</string>
+    <string name="auth_last_name_label">نام خانوادگی</string>
+    <string name="auth_signup_title">تکمیل ثبت‌نام</string>
+    <string name="auth_session_expired">نشست شما منقضی شده است؛ لطفاً دوباره وارد شوید.</string>
+    <string name="auth_logout">خروج از حساب کاربری</string>
+    <string name="auth_logout_confirm">از حساب کاربری خود خارج می‌شوید؟</string>
+
+    <!-- ===================== Security (used from phase P2/P7) ===================== -->
+    <string name="security_rooted_title">امکان پخش ویدیو وجود ندارد</string>
+    <string name="security_rooted_message">به دلایل امنیتی، پخش ویدیو روی دستگاه‌های روت‌شده یا شبیه‌سازها امکان‌پذیر نیست. برای تماشای دوره‌ها از یک دستگاه معمولی استفاده کنید.</string>
+    <string name="security_screen_protected">این صفحه در برابر تصویربرداری محافظت می‌شود.</string>
+
+    <!-- ===================== Access / subscription ===================== -->
+    <string name="access_locked">دسترسی به این جلسه نیازمند اشتراک فعال است.</string>
+    <string name="access_renew">تمدید یا خرید اشتراک</string>
+    <string name="access_login_required">برای مشاهده این جلسه ابتدا وارد حساب کاربری خود شوید.</string>
+    <string name="access_free_preview">پیش‌نمایش رایگان</string>
+    <string name="tier_bronze">برنزی</string>
+    <string name="tier_silver">نقره‌ای</string>
+    <string name="tier_gold">طلایی</string>
+
+    <!-- ===================== Placeholder home (P0) ===================== -->
+    <string name="p0_badge">فاز صفر — اسکافولد</string>
+    <string name="p0_headline">ساختار پروژه آماده است</string>
+    <string name="p0_body">این صفحه فقط برای تأیید راه‌اندازی صحیح پروژه است: تم راست‌به‌چپ، فونت وزیرمتن، سیستم طراحی و پیکربندی محیط. صفحه‌های واقعی از فاز بعد اضافه می‌شوند.</string>
+    <string name="p0_env_label">محیط فعال</string>
+    <string name="p0_api_label">آدرس پایهٔ سرور</string>
+    <string name="p0_version_label">نسخهٔ برنامه</string>
+    <string name="p0_font_sample">نمونهٔ متن فارسی با فونت وزیرمتن — ۱۲۳۴۵۶۷۸۹۰</string>
+</resources>

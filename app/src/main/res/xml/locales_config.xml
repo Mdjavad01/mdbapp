@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app ships a single locale: Persian. Declaring it explicitly keeps the
+     per-app language picker consistent and stops Android from falling back to
+     an English default on devices set to another locale. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="fa" />
+</locale-config>

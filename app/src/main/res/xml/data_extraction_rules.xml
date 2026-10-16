@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The auth token lives in the Android Keystore-backed encrypted store
+  (see core/storage/SecureTokenStore.kt) and must never leave the device via
+  backup, device-to-device transfer, or adb extraction. Everything in this app
+  is either a credential or a cache, so nothing is worth backing up.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+    </device-transfer>
+</data-extraction-rules>
