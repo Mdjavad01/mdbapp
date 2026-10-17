@@ -93,4 +93,27 @@
     <string name="p0_env_label">محیط فعال</string>
     <string name="p0_api_label">آدرس پایهٔ سرور</string>
     <string name="p0_version_label">نسخهٔ برنامه</string>
+
+    <!-- ===================== Navigation ===================== -->
+    <string name="nav_courses">دوره‌ها</string>
+    <string name="nav_account">حساب کاربری</string>
+
+    <!-- ===================== Catalogue ===================== -->
+    <string name="catalogue_title">دوره‌ها</string>
+    <string name="catalogue_tab_all">همهٔ دوره‌ها</string>
+    <string name="catalogue_tab_mine">دوره‌های من</string>
+    <string name="catalogue_empty_all">در حال حاضر دوره‌ای برای نمایش وجود ندارد.</string>
+    <string name="catalogue_empty_mine">هنوز دوره‌ای نخریده‌اید.</string>
+    <string name="catalogue_owned">خریداری‌شده</string>
+    <string name="catalogue_free">رایگان</string>
+    <string name="catalogue_lessons_count">%1$s جلسه</string>
+    <string name="catalogue_placeholder">دوره</string>
+
+    <!-- ===================== Course detail ===================== -->
+    <string name="course_detail_title">جزئیات دوره</string>
+    <string name="course_detail_lessons">سرفصل‌ها (%1$s جلسه)</string>
+    <string name="course_detail_free_preview">پیش‌نمایش رایگان</string>
+    <string name="course_detail_locked">نیازمند اشتراک</string>
+    <string name="course_detail_access_note">برای دسترسی به همهٔ جلسات این دوره، اشتراک فعال لازم است.</string>
+    <string name="course_detail_no_lessons">برای این دوره جلسه‌ای ثبت نشده است.</string>
 </resources>

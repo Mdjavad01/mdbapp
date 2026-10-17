@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -45,16 +44,17 @@ import com.mrdastbaaf.mdbapp.features.auth.presentation.session.SessionUiState
 import com.mrdastbaaf.mdbapp.features.home.domain.model.ServerInfo
 
 /**
- * Scaffold screen.
+ * The account tab.
  *
- * Two jobs, both about making the foundation verifiable rather than pretty:
+ * Two jobs:
  *
- *  1. The account panel proves the whole auth round trip — OTP, token storage,
- *     session, profile fetch, logout — against the live backend.
- *  2. The server/config cards prove the network stack and the build flavour.
+ *  1. The account panel is the real one — OTP, token storage, session, profile
+ *     fetch and logout, all against the live backend.
+ *  2. The server and build cards stay because they are the fastest way to
+ *     answer "which plugin is this build talking to?" during a rollout.
  *
- * It is replaced by the real home screen in P4. It is written as a pure function
- * of its state so both halves can be previewed and unit-tested without Hilt.
+ * It is written as a pure function of its state so both halves can be previewed
+ * and unit-tested without Hilt.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,7 +83,6 @@ fun HomeScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .padding(innerPadding)
-                .safeDrawingPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),

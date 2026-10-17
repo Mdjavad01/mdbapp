@@ -26,6 +26,13 @@ object ApiPaths {
     const val COURSES = "courses"
     const val MY_COURSES = "my/courses"
 
+    /**
+     * Retrofit needs a compile-time constant for a parameterised path, so the
+     * template lives here and [courseBySlug] builds the same route for callers
+     * that navigate by string.
+     */
+    const val COURSE_DETAIL_TEMPLATE = "courses/{slug}"
+
     /** `GET courses/{slug}` — the slug is a product `post_name` and may contain Persian characters. */
     fun courseBySlug(slug: String): String = "courses/$slug"
 

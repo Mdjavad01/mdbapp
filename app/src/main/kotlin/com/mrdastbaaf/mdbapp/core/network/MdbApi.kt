@@ -8,9 +8,13 @@ import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.RequestOtpResponse
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.UserProfileDto
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.VerifyOtpRequest
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.VerifyOtpResponse
+import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDetailDto
+import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDto
+import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.MyCoursesDto
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
 
 /**
  * Retrofit description of the WordPress bridge.
@@ -77,4 +81,32 @@ interface MdbApi {
      */
     @POST(ApiPaths.AUTH_LOGOUT)
     suspend fun logout(): LogoutResponse
+
+    // ── Catalogue ───────────────────────────────────────────────────────────
+
+    /**
+     * The public catalogue. Returns a **bare array** — no envelope.
+     *
+     * The route never rejects an anonymous caller; it simply reports
+     * `owned: false` for everything. The auth interceptor attaches the token
+     * when there is one, which is what makes `owned` meaningful.
+     *
+     * Capped at 50 items, newest first, with no pagination parameter.
+     */
+    @GET(ApiPaths.COURSES)
+    suspend fun getCourses(): List<CourseDto>
+
+    /**
+     * One course with its lesson list. Returns a **bare object**.
+     *
+     * `slug` is the product `post_name`. Retrofit encodes it, and the bridge
+     * tolerates raw, single- and double-encoded forms — every filename in this
+     * project is Persian, so this matters.
+     */
+    @GET(ApiPaths.COURSE_DETAIL_TEMPLATE)
+    suspend fun getCourse(@Path("slug") slug: String): CourseDetailDto
+
+    /** The signed-in user's courses. Enveloped: `{ success, courses, count }`. */
+    @GET(ApiPaths.MY_COURSES)
+    suspend fun getMyCourses(): MyCoursesDto
 }

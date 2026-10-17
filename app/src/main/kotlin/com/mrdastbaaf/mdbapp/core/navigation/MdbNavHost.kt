@@ -17,9 +17,8 @@ import com.mrdastbaaf.mdbapp.core.session.SessionState
 import com.mrdastbaaf.mdbapp.features.auth.presentation.login.LoginScreen
 import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpScreen
 import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpViewModel
-import com.mrdastbaaf.mdbapp.features.auth.presentation.session.SessionViewModel
-import com.mrdastbaaf.mdbapp.features.home.presentation.HomeScreen
-import com.mrdastbaaf.mdbapp.features.home.presentation.HomeViewModel
+import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailScreen
+import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailViewModel
 
 /**
  * The navigation graph.
@@ -41,7 +40,7 @@ fun MdbNavHost(
     // LaunchedEffects below, because recreating the NavHost would reset the
     // back stack under the user's feet.
     val startDestination = when (sessionState) {
-        SessionState.SignedIn -> Routes.HOME
+        SessionState.SignedIn -> Routes.MAIN
         SessionState.SignedOut -> Routes.LOGIN
     }
 
@@ -84,29 +83,35 @@ fun MdbNavHost(
             ),
         ) {
             OtpScreen(
-                onSignedIn = { resetTo(Routes.HOME) },
+                onSignedIn = { resetTo(Routes.MAIN) },
                 onChangePhone = { navController.popBackStack() },
             )
         }
 
-        // ── Main ────────────────────────────────────────────────────────────
+        // ── Signed-in shell ─────────────────────────────────────────────────
 
-        composable(Routes.HOME) {
-            val homeViewModel: HomeViewModel = hiltViewModel()
-            val sessionViewModel: SessionViewModel = hiltViewModel()
-
-            val state by homeViewModel.state.collectAsStateWithLifecycle()
-            val isOffline by homeViewModel.isOffline.collectAsStateWithLifecycle()
-            val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
-
-            HomeScreen(
-                state = state,
-                sessionState = sessionState,
-                isOffline = isOffline,
-                onRetry = homeViewModel::refresh,
+        composable(Routes.MAIN) {
+            MainScaffold(
+                onOpenCourse = { slug -> navController.navigate(Routes.courseDetail(slug)) },
                 onSignIn = { navController.navigate(Routes.LOGIN) },
-                onSignOut = sessionViewModel::logout,
-                onRefreshProfile = sessionViewModel::refreshProfile,
+            )
+        }
+
+        composable(
+            route = Routes.COURSE_DETAIL,
+            arguments = listOf(
+                navArgument(CourseDetailViewModel.ARG_SLUG) { type = NavType.StringType },
+            ),
+        ) {
+            val viewModel: CourseDetailViewModel = hiltViewModel()
+            val state by viewModel.state.collectAsStateWithLifecycle()
+            val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
+
+            CourseDetailScreen(
+                state = state,
+                isOffline = isOffline,
+                onBack = { navController.popBackStack() },
+                onRetry = viewModel::refresh,
             )
         }
     }

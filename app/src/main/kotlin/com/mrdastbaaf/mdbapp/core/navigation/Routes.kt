@@ -13,7 +13,13 @@ package com.mrdastbaaf.mdbapp.core.navigation
  */
 object Routes {
 
-    const val HOME = "home"
+    /**
+     * The signed-in shell: a bottom bar hosting the catalogue and the account
+     * panel. The two tabs are *state* inside that screen, not routes — switching
+     * tabs must not grow the back stack, and a course detail screen pushed on
+     * top has to return to the tab the user was on.
+     */
+    const val MAIN = "main"
 
     // ── Auth ────────────────────────────────────────────────────────────────
     const val LOGIN = "login"
@@ -35,8 +41,6 @@ object Routes {
     const val SIGNUP_DETAILS = "signup"
 
     // ── Catalogue ───────────────────────────────────────────────────────────
-    const val CATALOGUE = "catalogue"
-    const val MY_COURSES = "my-courses"
 
     /** `course/{slug}` — the slug is the product `post_name` and may be Persian. */
     const val COURSE_DETAIL = "course/{slug}"
