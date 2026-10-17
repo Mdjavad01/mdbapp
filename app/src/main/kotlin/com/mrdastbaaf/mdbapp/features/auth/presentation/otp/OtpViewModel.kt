@@ -115,7 +115,7 @@ class OtpViewModel @Inject constructor(
                     _events.send(OtpEvent.SignedIn(profile.fullName))
                 }
                 .onFailure { throwable ->
-                    val failure = throwable as? Failure ?: Failure.Unknown(throwable)
+                    val failure = throwable as? Failure ?: Failure.Unknown(cause = throwable)
                     _state.update {
                         it.copy(
                             isSubmitting = false,
@@ -148,7 +148,7 @@ class OtpViewModel @Inject constructor(
                     startResendCountdown()
                 }
                 .onFailure { throwable ->
-                    val failure = throwable as? Failure ?: Failure.Unknown(throwable)
+                    val failure = throwable as? Failure ?: Failure.Unknown(cause = throwable)
                     _state.update {
                         it.copy(
                             isResending = false,

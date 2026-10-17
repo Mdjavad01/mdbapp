@@ -72,7 +72,7 @@ class LoginViewModel @Inject constructor(
                     )
                 }
                 .onFailure { throwable ->
-                    val failure = throwable as? Failure ?: Failure.Unknown(throwable)
+                    val failure = throwable as? Failure ?: Failure.Unknown(cause = throwable)
                     _state.update {
                         it.copy(
                             isSubmitting = false,

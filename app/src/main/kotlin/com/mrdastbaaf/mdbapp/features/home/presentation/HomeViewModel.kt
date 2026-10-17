@@ -64,7 +64,7 @@ class HomeViewModel @Inject constructor(
             versionRepository.fetchServerInfo()
                 .onSuccess { _state.value = UiState.Success(it) }
                 .onFailure { throwable ->
-                    _state.value = UiState.Error(throwable as? Failure ?: Failure.Unknown(throwable))
+                    _state.value = UiState.Error(throwable as? Failure ?: Failure.Unknown(cause = throwable))
                 }
         }
     }
