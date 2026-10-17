@@ -32,7 +32,7 @@ class CourseDetailViewModel @Inject constructor(
     connectivityObserver: ConnectivityObserver,
 ) : ViewModel() {
 
-    private val slug: String = savedStateHandle.get<String>(ARG_SLUG).orEmpty()
+    private val productId: Int = savedStateHandle.get<Int>(ARG_PRODUCT_ID) ?: 0
 
     private val _state = MutableStateFlow<UiState<CourseDetail>>(UiState.Loading)
     val state: StateFlow<UiState<CourseDetail>> = _state.asStateFlow()
@@ -50,7 +50,7 @@ class CourseDetailViewModel @Inject constructor(
     }
 
     fun refresh() {
-        if (slug.isBlank()) {
+        if (productId <= 0) {
             _state.value = UiState.Error(Failure.NotFound())
             return
         }
@@ -58,7 +58,7 @@ class CourseDetailViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = UiState.Loading
 
-            repository.getCourse(slug).fold(
+            repository.getCourse(productId).fold(
                 onSuccess = { _state.value = UiState.Success(it) },
                 onFailure = { throwable ->
                     _state.value = UiState.Error(
@@ -70,7 +70,7 @@ class CourseDetailViewModel @Inject constructor(
     }
 
     companion object {
-        /** Must match the `{slug}` placeholder in `Routes.COURSE_DETAIL`. */
-        const val ARG_SLUG = "slug"
+        /** Must match the `{productId}` placeholder in `Routes.COURSE_DETAIL`. */
+        const val ARG_PRODUCT_ID = "productId"
     }
 }

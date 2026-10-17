@@ -18,8 +18,13 @@ interface CatalogueRepository {
      */
     suspend fun getCourses(): Result<List<Course>>
 
-    /** `GET /courses/{slug}` — the slug is the product `post_name`. */
-    suspend fun getCourse(slug: String): Result<CourseDetail>
+    /**
+     * `GET /courses/by-id/{productId}`.
+     *
+     * The numeric id rather than the slug: the bridge's slug lookup strips
+     * non-ASCII, so it 404s for every Persian `post_name`.
+     */
+    suspend fun getCourse(productId: Int): Result<CourseDetail>
 
     /** `GET /my/courses` — Bearer required; every item comes back `owned = true`. */
     suspend fun getMyCourses(): Result<List<Course>>

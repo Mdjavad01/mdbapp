@@ -99,12 +99,11 @@ interface MdbApi {
     /**
      * One course with its lesson list. Returns a **bare object**.
      *
-     * `slug` is the product `post_name`. Retrofit encodes it, and the bridge
-     * tolerates raw, single- and double-encoded forms — every filename in this
-     * project is Persian, so this matters.
+     * By numeric product id, not slug — see [ApiPaths.COURSE_BY_ID_TEMPLATE] for
+     * why the slug route is unusable for Persian `post_name`s.
      */
-    @GET(ApiPaths.COURSE_DETAIL_TEMPLATE)
-    suspend fun getCourse(@Path("slug") slug: String): CourseDetailDto
+    @GET(ApiPaths.COURSE_BY_ID_TEMPLATE)
+    suspend fun getCourseById(@Path("productId") productId: Int): CourseDetailDto
 
     /** The signed-in user's courses. Enveloped: `{ success, courses, count }`. */
     @GET(ApiPaths.MY_COURSES)

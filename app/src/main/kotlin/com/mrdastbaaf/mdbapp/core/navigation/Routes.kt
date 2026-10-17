@@ -42,9 +42,13 @@ object Routes {
 
     // ── Catalogue ───────────────────────────────────────────────────────────
 
-    /** `course/{slug}` — the slug is the product `post_name` and may be Persian. */
-    const val COURSE_DETAIL = "course/{slug}"
-    fun courseDetail(slug: String): String = "course/${encode(slug)}"
+    /**
+     * `course/{productId}` — the numeric WooCommerce product id, not the slug.
+     * The slug route 404s for Persian `post_name`s server-side; see
+     * [com.mrdastbaaf.mdbapp.core.constants.ApiPaths.COURSE_BY_ID_TEMPLATE].
+     */
+    const val COURSE_DETAIL = "course/{productId}"
+    fun courseDetail(productId: Int): String = "course/$productId"
 
     // ── Player ──────────────────────────────────────────────────────────────
     /** `player/{lessonId}?courseSlug=…` — the slug is carried for the back stack. */

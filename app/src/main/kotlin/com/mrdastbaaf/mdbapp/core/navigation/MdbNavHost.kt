@@ -92,7 +92,9 @@ fun MdbNavHost(
 
         composable(Routes.MAIN) {
             MainScaffold(
-                onOpenCourse = { slug -> navController.navigate(Routes.courseDetail(slug)) },
+                onOpenCourse = { productId ->
+                    navController.navigate(Routes.courseDetail(productId))
+                },
                 onSignIn = { navController.navigate(Routes.LOGIN) },
             )
         }
@@ -100,7 +102,7 @@ fun MdbNavHost(
         composable(
             route = Routes.COURSE_DETAIL,
             arguments = listOf(
-                navArgument(CourseDetailViewModel.ARG_SLUG) { type = NavType.StringType },
+                navArgument(CourseDetailViewModel.ARG_PRODUCT_ID) { type = NavType.IntType },
             ),
         ) {
             val viewModel: CourseDetailViewModel = hiltViewModel()

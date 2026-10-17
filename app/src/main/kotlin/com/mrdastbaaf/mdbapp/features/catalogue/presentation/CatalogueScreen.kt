@@ -61,7 +61,7 @@ fun CatalogueScreen(
     isOffline: Boolean,
     onModeSelected: (CatalogueMode) -> Unit,
     onRetry: () -> Unit,
-    onOpenCourse: (String) -> Unit,
+    onOpenCourse: (Int) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -117,7 +117,13 @@ fun CatalogueScreen(
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     items(items = courses, key = { it.id }) { course ->
-                        CourseCard(course = course, onClick = { onOpenCourse(course.id) })
+                        CourseCard(
+                            course = course,
+                            // No product id means the detail route cannot be
+                            // built; better a card that does not respond than a
+                            // tap that lands on a 404.
+                            onClick = course.productId?.let { id -> { onOpenCourse(id) } },
+                        )
                     }
                 }
             }
@@ -151,11 +157,11 @@ private fun ModeSelector(
 }
 
 @Composable
-private fun CourseCard(course: Course, onClick: () -> Unit) {
+private fun CourseCard(course: Course, onClick: (() -> Unit)?) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(enabled = onClick != null) { onClick?.invoke() },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),

@@ -164,7 +164,7 @@ class CatalogueRepositoryImplTest {
             ),
         )
 
-        val detail = repository.getCourse("gelim-bafi").getOrThrow()
+        val detail = repository.getCourse(123).getOrThrow()
 
         // The server sends 0 here; the list is the only trustworthy count.
         assertEquals(2, detail.lessonCount)
@@ -191,10 +191,36 @@ class CatalogueRepositoryImplTest {
             ),
         )
 
-        val lessons = repository.getCourse("x").getOrThrow().lessons
+        val lessons = repository.getCourse(1).getOrThrow().lessons
 
         assertEquals(MembershipTier.BRONZE, lessons[0].requiredTier)
         assertEquals(MembershipTier.BRONZE, lessons[1].requiredTier)
+    }
+
+    @Test
+    fun `uses the by id route, not the slug route`() = runTest {
+        server.enqueue(jsonResponse(200, """{ "id": "x", "title": "دوره" }"""))
+
+        repository.getCourse(12360)
+
+        // The slug route 404s for every Persian post_name, so this path is the
+        // contract: if it ever changes back, playback and detail break silently.
+        assertEquals("/courses/by-id/12360", server.takeRequest().path)
+    }
+
+    @Test
+    fun `decodes the percent encoded id the bridge returns`() = runTest {
+        // The bridge hands back the post_name already URL-encoded.
+        server.enqueue(
+            jsonResponse(
+                200,
+                """[{ "id": "%D8%AF%D9%88%D8%B1%D9%87-%D8%AC%D8%AA", "title": "دوره" }]""",
+            ),
+        )
+
+        val course = repository.getCourses().getOrThrow().single()
+
+        assertEquals("دوره-جت", course.id)
     }
 
     @Test
@@ -206,7 +232,7 @@ class CatalogueRepositoryImplTest {
             ),
         )
 
-        val result = repository.getCourse("missing")
+        val result = repository.getCourse(999)
 
         assertTrue(result.isFailure)
         val failure = result.exceptionOrNull()

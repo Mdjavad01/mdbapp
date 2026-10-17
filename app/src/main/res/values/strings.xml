@@ -36,6 +36,8 @@
     <string name="error_rate_limited">تعداد درخواست‌ها بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.</string>
 
     <!-- ===================== Auth (phase P3) ===================== -->
+    <string name="auth_brand_name">مستر دستباف</string>
+    <string name="auth_brand_mark">م</string>
     <string name="auth_login_title">ورود به مستر دستباف</string>
     <string name="auth_login_subtitle">برای ورود یا ساخت حساب، شمارهٔ موبایل خود را وارد کنید.</string>
     <string name="auth_login_note">اگر این شماره در مستر دستباف حساب نداشته باشد، هنگام ورود به‌صورت خودکار ساخته می‌شود.</string>

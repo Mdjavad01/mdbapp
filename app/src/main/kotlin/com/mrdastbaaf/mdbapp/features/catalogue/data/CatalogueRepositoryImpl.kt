@@ -12,6 +12,7 @@ import com.mrdastbaaf.mdbapp.features.catalogue.domain.model.CourseDetail
 import com.mrdastbaaf.mdbapp.features.catalogue.domain.model.Lesson
 import com.mrdastbaaf.mdbapp.features.catalogue.domain.repository.CatalogueRepository
 import kotlinx.serialization.json.Json
+import java.net.URLDecoder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,8 +42,8 @@ class CatalogueRepositoryImpl @Inject constructor(
         safeApiCall(json) { api.getCourses() }
             .mapCatching { dtos -> dtos.mapNotNull { it.toDomain() } }
 
-    override suspend fun getCourse(slug: String): Result<CourseDetail> =
-        safeApiCall(json) { api.getCourse(slug) }
+    override suspend fun getCourse(productId: Int): Result<CourseDetail> =
+        safeApiCall(json) { api.getCourseById(productId) }
             .mapCatching { dto ->
                 dto.toDomain() ?: throw Failure.InvalidResponse(
                     "اطلاعات دوره از سرور ناقص بود.",
@@ -119,7 +120,11 @@ class CatalogueRepositoryImpl @Inject constructor(
         freePreviewCount: Int?,
         owned: Boolean?,
     ): Course? {
-        val courseId = id?.takeIf { it.isNotBlank() } ?: return null
+        // The bridge returns the product `post_name` already percent-encoded
+        // (`%d8%af%d9%88%d8%b1%d9%87-…`), not as text. Decoding here keeps the
+        // domain model readable and stops the value being encoded a second time
+        // anywhere downstream.
+        val courseId = id?.takeIf { it.isNotBlank() }?.let(::decodeSlug) ?: return null
         val courseTitle = title?.takeIf { it.isNotBlank() } ?: return null
 
         return Course(
@@ -137,6 +142,10 @@ class CatalogueRepositoryImpl @Inject constructor(
             owned = owned == true,
         )
     }
+
+    /** Tolerant: a malformed escape must not lose the course, so fall back to raw. */
+    private fun decodeSlug(raw: String): String =
+        runCatching { URLDecoder.decode(raw, Charsets.UTF_8.name()) }.getOrDefault(raw)
 
     private fun tierOf(raw: String?): MembershipTier = when (raw?.trim()?.lowercase()) {
         "free" -> MembershipTier.FREE

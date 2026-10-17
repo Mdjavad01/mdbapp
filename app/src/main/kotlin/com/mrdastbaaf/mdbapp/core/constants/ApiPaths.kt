@@ -27,17 +27,18 @@ object ApiPaths {
     const val MY_COURSES = "my/courses"
 
     /**
-     * Retrofit needs a compile-time constant for a parameterised path, so the
-     * template lives here and [courseBySlug] builds the same route for callers
-     * that navigate by string.
+     * The **only** detail route the app uses.
+     *
+     * `courses/{slug}` exists on the server but is unusable for this catalogue.
+     * Every product `post_name` is Persian, and the plugin's slug lookup strips
+     * non-ASCII before searching — so it ends up looking for the literal `---`
+     * and answers 404 with `tried: ["slug=---"]`. Verified against production:
+     * `/courses/{slug}` 404s for every course, `/courses/by-id/{id}` returns 200.
+     *
+     * The numeric id is also the more stable key: it survives a title change,
+     * which a slug does not.
      */
-    const val COURSE_DETAIL_TEMPLATE = "courses/{slug}"
-
-    /** `GET courses/{slug}` — the slug is a product `post_name` and may contain Persian characters. */
-    fun courseBySlug(slug: String): String = "courses/$slug"
-
-    /** `GET courses/by-id/{productId}` — the unambiguous numeric route. */
-    fun courseById(productId: Int): String = "courses/by-id/$productId"
+    const val COURSE_BY_ID_TEMPLATE = "courses/by-id/{productId}"
 
     // ── Membership ──────────────────────────────────────────────────────────
     const val MEMBERSHIP_PLANS = "memberships/plans"
