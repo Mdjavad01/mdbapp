@@ -7,8 +7,9 @@ package com.mrdastbaaf.mdbapp.core.constants
  * which already includes the `/wp-json/mrdastbaaf/v1/` namespace. Retrofit
  * resolves them relative to that base, so none of these start with a slash.
  *
- * Source of truth: `wordpress-plugin/mrdastbaaf-bridge/includes/*.php` in the
- * `mrdb` repository. Do not add a path here that the plugin does not register.
+ * Source of truth: the `includes/` directory of
+ * `wordpress-plugin/mrdastbaaf-bridge` in the `mrdb` repository. Do not add a
+ * path here that the plugin does not register.
  */
 object ApiPaths {
 
