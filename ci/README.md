@@ -2,39 +2,58 @@
 
 ## `github-actions-android.yml`
 
-The Android CI pipeline: assemble → lint → unit tests on every push and pull
-request to `main`.
+The Android CI pipeline. On every push and pull request to `main` it:
+
+1. sets up JDK 17,
+2. restores the Gradle cache,
+3. installs Android SDK platform 35 and build-tools 35.0.0,
+4. runs `./gradlew assembleDevDebug test lint --continue`,
+5. uploads the dev debug APK, plus the test and lint reports.
 
 **It is parked here rather than in `.github/workflows/` because the GitHub token
 used to push this repository does not carry the `workflow` scope.** GitHub
 refuses any commit that creates or updates a file under `.github/workflows/`
-unless the credential has that scope, and the push is rejected wholesale — so
-the file would have blocked the entire phase from landing.
+unless the credential has that scope, and the push is rejected wholesale.
 
-### To activate it, either
+### To activate it
 
-**Option A — via the GitHub web UI (no token change needed):**
+1. Open
+   <https://github.com/Mdjavad01/mdbapp/blob/main/ci/github-actions-android.yml>
+   and click **Raw** (or the copy icon at the top right of the file view).
+2. Copy the whole file.
+3. Open
+   <https://github.com/Mdjavad01/mdbapp/edit/main/.github/workflows/android.yml>
+   — if the file already exists, select everything (`Ctrl+A`) and delete it
+   first.
+4. Paste, then **Commit changes** with the message
+   `ci: build, test and lint on GitHub Actions`.
+5. Open the **Actions** tab → **Android CI** → **Run workflow** (or just push
+   any commit).
 
-1. Open <https://github.com/Mdjavad01/mdbapp/new/main/.github/workflows>
-2. Name the file `android.yml`
-3. Paste the contents of `github-actions-android.yml`
-4. Commit
+### What the pipeline guarantees
 
-**Option B — grant the scope and let the tooling move it:**
+- **Lint is not advisory.** `lint` runs with `abortOnError = true`
+  (`app/build.gradle.kts`), so a lint error fails the job. Nothing in the
+  workflow downgrades it.
+- **Tests are not filtered.** `test` runs every variant's unit tests; no
+  `-x`, no `continue-on-error`, no `--tests` filter.
+- **`--continue` does not weaken the build.** It still fails the job on the
+  first failing task, but lets the remaining tasks run so their HTML reports
+  exist in the artifacts when the build is red.
 
-Regenerate the personal access token with the **`workflow`** scope added
-(<https://github.com/settings/tokens>), then move the file:
+### Artifacts
 
-```bash
-mkdir -p .github/workflows
-git mv ci/github-actions-android.yml .github/workflows/android.yml
-git commit -m "ci: activate the Android pipeline"
-git push
-```
+| Artifact | Contents | When |
+|---|---|---|
+| `mdbapp-dev-debug-apk` | `app-dev-debug.apk` | whenever the APK was produced |
+| `test-reports` | JUnit HTML + XML per variant | always |
+| `lint-reports` | `lint-results-*.html` / `.xml` / `.txt` | always |
 
-### Note on the pipeline
+### Why the SDK step exists
 
-`./gradlew lint` runs with `abortOnError = true` (see `app/build.gradle.kts`), so
-a lint error fails the build rather than producing a warning nobody reads. The
-`lintDevDebug` and `testDevDebugUnitTest` tasks target the `dev` flavour because
-`staging` currently points at a host that does not exist yet.
+The `ubuntu-latest` image ships an Android SDK, but the installed platforms
+change between image releases. `compileSdk = 35` means the build needs
+`platforms;android-35` and `build-tools;35.0.0`; the workflow installs them
+explicitly so the build does not depend on the image's contents that week. The
+step also writes `local.properties` (`sdk.dir`), which is gitignored and
+therefore absent from a fresh checkout.
