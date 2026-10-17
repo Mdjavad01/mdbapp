@@ -163,17 +163,19 @@ The full gap analysis — including the exact request/response shapes the server
 | **P0** | Scaffold: Gradle, flavours, Compose + M3 theme, Vazirmatn, RTL, Hilt, Retrofit stack, error model, secure storage, `FLAG_SECURE` | ✅ |
 | **P1** | Core infrastructure: connectivity tracking, `ApiPaths`, interceptor behaviour | ✅ (folded into P0/P3) |
 | **P3** | Auth: OTP request/verify, Persian-digit normalisation, conditional signup fields, session, logout, profile | ✅ |
-| P2 | Security shell: Kotlin root/emulator detection behind a config flag | next |
-| P4 | Catalogue and course detail: `/courses`, `/courses/{slug}`, `/my/courses`, `/app-ui`, `/app-pages` | |
+| **P4a** | Catalogue and course detail: `/courses`, `/courses/{slug}`, `/my/courses`, bottom-bar shell | ✅ |
+| P4b | Editorial content: `/app-ui`, `/app-pages` | next |
+| P2 | Security shell: Kotlin root/emulator detection behind a config flag | deferred |
 | P5 | Membership and dashboard: plans, status, progress, orders, Jalali dates | |
 | P6 | Shop showcase: `/shop/products`, read-only, opens the website | |
 | P7 | Player: Media3, quality selector, dynamic watermark, background pause, foreground re-validation, resume | blocked on the server (see below) |
 | P8 | Hardening: R8 verification, optional pinning, release AAB | |
 
-> ⚠️ **The P0–P3 code has not been compiled yet.** The machine this was authored
-> on has only JDK 15 and Android SDK platform 33 — too old for AGP 8.x — and its
-> network could not sustain the toolchain downloads (27 KB/s). Run
-> `./gradlew assembleDevDebug` in Android Studio and report anything that fails.
+> **Build and test run in GitHub Actions** (`.github/workflows/android.yml`):
+> JDK 17, Android SDK 35, then `./gradlew assembleDevDebug test lint`. The
+> pipeline is green and uploads the dev debug APK. The machine this is authored
+> on cannot build Android (JDK 15, SDK 33), so CI is the compiler of record —
+> see `ci/README.md`.
 
 ### Blocked on the server
 
