@@ -7,7 +7,6 @@ import com.mrdastbaaf.mdbapp.features.auth.domain.model.MembershipTier
 import com.mrdastbaaf.mdbapp.features.auth.domain.model.SignupName
 import com.mrdastbaaf.mdbapp.features.auth.domain.model.UserRole
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
-import io.mockk.any
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
@@ -129,7 +128,7 @@ class AuthRepositoryImplTest {
 
         val failure = result.exceptionOrNull()
         assertTrue(failure is Failure.RateLimited)
-        assertEquals("لطفاً ۲ دقیقه صبر کرده و مجدداً تلاش فرمایید.", failure?.userMessage)
+        assertEquals("لطفاً ۲ دقیقه صبر کرده و مجدداً تلاش فرمایید.", (failure as Failure).userMessage)
     }
 
     @Test
@@ -277,7 +276,7 @@ class AuthRepositoryImplTest {
 
         val failure = result.exceptionOrNull()
         assertTrue(failure is Failure.Validation)
-        assertTrue(failure?.userMessage?.contains("تلاش باقی‌مانده") == true)
+        assertTrue((failure as Failure).userMessage?.contains("تلاش باقی‌مانده") == true)
         // A wrong code must never be treated as a dead session.
         assertFalse(failure is Failure.Unauthorized)
     }
