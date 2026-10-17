@@ -26,7 +26,10 @@ suspend fun <T> safeApiCall(
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (http: HttpException) {
-        Result.failure(http.toApiException(json))
+        // Convert here, not at the call site: `ApiException` is an implementation
+        // detail of the HTTP layer, and a `Result` that carries one leaks the
+        // status code upwards — the exact thing this function exists to prevent.
+        Result.failure(http.toApiException(json).toFailure())
     } catch (throwable: Throwable) {
         Result.failure(throwable.toFailure())
     }

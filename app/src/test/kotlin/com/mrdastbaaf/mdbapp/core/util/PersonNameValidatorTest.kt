@@ -33,9 +33,14 @@ class PersonNameValidatorTest {
     }
 
     @Test
-    fun `strips digits`() {
+    fun `strips ascii digits but keeps the persian-indic ones the server keeps`() {
         assertEquals("", PersonNameValidator.sanitize("123"))
-        assertEquals("", PersonNameValidator.sanitize("۰۹۱۲"))
+        // U+06F0–U+06F9 lie inside the block the server whitelists
+        // (`preg_replace('/[^\x{0600}-\x{06FF}\x{200C}\s]+/u', ...)`), so the
+        // server stores them. Stripping them here would make the field show
+        // something the account does not contain — the exact divergence this
+        // class exists to prevent.
+        assertEquals("۰۹۱۲", PersonNameValidator.sanitize("۰۹۱۲"))
     }
 
     @Test
