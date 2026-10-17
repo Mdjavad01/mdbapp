@@ -1,4 +1,4 @@
-From 66086709d38ae0e150d9715a130a761914695ac3 Mon Sep 17 00:00:00 2001
+From 9437184d6f31567a330a29494863ca7e91abe035 Mon Sep 17 00:00:00 2001
 From: Mdjavad2nd prf <md.javad01@gmail.com>
 Date: Sat, 17 Oct 2026 01:47:19 +0330
 Subject: [PATCH 5/5] feat(api): restrict /auth/health, add GET
@@ -500,11 +500,11 @@ index a6e3d3a..6bce0dd 100644
  
          return rest_ensure_response(array('orders' => $list));
 diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php
-index 420c9ac..e363c3c 100644
+index a1c0290..514f2a4 100644
 --- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php
 +++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php
-@@ -41,6 +41,31 @@ class MrDastbaaf_Payment_Controller {
-             'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
+@@ -64,6 +64,31 @@ class MrDastbaaf_Payment_Controller {
+             'permission_callback' => array($this, 'check_receipt_image_access'),
          ));
  
 +        /**
@@ -535,7 +535,7 @@ index 420c9ac..e363c3c 100644
          /**
           * v1.2.0: محرک دستی/سرور ریکنسیلیشن — برای هاست‌هایی که WP-Cron تزویرشان
           * غیرقابل‌اتکاست (مثلاً crontab سیستم با curl). توکن از آپشن
-@@ -70,6 +95,147 @@ class MrDastbaaf_Payment_Controller {
+@@ -93,6 +118,147 @@ class MrDastbaaf_Payment_Controller {
          return hash_equals($stored, $provided);
      }
  

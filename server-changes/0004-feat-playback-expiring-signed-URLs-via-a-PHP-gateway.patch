@@ -1,4 +1,4 @@
-From da723fa4f172f203f41981b09d3cfd1cab443144 Mon Sep 17 00:00:00 2001
+From 83754509a3350ab0f9cea9fb7deb8f2e0ac2e01d Mon Sep 17 00:00:00 2001
 From: Mdjavad2nd prf <md.javad01@gmail.com>
 Date: Sat, 17 Oct 2026 00:27:56 +0330
 Subject: [PATCH 4/5] feat(playback): expiring signed URLs via a PHP gateway
@@ -1838,7 +1838,7 @@ index 0000000..0ad58e6
 +    }
 +}
 diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
-index 8d26145..0610934 100644
+index 4b2fdf9..75875ee 100644
 --- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
 +++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
 @@ -168,6 +168,11 @@ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-membership-helper.php';

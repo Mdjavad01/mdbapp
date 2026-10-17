@@ -1,4 +1,4 @@
-From 891dab4fbbb5ddd485270d690556e019a57db950 Mon Sep 17 00:00:00 2001
+From e5cd801cf9b80217b121cd60516366bd69679c32 Mon Sep 17 00:00:00 2001
 From: Mdjavad2nd prf <md.javad01@gmail.com>
 Date: Fri, 16 Oct 2026 19:46:00 +0330
 Subject: [PATCH 1/5] feat(auth): multi-device Bearer tokens (v1.8.0, schema
@@ -61,10 +61,10 @@ Docs: docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md
  .../includes/class-auth-controller.php        | 364 ++++++++-
  .../includes/class-database.php               |  37 +
  .../includes/class-token-store.php            | 616 ++++++++++++++++
- .../mrdastbaaf-bridge/mrdastbaaf-bridge.php   |  41 +-
+ .../mrdastbaaf-bridge/mrdastbaaf-bridge.php   |  42 +-
  .../mrdastbaaf-bridge/tests/php/run-all.sh    |  70 ++
  .../tests/php/test-token-store.php            | 693 ++++++++++++++++++
- 7 files changed, 1989 insertions(+), 31 deletions(-)
+ 7 files changed, 1990 insertions(+), 31 deletions(-)
  create mode 100644 docs/PLUGIN_v1.8.0_MULTI_DEVICE_TOKENS.md
  create mode 100644 wordpress-plugin/mrdastbaaf-bridge/includes/class-token-store.php
  create mode 100644 wordpress-plugin/mrdastbaaf-bridge/tests/php/run-all.sh
@@ -1383,14 +1383,14 @@ index 0000000..1554e7f
 +    }
 +}
 diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
-index 6fa136a..2a03213 100644
+index 33387a3..35dc43f 100644
 --- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
 +++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
 @@ -3,7 +3,7 @@
   * Plugin Name: Mr. Dastbaaf PWA Bridge (پل ارتباطی مستر دستباف)
   * Plugin URI: https://mrdastbaaf.com
   * Description: افزونه اختصاصی ایجاد اندپوینت‌های REST API ایمن برای ارتباط وب‌اپلیکیشن PWA مستر دستباف با وردپرس، اوتینو، نیاس کورس و درگاه زیبال.
-- * Version: 1.7.13
+- * Version: 1.7.15
 + * Version: 1.8.0
   * Author: تیم فنی مستر دستباف
   * Author URI: https://mrdastbaaf.com
@@ -1399,12 +1399,12 @@ index 6fa136a..2a03213 100644
      exit; // Exit if accessed directly
  }
  
--define('MRDASTBAAF_BRIDGE_VERSION', '1.7.13');
+-define('MRDASTBAAF_BRIDGE_VERSION', '1.7.15');
 +define('MRDASTBAAF_BRIDGE_VERSION', '1.8.0');
  
  /**
   * v1.2.0: نسخهٔ افزونه و ثابت بالا باید همیشه همگام باشند (باگ قبلی همگام‌نبودن تکرار نشود).
-@@ -130,7 +130,7 @@ define('MRDASTBAAF_BRIDGE_VERSION', '1.7.13');
+@@ -130,7 +130,7 @@ define('MRDASTBAAF_BRIDGE_VERSION', '1.7.15');
   *   (courses: منبع billing_phone حساب هم اضافه شد) و woo-bridge (resolve کاربر
   *   سفارش) به‌کار رفت؛ فال‌بک LIKE روی هستهٔ ۱۰ رقمی فرم‌های «کثیف» را می‌پوشاند.
   */
@@ -1423,19 +1423,19 @@ index 6fa136a..2a03213 100644
  require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-auth-controller.php';
  require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-courses-controller.php';
  // v1.4.0: فروشگاه — محصولات فیزیکی دست‌ساز (پیش از کنترلر صفحات ادمین تا
-@@ -694,6 +697,9 @@ function mrdastbaaf_bridge_activate() {
+@@ -776,6 +779,9 @@ function mrdastbaaf_bridge_activate() {
  
-     // v1.7.11: کرون sweep صف OTP (خودترمیمی دیسپچ)
-     mrdastbaaf_bridge_schedule_otp_sweep_cron();
+     // v1.5.7: کرون روزانهٔ پاکسازی تصاویر فیش‌های بررسی‌شده
+     mrdastbaaf_bridge_schedule_receipt_purge_cron();
 +
 +    // v1.8.0: کرون روزانهٔ پاک‌سازی نشست‌های باطل/منقضی
 +    mrdastbaaf_bridge_schedule_token_prune_cron();
  }
  register_activation_hook(__FILE__, 'mrdastbaaf_bridge_activate');
  
-@@ -755,6 +761,9 @@ function mrdastbaaf_bridge_maybe_upgrade_db() {
-     // آپشن cron کش‌شده می‌خواند — صفر کوئری اضافه در بارگذاری‌های عادی)
-     mrdastbaaf_bridge_schedule_otp_sweep_cron();
+@@ -841,6 +847,9 @@ function mrdastbaaf_bridge_maybe_upgrade_db() {
+     // ارتقایافته هوک فعال‌سازی را دوباره اجرا نمی‌کنند — اینجا idempotent هستیم)
+     mrdastbaaf_bridge_schedule_receipt_purge_cron();
  
 +    // v1.8.0: اطمینان از موجود بودن کرون روزانهٔ پاک‌سازی توکن‌ها
 +    mrdastbaaf_bridge_schedule_token_prune_cron();
@@ -1443,7 +1443,7 @@ index 6fa136a..2a03213 100644
      // v1.2.0: توکن اختصاصی اندپوینت GET /cron/reconcile — یک‌بار در نخستین ارتقا
      // تولید می‌شود؛ هرگز بازتاب داده نمی‌شود و فقط مقدار ثابت hash_equals مقایسه می‌کند.
      if ('' === (string) get_option('mrdastbaaf_cron_token', '')) {
-@@ -862,6 +871,30 @@ function mrdastbaaf_bridge_schedule_otp_sweep_cron() {
+@@ -963,6 +972,30 @@ function mrdastbaaf_bridge_schedule_otp_sweep_cron() {
      }
  }
  
@@ -1474,10 +1474,11 @@ index 6fa136a..2a03213 100644
  /**
   * v1.2.0: پاک‌سازی زمان‌بندی کرون هنگام غیرفعال‌سازی افزونه (رویداد جدید +
   * رویداد روزانهٔ قدیمی، برای پاک‌سازی کامل مهاجرت‌های ناتمام)
-@@ -871,5 +904,7 @@ function mrdastbaaf_bridge_deactivate() {
-     wp_clear_scheduled_hook('mrdastbaaf_daily_reconciliation');
+@@ -973,5 +1006,8 @@ function mrdastbaaf_bridge_deactivate() {
      wp_clear_scheduled_hook('mrdastbaaf_otp_async_send');
      wp_clear_scheduled_hook('mrdastbaaf_otp_sweep');
+     wp_clear_scheduled_hook('mrdastbaaf_receipt_image_purge');
++
 +    // v1.8.0: پاک‌سازی کرون روزانهٔ توکن‌ها
 +    wp_clear_scheduled_hook('mrdastbaaf_tokens_prune');
  }

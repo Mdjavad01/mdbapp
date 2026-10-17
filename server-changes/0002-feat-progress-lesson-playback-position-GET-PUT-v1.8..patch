@@ -1,4 +1,4 @@
-From 849c83d4a43118566d1178416a5bbe7aadfa5079 Mon Sep 17 00:00:00 2001
+From be930a3a50a80e6febc6d49fdf0c62ccfc3c8de5 Mon Sep 17 00:00:00 2001
 From: Mdjavad2nd prf <md.javad01@gmail.com>
 Date: Fri, 16 Oct 2026 19:54:20 +0330
 Subject: [PATCH 2/5] feat(progress): lesson playback position GET/PUT (v1.8.0,
@@ -733,7 +733,7 @@ index 8c9ce98..a6e3d3a 100644
       * ذخیرهٔ پیشرفت — replace semantics + اعتبارسنجی سخت
       *
 diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
-index 2a03213..8d26145 100644
+index 35dc43f..4b2fdf9 100644
 --- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
 +++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
 @@ -130,7 +130,7 @@ define('MRDASTBAAF_BRIDGE_VERSION', '1.8.0');
@@ -755,7 +755,7 @@ index 2a03213..8d26145 100644
  require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-payment-controller.php';
  require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-admin-controller.php';
  require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-settings-controller.php';
-@@ -511,6 +514,10 @@ class MrDastbaaf_Bridge_Plugin {
+@@ -590,6 +593,10 @@ class MrDastbaaf_Bridge_Plugin {
          $memberships_controller = new MrDastbaaf_Memberships_Controller();
          $memberships_controller->register_routes();
  

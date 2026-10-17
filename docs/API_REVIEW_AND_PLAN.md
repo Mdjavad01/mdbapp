@@ -6,7 +6,7 @@ Revision 1 (which assumed a token-refresh endpoint was needed) is superseded.
 |                 |                                                                                                |
 | --------------- | ---------------------------------------------------------------------------------------------- |
 | Backend repo    | `soldiermr98-commits/mrdb` @ `main`, cloned read-only to `D:\work-webs\0 Build\mrdb-reference` |
-| Source of truth | `wordpress-plugin/mrdastbaaf-bridge/includes/*.php` (plugin v1.7.13)                           |
+| Source of truth | `wordpress-plugin/mrdastbaaf-bridge/includes/*.php` (plugin v1.7.15)                           |
 | Base URL        | `https://mrdastbaaf.com/wp-json/mrdastbaaf/v1`                                                 |
 | Status          | **Discovery complete. No app code written yet.**                                               |
 
@@ -378,7 +378,7 @@ Errors: `not_found` 404 (unknown/inactive record, or the underlying WP page is m
 ```jsonc
 {
   "pwa_version": "1.5.6",
-  "plugin_version": "1.7.13",
+  "plugin_version": "1.7.15",
   "db_version": "1.5.1",
   "server_time": "2026-10-16 12:00:00",
   "timestamp": 1760625600,

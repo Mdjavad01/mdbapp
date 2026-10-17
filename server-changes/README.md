@@ -3,8 +3,15 @@
 Five independent, reviewable changes to the WordPress bridge
 (`wordpress-plugin/mrdastbaaf-bridge/`) that the Android app depends on.
 
-Base: `70a04b1` (upstream `main`, plugin **1.7.13**, schema **1.5.1**)
+Base: `0e310d4` (upstream `main`, plugin **1.7.15**, schema **1.5.1**)
 Target: plugin **1.8.0**, schema **1.7.0**
+
+> Rebased onto `0e310d4` (plugin 1.7.14 + 1.7.15). The earlier series was cut
+> from `70a04b1` (1.7.13) and stopped applying once upstream landed the
+> content-hash WSOD fix and the receipt-image work. Both are now part of the
+> base and are preserved: the two conflicts were "both sides added a line"
+> (version constant, cron hooks, route registrations), resolved by keeping
+> both. 1.7.14 and 1.7.15 do not touch `/version` or `/auth/*`.
 
 They are stacked — each applies on top of the previous one — but each is a
 separate commit with its own tests and its own contract document, so they can
@@ -21,9 +28,10 @@ which is permission-free and applies directly.
 
 The series has been verified end to end:
 
-- applies cleanly to a pristine checkout of upstream `main`, in order
-- reproduces the branch tree **byte-for-byte** (tree hash `78de9a6`)
-- the patched tree lints clean and passes all **324** assertions
+- applies cleanly to a pristine checkout of `0e310d4`, in order
+- reproduces the branch tree **byte-for-byte** (tree hash `0b919e5`)
+- the patched tree lints clean and passes all **324** assertions, plus the
+  **20** assertions of upstream's `test-receipt-image.php`
 
 To turn these into PRs, fork the repo yourself and push the branches — they
 exist in the working copy at `D:\work-webs\0 Build\mrdb-server`:

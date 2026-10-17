@@ -10,7 +10,7 @@ Kotlin · Jetpack Compose · Material 3 · Media3 · Hilt · Retrofit/OkHttp · 
 
 ## What this app is
 
-The backend is an existing, live WordPress installation running the **`mrdastbaaf-bridge`** plugin (v1.7.13), which exposes a REST API under `mrdastbaaf/v1`. The app is a **consumer** of that API and nothing more:
+The backend is an existing, live WordPress installation running the **`mrdastbaaf-bridge`** plugin (v1.7.15), which exposes a REST API under `mrdastbaaf/v1`. The app is a **consumer** of that API and nothing more:
 
 - It never invents an endpoint. Every path in `core/constants/ApiPaths.kt` maps to a route the plugin registers.
 - It **never decides access locally**. Whether a lesson can be played is answered by `POST /lessons/{id}/playback-ticket`, which returns 401/403 with a Persian message the app displays verbatim.
