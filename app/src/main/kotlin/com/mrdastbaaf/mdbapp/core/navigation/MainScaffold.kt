@@ -46,7 +46,7 @@ enum class MainTab { COURSES, ACCOUNT }
  */
 @Composable
 fun MainScaffold(
-    onOpenCourse: (String) -> Unit,
+    onOpenCourse: (Int) -> Unit,
     onSignIn: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(MainTab.COURSES) }
@@ -84,7 +84,7 @@ fun MainScaffold(
 }
 
 @Composable
-private fun CatalogueRoute(onOpenCourse: (String) -> Unit) {
+private fun CatalogueRoute(onOpenCourse: (Int) -> Unit) {
     val viewModel: CatalogueViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()

@@ -76,6 +76,16 @@ class OtpViewModel @Inject constructor(
         // only the digits, so pasting "کد: ۱۲۳۴۵۶" still works.
         val digitsOnly = PersianFormat.toAsciiDigits(raw).filter { it.isDigit() }.take(OTP_LENGTH)
         _state.update { it.copy(code = digitsOnly, errorMessage = null) }
+
+        // The sixth digit is the whole input — whether it was typed, pasted, or
+        // filled in by the keyboard's OTP suggestion — so submit without making
+        // the user reach for the button. Skipped for a new account: the name
+        // fields still have to be completed, and auto-submitting would just
+        // flash a validation error at them.
+        val current = _state.value
+        if (digitsOnly.length == OTP_LENGTH && !current.isNewAccount && !current.isSubmitting) {
+            onSubmit()
+        }
     }
 
     fun onFirstNameChange(raw: String) {

@@ -23,12 +23,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.semantics.contentType
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -88,7 +84,6 @@ fun OtpScreen(
     )
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun OtpContent(
     state: OtpUiState,
@@ -151,12 +146,7 @@ private fun OtpContent(
             OutlinedTextField(
                 value = PersianFormat.toPersianDigits(state.code),
                 onValueChange = onCodeChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // Lets Android offer the code from the SMS notification
-                    // instead of making the user switch apps to read it. Works
-                    // on Android 11+; on older devices the hint is inert.
-                    .semantics { contentType = ContentType.SmsOtpCode },
+                modifier = Modifier.fillMaxWidth(),
                 label = { Text(stringResource(R.string.auth_otp_label)) },
                 placeholder = { Text(stringResource(R.string.auth_otp_hint)) },
                 singleLine = true,
