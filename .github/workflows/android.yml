@@ -16,39 +16,58 @@ permissions:
 
 jobs:
   verify:
-    name: Build · Lint · Test
+    name: Build · Test · Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # JDK 17 is required by AGP 8.x. The Gradle cache below is keyed on the
-      # wrapper properties so a Gradle upgrade invalidates it correctly.
+      # AGP 8.x requires JDK 17.
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
+      # Caches ~/.gradle/caches, ~/.gradle/wrapper and the configuration cache,
+      # keyed on the build files, so a dependency change invalidates it.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      # The runner image ships an SDK, but not necessarily platform 35 /
+      # build-tools 35, which this project compiles against. Installing them
+      # explicitly keeps the build reproducible instead of depending on whatever
+      # the image happens to contain that week.
+      - name: Install Android SDK 35
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "Android SDK root: $SDK_ROOT"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "sdk.dir=$SDK_ROOT" > local.properties
+
+      # `gradlew` is committed as mode 100644 (Windows checkout), so the
+      # executable bit has to be set before it can run on Linux.
       - name: Make the wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Assemble dev debug
-        run: ./gradlew assembleDevDebug --stacktrace
+      # One invocation, exactly as specified. `--continue` does not weaken
+      # anything: it still fails the job on the first failing task, but lets
+      # test and lint run so their reports exist when the build is red.
+      - name: Build, test and lint
+        run: ./gradlew assembleDevDebug test lint --continue --stacktrace
 
-      # `lint` is configured with abortOnError = true, so a lint error fails CI.
-      - name: Android Lint
-        run: ./gradlew lintDevDebug --stacktrace
-
-      - name: Unit tests
-        run: ./gradlew testDevDebugUnitTest --stacktrace
+      - name: Upload dev debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdbapp-dev-debug-apk
+          path: app/build/outputs/apk/dev/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload test reports
         if: always()
@@ -57,6 +76,18 @@ jobs:
           name: test-reports
           path: |
             app/build/reports/tests/
-            app/build/reports/lint-results-*.html
+            app/build/test-results/
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 14
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: |
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
+            app/build/reports/lint-results-*.txt
+          if-no-files-found: ignore
+          retention-days: 14
