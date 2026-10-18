@@ -11,9 +11,15 @@ import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.VerifyOtpResponse
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDetailDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.MyCoursesDto
+import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.LessonProgressDto
+import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.LessonProgressRequest
+import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackDto
+import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackRequestDto
+import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackTicketDto
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 
 /**
@@ -108,4 +114,39 @@ interface MdbApi {
     /** The signed-in user's courses. Enveloped: `{ success, courses, count }`. */
     @GET(ApiPaths.MY_COURSES)
     suspend fun getMyCourses(): MyCoursesDto
+
+    // ── Playback ────────────────────────────────────────────────────────────
+
+    /**
+     * Step 1 of the handshake: the access decision, plus a 15-minute ticket.
+     *
+     * 403 carries the Persian reason the user may not watch, and that text is
+     * shown verbatim. 429 when the ticket quota (30/hour) is exhausted.
+     */
+    @POST(ApiPaths.PLAYBACK_TICKET_TEMPLATE)
+    suspend fun requestPlaybackTicket(@Path("lessonId") lessonId: String): PlaybackTicketDto
+
+    /**
+     * Step 2: exchange the ticket for the media URL(s).
+     *
+     * Fails closed if the ticket does not match both the user and the lesson.
+     */
+    @POST(ApiPaths.PLAYBACK_TEMPLATE)
+    suspend fun resolvePlayback(
+        @Path("lessonId") lessonId: String,
+        @Body body: PlaybackRequestDto,
+    ): PlaybackDto
+
+    /**
+     * Resume point. 404 on a server without the v1.8.0 patch — callers treat
+     * that as "start from the beginning".
+     */
+    @GET(ApiPaths.LESSON_PROGRESS_TEMPLATE)
+    suspend fun getLessonProgress(@Path("lessonId") lessonId: String): LessonProgressDto
+
+    @PUT(ApiPaths.LESSON_PROGRESS_TEMPLATE)
+    suspend fun saveLessonProgress(
+        @Path("lessonId") lessonId: String,
+        @Body body: LessonProgressRequest,
+    ): LessonProgressDto
 }

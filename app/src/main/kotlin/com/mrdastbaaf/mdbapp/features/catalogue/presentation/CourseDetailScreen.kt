@@ -1,6 +1,7 @@
 package com.mrdastbaaf.mdbapp.features.catalogue.presentation
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -68,6 +70,7 @@ fun CourseDetailScreen(
     isOffline: Boolean,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onPlayLesson: (String) -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -162,6 +165,15 @@ fun CourseDetailScreen(
                         index = index + 1,
                         lesson = lesson,
                         courseOwned = detail.course.owned,
+                        // The lock is advisory: tapping an unlocked lesson opens
+                        // the player, and the server still decides access when
+                        // the ticket is requested. A locked row has no tap, so
+                        // it cannot lead to a refusal.
+                        onClick = if (detail.course.owned || lesson.isFreePreview) {
+                            { onPlayLesson(lesson.id) }
+                        } else {
+                            null
+                        },
                     )
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant,
@@ -265,12 +277,18 @@ private fun CourseHeader(detail: CourseDetail) {
 }
 
 @Composable
-private fun LessonRow(index: Int, lesson: Lesson, courseOwned: Boolean) {
+private fun LessonRow(
+    index: Int,
+    lesson: Lesson,
+    courseOwned: Boolean,
+    onClick: (() -> Unit)?,
+) {
     val locked = !courseOwned && !lesson.isFreePreview
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
             .padding(horizontal = Spacing.md, vertical = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -324,6 +342,12 @@ private fun LessonRow(index: Int, lesson: Lesson, courseOwned: Boolean) {
                 imageVector = Icons.Filled.Lock,
                 contentDescription = stringResource(R.string.course_detail_locked),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Filled.PlayArrow,
+                contentDescription = stringResource(R.string.player_title),
+                tint = MaterialTheme.colorScheme.primary,
             )
         }
     }
@@ -390,6 +414,7 @@ private fun CourseDetailPreview() {
             isOffline = false,
             onBack = {},
             onRetry = {},
+            onPlayLesson = {},
         )
     }
 }

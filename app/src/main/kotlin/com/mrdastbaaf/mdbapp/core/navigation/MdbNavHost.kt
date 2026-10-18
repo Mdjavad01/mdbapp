@@ -19,6 +19,8 @@ import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpScreen
 import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpViewModel
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailScreen
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailViewModel
+import com.mrdastbaaf.mdbapp.features.player.presentation.PlayerScreen
+import com.mrdastbaaf.mdbapp.features.player.presentation.PlayerViewModel
 
 /**
  * The navigation graph.
@@ -114,7 +116,28 @@ fun MdbNavHost(
                 isOffline = isOffline,
                 onBack = { navController.popBackStack() },
                 onRetry = viewModel::refresh,
+                onPlayLesson = { lessonId ->
+                    navController.navigate(Routes.player(lessonId))
+                },
             )
+        }
+
+        // ── Player ──────────────────────────────────────────────────────────
+
+        composable(
+            route = Routes.PLAYER,
+            arguments = listOf(
+                navArgument(PlayerViewModel.ARG_LESSON_ID) { type = NavType.StringType },
+                navArgument(ARG_COURSE_SLUG) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            ),
+        ) {
+            PlayerScreen(onBack = { navController.popBackStack() })
         }
     }
 }
+
+/** Declared by `Routes.PLAYER`; carried so the back stack can name the course. */
+private const val ARG_COURSE_SLUG = "courseSlug"

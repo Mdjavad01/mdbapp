@@ -120,4 +120,8 @@
     <string name="course_detail_locked">نیازمند اشتراک</string>
     <string name="course_detail_access_note">برای دسترسی به همهٔ جلسات این دوره، اشتراک فعال لازم است.</string>
     <string name="course_detail_no_lessons">برای این دوره جلسه‌ای ثبت نشده است.</string>
+
+    <!-- ===================== Player ===================== -->
+    <string name="player_title">پخش جلسه</string>
+    <string name="player_error_generic">پخش این جلسه ممکن نشد. لطفاً دوباره تلاش کنید.</string>
 </resources>

@@ -50,10 +50,17 @@ object ApiPaths {
 
     // ── Playback ────────────────────────────────────────────────────────────
     /** Step 1: server-side access check; returns a 15-minute ticket plus the watermark identity. */
-    fun playbackTicket(lessonId: String): String = "lessons/$lessonId/playback-ticket"
+    const val PLAYBACK_TICKET_TEMPLATE = "lessons/{lessonId}/playback-ticket"
 
     /** Step 2: exchanges a valid ticket for the video URL(s). */
-    fun playback(lessonId: String): String = "lessons/$lessonId/playback"
+    const val PLAYBACK_TEMPLATE = "lessons/{lessonId}/playback"
+
+    /**
+     * Playback position. Added by the v1.8.0 server patch, so it 404s on a
+     * server that has not taken the patch — the player treats that as "no
+     * resume point" rather than an error.
+     */
+    const val LESSON_PROGRESS_TEMPLATE = "lessons/{lessonId}/progress"
 
     // ── Content ─────────────────────────────────────────────────────────────
     const val APP_UI = "app-ui"
