@@ -121,6 +121,32 @@
     <string name="course_detail_access_note">برای دسترسی به همهٔ جلسات این دوره، اشتراک فعال لازم است.</string>
     <string name="course_detail_no_lessons">برای این دوره جلسه‌ای ثبت نشده است.</string>
 
+    <!-- ===================== Dashboard ===================== -->
+    <string name="dashboard_plans_title">پلن‌های عضویت</string>
+    <string name="dashboard_plans_empty">در حال حاضر پلنی برای نمایش وجود ندارد.</string>
+    <string name="dashboard_orders_title">سفارش‌های من</string>
+    <string name="dashboard_orders_empty">هنوز سفارشی ثبت نکرده‌اید.</string>
+    <string name="dashboard_membership_active">اشتراک %1$s</string>
+    <string name="dashboard_membership_days">%1$s روز باقی‌مانده</string>
+    <string name="dashboard_membership_none">اشتراک فعالی ندارید</string>
+    <string name="dashboard_membership_none_hint">با خرید اشتراک، به همهٔ جلسه‌های دوره‌ها دسترسی پیدا می‌کنید.</string>
+    <string name="dashboard_plan_popular">پیشنهاد ویژه</string>
+    <string name="dashboard_plan_buy">خرید در سایت</string>
+    <string name="dashboard_appearance_title">ظاهر برنامه</string>
+    <string name="theme_system">سیستمی</string>
+    <string name="theme_light">روشن</string>
+    <string name="theme_dark">تیره</string>
+    <string name="dashboard_sign_out">خروج از حساب کاربری</string>
+
+    <string name="order_status_pending">در انتظار پرداخت</string>
+    <string name="order_status_processing">در حال پردازش</string>
+    <string name="order_status_verifying">در حال بررسی</string>
+    <string name="order_status_completed">پرداخت‌شده</string>
+    <string name="order_status_failed">ناموفق</string>
+    <string name="order_status_rejected">رد شده</string>
+    <string name="order_status_cancelled">لغو شده</string>
+    <string name="order_status_unknown">نامشخص</string>
+
     <!-- ===================== Player ===================== -->
     <string name="player_title">پخش جلسه</string>
     <string name="player_error_generic">پخش این جلسه ممکن نشد. لطفاً دوباره تلاش کنید.</string>

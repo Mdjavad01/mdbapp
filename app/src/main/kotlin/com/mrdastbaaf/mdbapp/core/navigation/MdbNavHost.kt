@@ -97,7 +97,7 @@ fun MdbNavHost(
                 onOpenCourse = { productId ->
                     navController.navigate(Routes.courseDetail(productId))
                 },
-                onSignIn = { navController.navigate(Routes.LOGIN) },
+                onSignedOut = { resetTo(Routes.LOGIN) },
             )
         }
 

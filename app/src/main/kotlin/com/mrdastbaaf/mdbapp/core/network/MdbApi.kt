@@ -8,6 +8,8 @@ import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.RequestOtpResponse
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.UserProfileDto
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.VerifyOtpRequest
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.VerifyOtpResponse
+import com.mrdastbaaf.mdbapp.features.account.data.remote.dto.MembershipPlanDto
+import com.mrdastbaaf.mdbapp.features.account.data.remote.dto.OrdersDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDetailDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.MyCoursesDto
@@ -114,6 +116,24 @@ interface MdbApi {
     /** The signed-in user's courses. Enveloped: `{ success, courses, count }`. */
     @GET(ApiPaths.MY_COURSES)
     suspend fun getMyCourses(): MyCoursesDto
+
+    // ── Account ─────────────────────────────────────────────────────────────
+
+    /**
+     * Purchasable plans. **Bare array**, cached 5 minutes server-side.
+     *
+     * Subscriptions are sold on the website; this call only renders them, and
+     * the CTA opens the browser.
+     */
+    @GET(ApiPaths.MEMBERSHIP_PLANS)
+    suspend fun getMembershipPlans(): List<MembershipPlanDto>
+
+    /**
+     * The user's purchases. Enveloped, and unusually **without** a `success`
+     * key — the array is the whole contract.
+     */
+    @GET(ApiPaths.MY_ORDERS)
+    suspend fun getMyOrders(): OrdersDto
 
     // ── Playback ────────────────────────────────────────────────────────────
 

@@ -12,19 +12,24 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mrdastbaaf.mdbapp.R
+import com.mrdastbaaf.mdbapp.core.settings.ThemeViewModel
+import com.mrdastbaaf.mdbapp.core.util.ExternalLinks
+import com.mrdastbaaf.mdbapp.features.account.presentation.DashboardScreen
+import com.mrdastbaaf.mdbapp.features.account.presentation.DashboardViewModel
 import com.mrdastbaaf.mdbapp.features.auth.presentation.session.SessionViewModel
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CatalogueScreen
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CatalogueViewModel
-import com.mrdastbaaf.mdbapp.features.home.presentation.HomeScreen
 import com.mrdastbaaf.mdbapp.features.home.presentation.HomeViewModel
 
 /** The two destinations reachable from the bottom bar. */
@@ -47,7 +52,7 @@ enum class MainTab { COURSES, ACCOUNT }
 @Composable
 fun MainScaffold(
     onOpenCourse: (Int) -> Unit,
-    onSignIn: () -> Unit,
+    onSignedOut: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(MainTab.COURSES) }
 
@@ -77,7 +82,7 @@ fun MainScaffold(
         Box(modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())) {
             when (tab) {
                 MainTab.COURSES -> CatalogueRoute(onOpenCourse = onOpenCourse)
-                MainTab.ACCOUNT -> AccountRoute(onSignIn = onSignIn)
+                MainTab.ACCOUNT -> AccountRoute(onSignedOut = onSignedOut)
             }
         }
     }
@@ -99,21 +104,46 @@ private fun CatalogueRoute(onOpenCourse: (Int) -> Unit) {
 }
 
 @Composable
-private fun AccountRoute(onSignIn: () -> Unit) {
+private fun AccountRoute(onSignedOut: () -> Unit) {
+    val dashboardViewModel: DashboardViewModel = hiltViewModel()
     val homeViewModel: HomeViewModel = hiltViewModel()
     val sessionViewModel: SessionViewModel = hiltViewModel()
+    val themeViewModel: ThemeViewModel = hiltViewModel()
 
-    val state by homeViewModel.state.collectAsStateWithLifecycle()
+    val profile by dashboardViewModel.profile.collectAsStateWithLifecycle()
+    val plans by dashboardViewModel.plans.collectAsStateWithLifecycle()
+    val orders by dashboardViewModel.orders.collectAsStateWithLifecycle()
+    val serverInfo by homeViewModel.state.collectAsStateWithLifecycle()
     val isOffline by homeViewModel.isOffline.collectAsStateWithLifecycle()
+    val themePreference by themeViewModel.preference.collectAsStateWithLifecycle()
     val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
 
-    HomeScreen(
-        state = state,
-        sessionState = sessionState,
+    val context = LocalContext.current
+
+    // An explicit sign-out (or a token revoked elsewhere) must leave this tab,
+    // not sit on a dashboard for a session that no longer exists.
+    LaunchedEffect(sessionState.isSignedIn) {
+        if (!sessionState.isSignedIn) onSignedOut()
+    }
+
+    DashboardScreen(
+        profile = profile,
+        plans = plans,
+        orders = orders,
+        serverInfo = serverInfo,
+        themePreference = themePreference,
         isOffline = isOffline,
-        onRetry = homeViewModel::refresh,
-        onSignIn = onSignIn,
+        onRefresh = {
+            dashboardViewModel.refresh()
+            homeViewModel.refresh()
+            sessionViewModel.refreshProfile()
+        },
+        onRetryPlans = dashboardViewModel::refresh,
+        onRetryOrders = dashboardViewModel::refresh,
+        onThemeSelected = themeViewModel::select,
         onSignOut = sessionViewModel::logout,
-        onRefreshProfile = sessionViewModel::refreshProfile,
+        onOpenMembership = {
+            ExternalLinks.open(context, ExternalLinks.MEMBERSHIP_URL)
+        },
     )
 }
