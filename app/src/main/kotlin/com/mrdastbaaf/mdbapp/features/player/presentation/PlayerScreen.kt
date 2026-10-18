@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -18,13 +21,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -114,12 +120,49 @@ fun PlayerScreen(
                         },
                     )
 
-                    is PlayerUiState.Ready -> VideoSurface(
-                        session = current.session,
-                        startPositionMillis = current.startPositionMillis,
-                        onProgress = viewModel::onPositionChanged,
-                        onStopped = viewModel::onStopped,
-                    )
+                    is PlayerUiState.Ready -> {
+                        // 0 is "auto" (the server's default URL); the rest index
+                        // into `qualities`. Remembering the last position means a
+                        // quality switch resumes where the user was, instead of
+                        // jumping back to the start of the lesson.
+                        var selectedIndex by remember(current.session.videoUrl) {
+                            mutableStateOf(0)
+                        }
+                        var resumeAt by remember(current.session.videoUrl) {
+                            mutableStateOf(current.startPositionMillis)
+                        }
+
+                        val qualities = current.session.qualities
+                        val selectedQuality = qualities.getOrNull(selectedIndex - 1)
+                        val activeUrl = selectedQuality?.url ?: current.session.videoUrl
+                        val activeLabel = selectedQuality?.label
+                            ?: stringResource(R.string.player_quality_auto)
+
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            VideoSurface(
+                                videoUrl = activeUrl,
+                                watermarkText = current.session.watermarkText,
+                                startPositionMillis = resumeAt,
+                                onProgress = { position, duration ->
+                                    resumeAt = position
+                                    viewModel.onPositionChanged(position, duration)
+                                },
+                                onStopped = viewModel::onStopped,
+                            )
+
+                            if (qualities.isNotEmpty()) {
+                                QualitySelector(
+                                    label = activeLabel,
+                                    qualities = qualities.map { it.label },
+                                    selectedIndex = selectedIndex,
+                                    onSelect = { selectedIndex = it },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(Spacing.md),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -133,7 +176,8 @@ fun PlayerScreen(
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun VideoSurface(
-    session: PlaybackSession,
+    videoUrl: String,
+    watermarkText: String,
     startPositionMillis: Long,
     onProgress: (positionMillis: Long, durationMillis: Long) -> Unit,
     onStopped: (positionMillis: Long, durationMillis: Long) -> Unit,
@@ -144,9 +188,9 @@ private fun VideoSurface(
     // Keyed on the URL: a new source (a different quality, or a re-issued
     // ticket) builds a new player rather than reusing one that holds the old
     // media item.
-    val exoPlayer = remember(session.videoUrl) {
+    val exoPlayer = remember(videoUrl) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(session.videoUrl))
+            setMediaItem(MediaItem.fromUri(videoUrl))
             if (startPositionMillis > 0L) seekTo(startPositionMillis)
             prepare()
             playWhenReady = true
@@ -196,9 +240,9 @@ private fun VideoSurface(
             modifier = Modifier.fillMaxSize(),
         )
 
-        if (session.watermarkText.isNotBlank()) {
+        if (watermarkText.isNotBlank()) {
             Text(
-                text = session.watermarkText,
+                text = watermarkText,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(Spacing.md),
@@ -246,6 +290,52 @@ private fun PlayerError(
                 modifier = Modifier.padding(top = Spacing.md),
             ) {
                 Text(stringResource(R.string.action_retry))
+            }
+        }
+    }
+}
+
+/**
+ * Quality menu.
+ *
+ * Lists only what the server actually returned — if a lesson has a single
+ * uploaded rendition, the menu shows "auto" and that one, rather than offering
+ * a 720p that does not exist.
+ */
+@Composable
+private fun QualitySelector(
+    label: String,
+    qualities: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = modifier) {
+        TextButton(
+            onClick = { expanded = true },
+            colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+        ) {
+            Text(label)
+        }
+
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.player_quality_auto)) },
+                onClick = {
+                    onSelect(0)
+                    expanded = false
+                },
+            )
+            qualities.forEachIndexed { index, qualityLabel ->
+                DropdownMenuItem(
+                    text = { Text(qualityLabel) },
+                    onClick = {
+                        onSelect(index + 1)
+                        expanded = false
+                    },
+                )
             }
         }
     }

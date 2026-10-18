@@ -25,8 +25,12 @@ android {
         applicationId = "com.mrdastbaaf.mdbapp"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // Bumped on every shipped build: Android refuses to install an APK whose
+        // versionCode is lower than the installed one, and a same-code reinstall
+        // over a build signed with a different key is what produced the
+        // "package conflicts with an existing package" error.
+        versionCode = 2
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

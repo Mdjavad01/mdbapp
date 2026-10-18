@@ -19,7 +19,7 @@
       drawn, via installSplashScreen() in MainActivity.
     -->
     <style name="Theme.MdbApp.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/brand_terracotta</item>
+        <item name="windowSplashScreenBackground">@color/brand_ruby</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
         <item name="postSplashScreenTheme">@style/Theme.MdbApp</item>
     </style>

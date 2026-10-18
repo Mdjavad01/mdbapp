@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Brand palette, lifted from the live PWA so the app and the website match.
-      Compose consumes its own colour scheme (see core/ui/theme/Color.kt); these
-      values exist for XML-only surfaces such as the splash screen and the
-      adaptive launcher icon.
+      Brand palette for XML-only surfaces: the splash screen, the adaptive
+      launcher icon background, and the window background before the first
+      Compose frame. The Compose scheme lives in core/ui/theme/Color.kt and is
+      the one the UI actually uses — keep the two in sync.
     -->
-    <color name="brand_terracotta">#9A3412</color>
-    <color name="brand_terracotta_dark">#7A2D0E</color>
-    <color name="brand_amber">#D97706</color>
-    <color name="brand_cream">#FDFBF7</color>
-    <color name="brand_ink">#1E293B</color>
+    <color name="brand_ruby">#C2183B</color>
+    <color name="brand_ruby_dark">#8C0A24</color>
+    <color name="brand_gold">#B07A00</color>
+    <color name="brand_cream">#FFF8F6</color>
+    <color name="brand_ink">#211014</color>
 
-    <color name="ic_launcher_background">#9A3412</color>
+    <color name="ic_launcher_background">#C2183B</color>
 
     <!-- Window backgrounds -->
-    <color name="app_window_background_light">#FDFBF7</color>
-    <color name="app_window_background_dark">#1A110F</color>
+    <color name="app_window_background_light">#FFF8F6</color>
+    <color name="app_window_background_dark">#150A0D</color>
 </resources>

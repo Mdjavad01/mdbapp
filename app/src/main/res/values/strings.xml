@@ -149,5 +149,6 @@
 
     <!-- ===================== Player ===================== -->
     <string name="player_title">پخش جلسه</string>
+    <string name="player_quality_auto">خودکار</string>
     <string name="player_error_generic">پخش این جلسه ممکن نشد. لطفاً دوباره تلاش کنید.</string>
 </resources>

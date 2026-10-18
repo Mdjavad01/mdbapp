@@ -3,6 +3,7 @@ package com.mrdastbaaf.mdbapp.features.auth.presentation.login
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -45,6 +47,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.ui.state.UiMessage
+import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
 import com.mrdastbaaf.mdbapp.core.ui.theme.MdbTheme
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 
@@ -95,42 +98,51 @@ private fun LoginContent(
     onPhoneChange: (String) -> Unit,
     onSubmit: () -> Unit,
 ) {
-    Scaffold { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-                .padding(horizontal = Spacing.lg),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Spacer(Modifier.height(Spacing.xxl))
-
-            BrandMark()
-
-            Spacer(Modifier.height(Spacing.md))
-
-            Text(
-                text = stringResource(R.string.auth_brand_name),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center,
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Full-bleed gradient: it starts at y=0 so it reaches under the
+            // status bar, while the content below still respects the Scaffold
+            // insets.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(300.dp)
+                    .background(BrandGradient),
             )
 
-            Spacer(Modifier.height(Spacing.xs))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+                    .padding(horizontal = Spacing.lg),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(Spacing.xl))
 
-            Text(
-                text = stringResource(R.string.auth_login_subtitle),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
+                BrandMark()
 
-            Spacer(Modifier.height(Spacing.xl))
+                Spacer(Modifier.height(Spacing.md))
+
+                Text(
+                    text = stringResource(R.string.auth_brand_name),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(Modifier.height(Spacing.xs))
+
+                Text(
+                    text = stringResource(R.string.auth_login_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.88f),
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(Modifier.height(Spacing.xl))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),

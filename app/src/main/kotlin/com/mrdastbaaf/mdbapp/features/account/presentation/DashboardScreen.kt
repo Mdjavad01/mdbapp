@@ -42,6 +42,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.settings.ThemePreference
 import com.mrdastbaaf.mdbapp.core.ui.state.UiState
+import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 import com.mrdastbaaf.mdbapp.features.account.domain.model.MembershipPlan
@@ -249,9 +251,12 @@ private fun MembershipCard(membership: Membership?, onOpenMembership: () -> Unit
 
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (active) {
-                MaterialTheme.colorScheme.primaryContainer
+                // The gradient is painted by the Column below, so the card
+                // itself must not paint over it.
+                Color.Transparent
             } else {
                 MaterialTheme.colorScheme.surfaceContainerLow
             },
@@ -260,6 +265,7 @@ private fun MembershipCard(membership: Membership?, onOpenMembership: () -> Unit
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (active) Modifier.background(BrandGradient) else Modifier)
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
@@ -270,7 +276,7 @@ private fun MembershipCard(membership: Membership?, onOpenMembership: () -> Unit
                         membership.tier.label(),
                     ),
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = Color.White,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
@@ -279,7 +285,7 @@ private fun MembershipCard(membership: Membership?, onOpenMembership: () -> Unit
                         PersianFormat.formatNumber(membership.daysRemaining.toLong()),
                     ),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = Color.White.copy(alpha = 0.92f),
                 )
                 if (membership.formattedExpireDateJalali.isNotBlank()) {
                     Text(
@@ -288,7 +294,7 @@ private fun MembershipCard(membership: Membership?, onOpenMembership: () -> Unit
                             PersianFormat.toPersianDigits(membership.formattedExpireDateJalali),
                         ),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        color = Color.White.copy(alpha = 0.85f),
                     )
                 }
             } else {
