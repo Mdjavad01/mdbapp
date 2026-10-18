@@ -16,10 +16,17 @@ output.json
 release/
 debug/
 
-# Keystores — NEVER commit these
+# Keystores — NEVER commit these, except the debug key below.
 *.jks
 *.keystore
 keystore.properties
+
+# The debug keystore IS committed on purpose. GitHub-hosted runners generate a
+# fresh ~/.android/debug.keystore per job, so every CI build was signed with a
+# different key and Android refused to install over the previous one
+# ("App not installed as package conflicts with an existing package").
+# A debug key is not a secret: its password is the well-known "android".
+!app/debug.keystore
 
 # R8 mapping output (upload to Play Console, do not commit)
 app/build/outputs/mapping/

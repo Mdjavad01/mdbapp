@@ -3,6 +3,7 @@ package com.mrdastbaaf.mdbapp.features.catalogue.data
 import com.mrdastbaaf.mdbapp.core.error.Failure
 import com.mrdastbaaf.mdbapp.core.network.MdbApi
 import com.mrdastbaaf.mdbapp.core.network.safeApiCall
+import com.mrdastbaaf.mdbapp.core.util.HtmlText
 import com.mrdastbaaf.mdbapp.features.auth.domain.model.MembershipTier
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDetailDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDto
@@ -95,7 +96,7 @@ class CatalogueRepositoryImpl @Inject constructor(
 
     private fun LessonDto.toDomain(): Lesson? {
         val lessonId = id?.takeIf { it.isNotBlank() } ?: return null
-        val lessonTitle = title?.takeIf { it.isNotBlank() } ?: return null
+        val lessonTitle = HtmlText.strip(title).takeIf { it.isNotEmpty() } ?: return null
 
         return Lesson(
             id = lessonId,
@@ -125,13 +126,17 @@ class CatalogueRepositoryImpl @Inject constructor(
         // domain model readable and stops the value being encoded a second time
         // anywhere downstream.
         val courseId = id?.takeIf { it.isNotBlank() }?.let(::decodeSlug) ?: return null
-        val courseTitle = title?.takeIf { it.isNotBlank() } ?: return null
+
+        // `post_title` and `post_excerpt` arrive as HTML from the WordPress
+        // editor; rendering them raw shows `<p style="text-align: right">` to
+        // the user, which is exactly what the first build did.
+        val courseTitle = HtmlText.strip(title).takeIf { it.isNotEmpty() } ?: return null
 
         return Course(
             id = courseId,
             productId = productId,
             title = courseTitle,
-            description = description.orEmpty().trim(),
+            description = HtmlText.strip(description),
             imageUrl = image?.takeIf { it.isNotBlank() },
             category = category?.takeIf { it.isNotBlank() },
             level = level?.takeIf { it.isNotBlank() },

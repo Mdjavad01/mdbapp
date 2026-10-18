@@ -22,6 +22,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +71,8 @@ fun HomeScreen(
     onSignOut: () -> Unit,
     onRefreshProfile: () -> Unit,
 ) {
+    var showTechnical by rememberSaveable { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -94,16 +100,34 @@ fun HomeScreen(
                 onRefresh = onRefreshProfile,
             )
 
-            AsyncStateView(
-                state = state,
-                isOffline = isOffline,
-                onRetry = onRetry,
-                modifier = Modifier.height(240.dp),
-            ) { info ->
-                ServerInfoCard(info)
+            // The version and build cards answer "which server is this build
+            // talking to?" during a rollout, but they are not something a
+            // student should have to scroll past on their account screen.
+            TextButton(
+                onClick = { showTechnical = !showTechnical },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = if (showTechnical) {
+                        stringResource(R.string.account_technical_hide)
+                    } else {
+                        stringResource(R.string.account_technical_show)
+                    },
+                )
             }
 
-            EnvironmentCard()
+            if (showTechnical) {
+                AsyncStateView(
+                    state = state,
+                    isOffline = isOffline,
+                    onRetry = onRetry,
+                    modifier = Modifier.height(240.dp),
+                ) { info ->
+                    ServerInfoCard(info)
+                }
+
+                EnvironmentCard()
+            }
         }
     }
 }

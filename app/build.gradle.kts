@@ -72,11 +72,32 @@ android {
         }
     }
 
+    /**
+     * A committed debug key.
+     *
+     * The default debug keystore is generated per machine, and GitHub-hosted
+     * runners start empty — so every CI build was signed with a different key
+     * and could not be installed over the previous one. Pinning it here makes
+     * every build updatable in place.
+     *
+     * This is not a secret: the credentials are the well-known Android debug
+     * ones and the key only ever signs debug builds.
+     */
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             isMinifyEnabled = false
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = true

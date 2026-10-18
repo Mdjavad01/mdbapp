@@ -90,6 +90,8 @@
     <string name="account_membership_expires_on">تا %1$s</string>
     <string name="account_no_membership">اشتراک فعالی ندارید</string>
     <string name="account_refresh">به‌روزرسانی وضعیت</string>
+    <string name="account_technical_show">اطلاعات فنی</string>
+    <string name="account_technical_hide">بستن اطلاعات فنی</string>
 
     <!-- ===================== Build diagnostics ===================== -->
     <string name="p0_env_label">محیط فعال</string>
