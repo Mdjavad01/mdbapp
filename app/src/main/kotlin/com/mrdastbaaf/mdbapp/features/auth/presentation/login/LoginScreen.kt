@@ -216,6 +216,7 @@ private fun LoginContent(
             )
 
             Spacer(Modifier.height(Spacing.xxl))
+            }
         }
     }
 }
