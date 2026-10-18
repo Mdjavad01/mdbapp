@@ -28,9 +28,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -84,6 +88,7 @@ fun LoginScreen(
     )
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun LoginContent(
     state: LoginUiState,
@@ -149,7 +154,11 @@ private fun LoginContent(
                     OutlinedTextField(
                         value = state.phoneInput,
                         onValueChange = onPhoneChange,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            // Lets the platform offer the number saved on the
+                            // device instead of making the user type it.
+                            .semantics { contentType = ContentType.PhoneNumber },
                         label = { Text(stringResource(R.string.auth_phone_label)) },
                         placeholder = { Text(stringResource(R.string.auth_phone_hint)) },
                         singleLine = true,

@@ -7,7 +7,9 @@ hiltNavigationCompose = "1.2.0"
 
 coreKtx = "1.15.0"
 activityCompose = "1.9.3"
-composeBom = "2024.12.01"
+# 1.8.x is the first line where androidx.compose.ui.autofill.ContentType is
+# public; in 1.7.6 it is internal and the autofill hints do not compile.
+composeBom = "2025.04.01"
 lifecycle = "2.8.7"
 navigationCompose = "2.8.5"
 splashscreen = "1.0.1"
