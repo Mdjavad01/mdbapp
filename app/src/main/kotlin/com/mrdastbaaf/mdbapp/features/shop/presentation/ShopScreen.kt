@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -28,8 +28,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.ui.component.AsyncStateView
+import com.mrdastbaaf.mdbapp.core.ui.component.BrandTopAppBar
 import com.mrdastbaaf.mdbapp.core.ui.state.UiState
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
@@ -64,8 +63,8 @@ fun ShopScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.shop_title)) },
+            BrandTopAppBar(
+                title = stringResource(R.string.shop_title),
                 actions = {
                     IconButton(onClick = onRetry) {
                         Icon(
@@ -74,11 +73,6 @@ fun ShopScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
             )
         },
     ) { innerPadding ->
@@ -105,18 +99,21 @@ fun ShopScreen(
                             contentPadding = PaddingValues(horizontal = Spacing.md),
                             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
-                            items(items = catalog.featured, key = { "f-${it.id}" }) { product ->
+                            // Positional keys: the bridge can list the same
+                            // product twice (featured plus a category), and a
+                            // duplicated key is a hard crash, not a warning.
+                            itemsIndexed(items = catalog.featured) { index, product ->
                                 FeaturedCard(product, onClick = { onOpenProduct(product.id) })
                             }
                         }
                     }
                 }
 
-                catalog.categories.forEach { category ->
-                    item(key = "cat-${category.id}") {
+                catalog.categories.forEachIndexed { categoryIndex, category ->
+                    item(key = "cat-$categoryIndex") {
                         SectionTitle(category.name)
                     }
-                    items(items = category.products, key = { "p-${it.id}" }) { product ->
+                    itemsIndexed(items = category.products) { index, product ->
                         ProductRow(product, onClick = { onOpenProduct(product.id) })
                     }
                 }

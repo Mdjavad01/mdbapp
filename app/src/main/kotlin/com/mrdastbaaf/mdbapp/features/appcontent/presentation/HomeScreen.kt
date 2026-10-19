@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -32,8 +32,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.ui.component.AsyncStateView
+import com.mrdastbaaf.mdbapp.core.ui.component.BrandTopAppBar
 import com.mrdastbaaf.mdbapp.core.ui.state.UiState
 import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
 import com.mrdastbaaf.mdbapp.core.ui.theme.Ruby
@@ -77,8 +76,8 @@ fun HomeScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.home_title)) },
+            BrandTopAppBar(
+                title = stringResource(R.string.home_title),
                 actions = {
                     IconButton(onClick = onRetry) {
                         Icon(
@@ -87,11 +86,6 @@ fun HomeScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
             )
         },
     ) { innerPadding ->
@@ -132,7 +126,9 @@ fun HomeScreen(
                             contentPadding = PaddingValues(horizontal = Spacing.md),
                             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                         ) {
-                            items(items = home.featured, key = { "c-${it.id}" }) { course ->
+                            // Positional keys: the panel's curated id list can
+                            // repeat a course, and a duplicate key is a crash.
+                            itemsIndexed(items = home.featured) { _, course ->
                                 FeaturedCourseCard(
                                     course = course,
                                     onClick = {
@@ -207,30 +203,39 @@ private fun HeroCard(
 
             Spacer(Modifier.height(Spacing.xs))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                Button(
-                    onClick = onPrimary,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Ruby,
+            // Stacked, full width. Side by side, a long Persian CTA label
+            // collapses into a one-letter-per-line sliver — the row gives each
+            // button half the width regardless of how much text it holds.
+            Button(
+                onClick = onPrimary,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Ruby,
+                ),
+            ) {
+                Text(
+                    text = hero.ctaPrimaryText.ifBlank {
+                        stringResource(R.string.home_cta_courses)
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            if (hero.ctaSecondaryText.isNotBlank()) {
+                OutlinedButton(
+                    onClick = onSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color.White,
                     ),
                 ) {
                     Text(
-                        text = hero.ctaPrimaryText.ifBlank {
-                            stringResource(R.string.home_cta_courses)
-                        },
+                        text = hero.ctaSecondaryText,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                }
-
-                if (hero.ctaSecondaryText.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = onSecondary,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color.White,
-                        ),
-                    ) {
-                        Text(hero.ctaSecondaryText)
-                    }
                 }
             }
 
@@ -238,20 +243,26 @@ private fun HeroCard(
                 Spacer(Modifier.height(Spacing.sm))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
+                    // Equal thirds. Without the weight the longest label wins the
+                    // space and the numbers overlap each other.
                     hero.stats.forEach { stat ->
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = PersianFormat.toPersianDigits(stat.value),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Text(
                                 text = stat.label,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White.copy(alpha = 0.8f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
