@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+// Explicit: inside a Gradle Kotlin script `java` resolves to the JavaPluginExtension.
+import java.io.File
 
 plugins {
     alias(libs.plugins.android.application)
@@ -177,11 +179,11 @@ val apkVersionedName = versionedApkName
 tasks.matching { it.name == "assembleDevDebug" }.configureEach {
     notCompatibleWithConfigurationCache("Renames the packaged APK in place")
     doLast {
-        val outputDir = java.io.File(apkOutputPath)
-        val defaultApk = java.io.File(outputDir, "app-dev-debug.apk")
+        val outputDir = File(apkOutputPath)
+        val defaultApk = File(outputDir, "app-dev-debug.apk")
 
         if (defaultApk.exists()) {
-            defaultApk.copyTo(java.io.File(outputDir, apkVersionedName), overwrite = true)
+            defaultApk.copyTo(File(outputDir, apkVersionedName), overwrite = true)
             defaultApk.delete()
         }
     }
