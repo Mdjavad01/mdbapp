@@ -152,19 +152,30 @@ android {
 }
 
 /**
- * Names the APK after the build, e.g. `mdbapp-dev-debug-v1.0.1.apk`.
+ * Renames the dev debug APK to include its version, e.g.
+ * `mdbapp-dev-debug-v1.0.1.apk`.
  *
- * The default name (`app-dev-debug.apk`) is identical for every build, so a
- * folder of downloads turns into `app-dev-debug (3).apk` and nobody can tell
- * which version they are holding.
+ * The default name is identical for every build, so a folder of downloads turns
+ * into `app-dev-debug (3).apk` and nobody can tell which version they hold.
+ *
+ * AGP 8 does not expose `outputFileName` on `VariantOutput` any more, so this
+ * runs as a `doLast` on the assemble task instead of through the variant API.
  */
-androidComponents {
-    onVariants { variant ->
-        variant.outputs.forEach { output ->
-            val version = output.versionName.orNull?.substringBefore('-') ?: "0"
-            output.outputFileName.set(
-                "mdbapp-${variant.flavorName}-${variant.buildType}-v$version.apk",
-            )
+val versionedApkName = buildString {
+    append("mdbapp-dev-debug-v")
+    append(android.defaultConfig.versionName?.substringBefore('-') ?: "0")
+    append(".apk")
+}
+
+tasks.matching { it.name == "assembleDevDebug" }.configureEach {
+    doLast {
+        val outputDir = layout.buildDirectory.dir("outputs/apk/dev/debug").get().asFile
+        val defaultApk = outputDir.resolve("app-dev-debug.apk")
+
+        if (defaultApk.exists()) {
+            defaultApk.copyTo(outputDir.resolve(versionedApkName), overwrite = true)
+            defaultApk.delete()
+            logger.lifecycle("APK written as $versionedApkName")
         }
     }
 }
