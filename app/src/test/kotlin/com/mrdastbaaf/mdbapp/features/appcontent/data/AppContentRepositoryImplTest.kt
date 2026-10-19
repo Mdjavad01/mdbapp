@@ -144,7 +144,9 @@ class AppContentRepositoryImplTest {
 
         val page = repository.pageContent("about").getOrThrow()
 
-        assertEquals("ما یک کارگاه هستیم.\n\nاز ۱۳۹۰.", page.body)
+        // HtmlText turns each block tag into one newline and trims the lines,
+        // so blocks are separated by "\n", not by a blank line.
+        assertEquals("ما یک کارگاه هستیم.\nاز ۱۳۹۰.", page.body)
         assertEquals("1405/07/24", page.updatedAtJalali)
     }
 

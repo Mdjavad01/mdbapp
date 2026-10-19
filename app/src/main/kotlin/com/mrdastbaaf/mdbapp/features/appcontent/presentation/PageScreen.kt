@@ -98,9 +98,9 @@ fun PageScreen(
                     )
                 }
 
-                // The repository collapses blank lines to at most one, so
-                // splitting on "\n\n" gives one paragraph per block.
-                page.body.split("\n\n").forEach { paragraph ->
+                // HtmlText maps every block tag to a single newline, so each
+                // line is one paragraph from the editor.
+                page.body.split("\n").forEach { paragraph ->
                     if (paragraph.isNotBlank()) {
                         Text(
                             text = paragraph,
