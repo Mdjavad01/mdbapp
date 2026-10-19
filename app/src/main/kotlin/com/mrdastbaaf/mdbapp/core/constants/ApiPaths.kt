@@ -71,6 +71,15 @@ object ApiPaths {
     // ── Shop (read-only showcase) ───────────────────────────────────────────
     const val SHOP_PRODUCTS = "shop/products"
 
+    /** Server-driven home: hero copy, section order, featured ids. Public. */
+    const val APP_UI = "app-ui"
+
+    /** Editorial pages the site publishes to the app. Bare array. */
+    const val APP_PAGES = "app-pages"
+
+    /** Rendered `the_content` for one page. Access-filtered server-side. */
+    const val APP_PAGE_CONTENT_TEMPLATE = "app-pages/{pageId}/content"
+
     /**
      * Creates an order and returns the gateway URL. Bearer required.
      *

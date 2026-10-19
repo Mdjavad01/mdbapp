@@ -69,6 +69,10 @@ object Routes {
     const val CHECKOUT = "checkout/{productId}"
     fun checkout(productId: Int): String = "checkout/$productId"
 
+    /** `page/{pageId}` — a guide page from `/app-pages`. */
+    const val PAGE = "page/{pageId}"
+    fun page(pageId: String): String = "page/${encode(pageId)}"
+
     /** `page/{id}` — an editorial page served by `GET /app-pages`. */
     const val APP_PAGE = "page/{pageId}"
     fun appPage(pageId: String): String = "page/${encode(pageId)}"

@@ -9,6 +9,9 @@ import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.UserProfileDto
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.VerifyOtpRequest
 import com.mrdastbaaf.mdbapp.features.auth.data.remote.dto.VerifyOtpResponse
 import com.mrdastbaaf.mdbapp.features.account.data.remote.dto.MembershipPlanDto
+import com.mrdastbaaf.mdbapp.features.appcontent.data.remote.dto.AppPageContentDto
+import com.mrdastbaaf.mdbapp.features.appcontent.data.remote.dto.AppPageDto
+import com.mrdastbaaf.mdbapp.features.appcontent.data.remote.dto.AppUiDto
 import com.mrdastbaaf.mdbapp.features.account.data.remote.dto.OrdersDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDetailDto
 import com.mrdastbaaf.mdbapp.features.catalogue.data.remote.dto.CourseDto
@@ -139,6 +142,20 @@ interface MdbApi {
      */
     @GET(ApiPaths.MY_ORDERS)
     suspend fun getMyOrders(): OrdersDto
+
+    // ── App content ─────────────────────────────────────────────────────────
+
+    /** Server-driven home: hero copy, section order, featured course ids. */
+    @GET(ApiPaths.APP_UI)
+    suspend fun getAppUi(): AppUiDto
+
+    /** Guide pages the site publishes. **Bare array**, already access-filtered. */
+    @GET(ApiPaths.APP_PAGES)
+    suspend fun getAppPages(): List<AppPageDto>
+
+    /** Rendered content for one page. 403 when the page is members-only. */
+    @GET(ApiPaths.APP_PAGE_CONTENT_TEMPLATE)
+    suspend fun getAppPageContent(@Path("pageId") pageId: String): AppPageContentDto
 
     // ── Shop & payment ──────────────────────────────────────────────────────
 

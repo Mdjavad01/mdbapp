@@ -147,6 +147,17 @@
     <string name="order_status_cancelled">لغو شده</string>
     <string name="order_status_unknown">نامشخص</string>
 
+    <!-- ===================== Home & pages ===================== -->
+    <string name="nav_home">خانه</string>
+    <string name="home_title">مستر دستباف</string>
+    <string name="home_cta_courses">مشاهدهٔ دوره‌ها</string>
+    <string name="home_cta_membership">خرید اشتراک</string>
+    <string name="home_featured_fallback">دوره‌های ما</string>
+    <string name="home_pages_title">راهنما و اطلاعات</string>
+    <string name="home_empty">محتوایی برای نمایش وجود ندارد.</string>
+    <string name="page_updated_at">آخرین به‌روزرسانی: %1$s</string>
+    <string name="page_title">راهنما</string>
+
     <!-- ===================== Shop ===================== -->
     <string name="nav_shop">فروشگاه</string>
     <string name="shop_title">فروشگاه</string>

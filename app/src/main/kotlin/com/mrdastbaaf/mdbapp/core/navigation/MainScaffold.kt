@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -27,6 +28,10 @@ import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.settings.ThemeViewModel
 import com.mrdastbaaf.mdbapp.core.util.ExternalLinks
 import com.mrdastbaaf.mdbapp.features.account.presentation.DashboardScreen
+import com.mrdastbaaf.mdbapp.features.appcontent.presentation.HomeScreen
+// Aliased: two ViewModels are called HomeViewModel — this one drives the
+// landing screen, the other supplies the server-info card on the account tab.
+import com.mrdastbaaf.mdbapp.features.appcontent.presentation.HomeViewModel as HomeContentViewModel
 import com.mrdastbaaf.mdbapp.features.account.presentation.DashboardViewModel
 import com.mrdastbaaf.mdbapp.features.auth.presentation.session.SessionViewModel
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CatalogueScreen
@@ -36,7 +41,7 @@ import com.mrdastbaaf.mdbapp.features.shop.presentation.ShopScreen
 import com.mrdastbaaf.mdbapp.features.shop.presentation.ShopViewModel
 
 /** The destinations reachable from the bottom bar. */
-enum class MainTab { COURSES, SHOP, ACCOUNT }
+enum class MainTab { HOME, COURSES, SHOP, ACCOUNT }
 
 /**
  * The signed-in shell.
@@ -56,19 +61,28 @@ enum class MainTab { COURSES, SHOP, ACCOUNT }
 fun MainScaffold(
     onOpenCourse: (Int) -> Unit,
     onOpenProduct: (Int) -> Unit,
+    onOpenPage: (String) -> Unit,
     onSignedOut: () -> Unit,
 ) {
-    var tab by rememberSaveable { mutableStateOf(MainTab.COURSES) }
+    var tab by rememberSaveable { mutableStateOf(MainTab.HOME) }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
+                    selected = tab == MainTab.HOME,
+                    onClick = { tab = MainTab.HOME },
+                    icon = {
+                        Icon(imageVector = Icons.Filled.Home, contentDescription = null)
+                    },
+                    label = { Text(stringResource(R.string.nav_home)) },
+                )
+                NavigationBarItem(
                     selected = tab == MainTab.COURSES,
                     onClick = { tab = MainTab.COURSES },
                     icon = {
-                        Icon(imageVector = Icons.Filled.Home, contentDescription = null)
+                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null)
                     },
                     label = { Text(stringResource(R.string.nav_courses)) },
                 )
@@ -93,12 +107,42 @@ fun MainScaffold(
     ) { innerPadding ->
         Box(modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())) {
             when (tab) {
+                MainTab.HOME -> HomeRoute(
+                    onOpenCourse = onOpenCourse,
+                    onOpenPage = onOpenPage,
+                    onBrowseCourses = { tab = MainTab.COURSES },
+                )
+
                 MainTab.COURSES -> CatalogueRoute(onOpenCourse = onOpenCourse)
                 MainTab.SHOP -> ShopRoute(onOpenProduct = onOpenProduct)
                 MainTab.ACCOUNT -> AccountRoute(onSignedOut = onSignedOut)
             }
         }
     }
+}
+
+@Composable
+private fun HomeRoute(
+    onOpenCourse: (Int) -> Unit,
+    onOpenPage: (String) -> Unit,
+    onBrowseCourses: () -> Unit,
+) {
+    val viewModel: HomeContentViewModel = hiltViewModel()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    HomeScreen(
+        state = state,
+        isOffline = isOffline,
+        onRetry = viewModel::refresh,
+        onOpenCourse = onOpenCourse,
+        onOpenPage = onOpenPage,
+        onBrowseCourses = onBrowseCourses,
+        onOpenMembership = {
+            ExternalLinks.open(context, ExternalLinks.MEMBERSHIP_URL)
+        },
+    )
 }
 
 @Composable

@@ -17,6 +17,8 @@ import com.mrdastbaaf.mdbapp.core.session.SessionState
 import com.mrdastbaaf.mdbapp.features.auth.presentation.login.LoginScreen
 import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpScreen
 import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpViewModel
+import com.mrdastbaaf.mdbapp.features.appcontent.presentation.PageScreen
+import com.mrdastbaaf.mdbapp.features.appcontent.presentation.PageViewModel
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailScreen
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailViewModel
 import com.mrdastbaaf.mdbapp.features.player.presentation.PlayerScreen
@@ -102,6 +104,9 @@ fun MdbNavHost(
                 onOpenProduct = { productId ->
                     navController.navigate(Routes.checkout(productId))
                 },
+                onOpenPage = { pageId ->
+                    navController.navigate(Routes.page(pageId))
+                },
                 onSignedOut = { resetTo(Routes.LOGIN) },
             )
         }
@@ -125,6 +130,17 @@ fun MdbNavHost(
                     navController.navigate(Routes.player(lessonId))
                 },
             )
+        }
+
+        // ── Guide pages ─────────────────────────────────────────────────────
+
+        composable(
+            route = Routes.PAGE,
+            arguments = listOf(
+                navArgument(PageViewModel.ARG_PAGE_ID) { type = NavType.StringType },
+            ),
+        ) {
+            PageScreen(onBack = { navController.popBackStack() })
         }
 
         // ── Checkout ────────────────────────────────────────────────────────
