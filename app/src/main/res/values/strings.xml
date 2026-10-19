@@ -147,6 +147,33 @@
     <string name="order_status_cancelled">لغو شده</string>
     <string name="order_status_unknown">نامشخص</string>
 
+    <!-- ===================== Shop ===================== -->
+    <string name="nav_shop">فروشگاه</string>
+    <string name="shop_title">فروشگاه</string>
+    <string name="shop_featured">پیشنهاد ما</string>
+    <string name="shop_empty">در حال حاضر محصولی برای نمایش وجود ندارد.</string>
+
+    <!-- ===================== Checkout ===================== -->
+    <string name="checkout_title">تکمیل خرید</string>
+    <string name="checkout_shipping">اطلاعات ارسال</string>
+    <string name="checkout_name">نام و نام خانوادگی</string>
+    <string name="checkout_phone">شمارهٔ موبایل</string>
+    <string name="checkout_address">نشانی کامل پستی</string>
+    <string name="checkout_postal">کد پستی</string>
+    <string name="checkout_summary">خلاصهٔ سفارش</string>
+    <string name="checkout_total">مبلغ قابل پرداخت</string>
+    <string name="checkout_pay">پرداخت</string>
+    <string name="checkout_invalid_name">نام و نام خانوادگی را کامل وارد کنید.</string>
+    <string name="checkout_invalid_phone">شمارهٔ موبایل معتبر نیست.</string>
+    <string name="checkout_invalid_address">نشانی را کامل‌تر بنویسید.</string>
+    <string name="checkout_invalid_postal">کد پستی باید ۱۰ رقم باشد.</string>
+    <string name="checkout_payment_title">پرداخت امن</string>
+    <string name="checkout_verifying">در حال تأیید پرداخت…</string>
+    <string name="checkout_success">پرداخت با موفقیت انجام شد.</string>
+    <string name="checkout_failed">پرداخت انجام نشد یا لغو شد.</string>
+    <string name="checkout_back_to_shop">بازگشت به فروشگاه</string>
+    <string name="checkout_cancel_payment">انصراف از پرداخت</string>
+
     <!-- ===================== Player ===================== -->
     <string name="player_title">پخش جلسه</string>
     <string name="player_quality_auto">خودکار</string>

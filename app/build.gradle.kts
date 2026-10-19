@@ -151,6 +151,24 @@ android {
     }
 }
 
+/**
+ * Names the APK after the build, e.g. `mdbapp-dev-debug-v1.0.1.apk`.
+ *
+ * The default name (`app-dev-debug.apk`) is identical for every build, so a
+ * folder of downloads turns into `app-dev-debug (3).apk` and nobody can tell
+ * which version they are holding.
+ */
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val version = output.versionName.orNull?.substringBefore('-') ?: "0"
+            output.outputFileName.set(
+                "mdbapp-${variant.flavorName}-${variant.buildType}-v$version.apk",
+            )
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)

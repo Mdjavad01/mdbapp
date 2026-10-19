@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -31,9 +32,11 @@ import com.mrdastbaaf.mdbapp.features.auth.presentation.session.SessionViewModel
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CatalogueScreen
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CatalogueViewModel
 import com.mrdastbaaf.mdbapp.features.home.presentation.HomeViewModel
+import com.mrdastbaaf.mdbapp.features.shop.presentation.ShopScreen
+import com.mrdastbaaf.mdbapp.features.shop.presentation.ShopViewModel
 
-/** The two destinations reachable from the bottom bar. */
-enum class MainTab { COURSES, ACCOUNT }
+/** The destinations reachable from the bottom bar. */
+enum class MainTab { COURSES, SHOP, ACCOUNT }
 
 /**
  * The signed-in shell.
@@ -52,6 +55,7 @@ enum class MainTab { COURSES, ACCOUNT }
 @Composable
 fun MainScaffold(
     onOpenCourse: (Int) -> Unit,
+    onOpenProduct: (Int) -> Unit,
     onSignedOut: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(MainTab.COURSES) }
@@ -69,6 +73,14 @@ fun MainScaffold(
                     label = { Text(stringResource(R.string.nav_courses)) },
                 )
                 NavigationBarItem(
+                    selected = tab == MainTab.SHOP,
+                    onClick = { tab = MainTab.SHOP },
+                    icon = {
+                        Icon(imageVector = Icons.Filled.ShoppingCart, contentDescription = null)
+                    },
+                    label = { Text(stringResource(R.string.nav_shop)) },
+                )
+                NavigationBarItem(
                     selected = tab == MainTab.ACCOUNT,
                     onClick = { tab = MainTab.ACCOUNT },
                     icon = {
@@ -82,6 +94,7 @@ fun MainScaffold(
         Box(modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())) {
             when (tab) {
                 MainTab.COURSES -> CatalogueRoute(onOpenCourse = onOpenCourse)
+                MainTab.SHOP -> ShopRoute(onOpenProduct = onOpenProduct)
                 MainTab.ACCOUNT -> AccountRoute(onSignedOut = onSignedOut)
             }
         }
@@ -100,6 +113,20 @@ private fun CatalogueRoute(onOpenCourse: (Int) -> Unit) {
         onModeSelected = viewModel::selectMode,
         onRetry = viewModel::refresh,
         onOpenCourse = onOpenCourse,
+    )
+}
+
+@Composable
+private fun ShopRoute(onOpenProduct: (Int) -> Unit) {
+    val viewModel: ShopViewModel = hiltViewModel()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
+
+    ShopScreen(
+        state = state,
+        isOffline = isOffline,
+        onRetry = viewModel::refresh,
+        onOpenProduct = onOpenProduct,
     )
 }
 

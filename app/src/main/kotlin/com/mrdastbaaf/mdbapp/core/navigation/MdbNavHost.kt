@@ -21,6 +21,8 @@ import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailScreen
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailViewModel
 import com.mrdastbaaf.mdbapp.features.player.presentation.PlayerScreen
 import com.mrdastbaaf.mdbapp.features.player.presentation.PlayerViewModel
+import com.mrdastbaaf.mdbapp.features.shop.presentation.CheckoutScreen
+import com.mrdastbaaf.mdbapp.features.shop.presentation.CheckoutViewModel
 
 /**
  * The navigation graph.
@@ -97,6 +99,9 @@ fun MdbNavHost(
                 onOpenCourse = { productId ->
                     navController.navigate(Routes.courseDetail(productId))
                 },
+                onOpenProduct = { productId ->
+                    navController.navigate(Routes.checkout(productId))
+                },
                 onSignedOut = { resetTo(Routes.LOGIN) },
             )
         }
@@ -120,6 +125,17 @@ fun MdbNavHost(
                     navController.navigate(Routes.player(lessonId))
                 },
             )
+        }
+
+        // ── Checkout ────────────────────────────────────────────────────────
+
+        composable(
+            route = Routes.CHECKOUT,
+            arguments = listOf(
+                navArgument(CheckoutViewModel.ARG_PRODUCT_ID) { type = NavType.IntType },
+            ),
+        ) {
+            CheckoutScreen(onBack = { navController.popBackStack() })
         }
 
         // ── Player ──────────────────────────────────────────────────────────

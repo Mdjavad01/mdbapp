@@ -18,6 +18,11 @@ import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.LessonProgressReque
 import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackDto
 import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackRequestDto
 import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackTicketDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderRequestDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderResponseDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopProductsDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.VerifyPaymentRequestDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.VerifyPaymentResponseDto
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -134,6 +139,25 @@ interface MdbApi {
      */
     @GET(ApiPaths.MY_ORDERS)
     suspend fun getMyOrders(): OrdersDto
+
+    // ── Shop & payment ──────────────────────────────────────────────────────
+
+    /** The physical catalogue: a featured row plus products grouped by category. */
+    @GET(ApiPaths.SHOP_PRODUCTS)
+    suspend fun getShopProducts(): ShopProductsDto
+
+    /**
+     * Creates the order and returns the gateway URL.
+     *
+     * The app never sees card data: it opens [ShopOrderResponseDto.paymentUrl]
+     * in a WebView, so the card form is the gateway's own page.
+     */
+    @POST(ApiPaths.PAYMENT_INITIATE)
+    suspend fun initiateShopOrder(@Body body: ShopOrderRequestDto): ShopOrderResponseDto
+
+    /** Settles the order using the `cb_token` from the gateway redirect. */
+    @POST(ApiPaths.PAYMENT_VERIFY)
+    suspend fun verifyPayment(@Body body: VerifyPaymentRequestDto): VerifyPaymentResponseDto
 
     // ── Playback ────────────────────────────────────────────────────────────
 

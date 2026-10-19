@@ -70,4 +70,20 @@ object ApiPaths {
 
     // ── Shop (read-only showcase) ───────────────────────────────────────────
     const val SHOP_PRODUCTS = "shop/products"
+
+    /**
+     * Creates an order and returns the gateway URL. Bearer required.
+     *
+     * Accepts `plan_id`, or `product_id` + `kind=shop` + the shipping fields.
+     * The app never sends a card number: the gateway page lives in a WebView and
+     * the server talks to Zibal directly.
+     */
+    const val PAYMENT_INITIATE = "payment/zibal/initiate"
+
+    /**
+     * Settles a payment. Public but protected by the `cb_token` that only the
+     * gateway redirect carries — which is why the app has to intercept that
+     * redirect rather than calling this on its own.
+     */
+    const val PAYMENT_VERIFY = "payment/zibal/verify"
 }

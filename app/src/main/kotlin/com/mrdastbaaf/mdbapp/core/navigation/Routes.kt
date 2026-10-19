@@ -65,6 +65,10 @@ object Routes {
     // ── Content ─────────────────────────────────────────────────────────────
     const val SHOP = "shop"
 
+    /** `checkout/{productId}` — the shipping form and the in-app gateway. */
+    const val CHECKOUT = "checkout/{productId}"
+    fun checkout(productId: Int): String = "checkout/$productId"
+
     /** `page/{id}` — an editorial page served by `GET /app-pages`. */
     const val APP_PAGE = "page/{pageId}"
     fun appPage(pageId: String): String = "page/${encode(pageId)}"

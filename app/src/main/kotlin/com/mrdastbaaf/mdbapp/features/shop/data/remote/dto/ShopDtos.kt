@@ -1,0 +1,69 @@
+package com.mrdastbaaf.mdbapp.features.shop.data.remote.dto
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+/** `GET /shop/products` — the physical catalogue. */
+@Serializable
+data class ShopProductsDto(
+    val success: Boolean? = null,
+    val featured: List<ShopProductDto> = emptyList(),
+    val categories: List<ShopCategoryDto> = emptyList(),
+)
+
+@Serializable
+data class ShopProductDto(
+    val id: Int? = null,
+    val title: String? = null,
+    /** Integer Toman. */
+    val price: Long? = null,
+    val imageUrl: String? = null,
+    /** WooCommerce permalink — the app does not open it, but it identifies the product. */
+    val url: String? = null,
+)
+
+@Serializable
+data class ShopCategoryDto(
+    val id: Int? = null,
+    val slug: String? = null,
+    val name: String? = null,
+    val products: List<ShopProductDto> = emptyList(),
+)
+
+/**
+ * Order creation.
+ *
+ * Field names are snake_case because the bridge reads them with
+ * `$request->get_param('product_id')`, not from a nested object.
+ */
+@Serializable
+data class ShopOrderRequestDto(
+    @SerialName("product_id") val productId: Int,
+    val kind: String = "shop",
+    @SerialName("full_name") val fullName: String,
+    val phone: String,
+    val address: String,
+    @SerialName("postal_code") val postalCode: String,
+)
+
+@Serializable
+data class ShopOrderResponseDto(
+    val orderId: String? = null,
+    val orderNumber: String? = null,
+    val trackId: Long? = null,
+    /** `https://gateway.zibal.ir/start/{trackId}` */
+    val paymentUrl: String? = null,
+)
+
+@Serializable
+data class VerifyPaymentRequestDto(
+    @SerialName("track_id") val trackId: String,
+    val success: String,
+    @SerialName("cb_token") val cbToken: String,
+)
+
+@Serializable
+data class VerifyPaymentResponseDto(
+    val success: Boolean? = null,
+    val message: String? = null,
+)
