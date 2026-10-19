@@ -63,6 +63,7 @@ class ShopRepositoryImpl @Inject constructor(
         api.initiateShopOrder(
             ShopOrderRequestDto(
                 productId = productId,
+                kind = "shop",
                 fullName = shipping.fullName,
                 phone = shipping.phone,
                 address = shipping.address,

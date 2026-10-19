@@ -39,7 +39,12 @@ data class ShopCategoryDto(
 @Serializable
 data class ShopOrderRequestDto(
     @SerialName("product_id") val productId: Int,
-    val kind: String = "shop",
+    /**
+     * Deliberately **not** defaulted: kotlinx.serialization omits defaulted
+     * values, so `kind = "shop"` as a default would never reach the server and
+     * the bridge would fall back to the course-purchase branch.
+     */
+    val kind: String,
     @SerialName("full_name") val fullName: String,
     val phone: String,
     val address: String,
