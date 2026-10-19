@@ -167,15 +167,22 @@ val versionedApkName = buildString {
     append(".apk")
 }
 
+// Resolved at configuration time so the task action below captures only plain
+// strings. Referencing `layout`, `logger` or any other script object inside
+// `doLast` makes the task unserialisable for the configuration cache, which this
+// project enables.
+val apkOutputPath = layout.buildDirectory.dir("outputs/apk/dev/debug").get().asFile.absolutePath
+val apkVersionedName = versionedApkName
+
 tasks.matching { it.name == "assembleDevDebug" }.configureEach {
+    notCompatibleWithConfigurationCache("Renames the packaged APK in place")
     doLast {
-        val outputDir = layout.buildDirectory.dir("outputs/apk/dev/debug").get().asFile
-        val defaultApk = outputDir.resolve("app-dev-debug.apk")
+        val outputDir = java.io.File(apkOutputPath)
+        val defaultApk = java.io.File(outputDir, "app-dev-debug.apk")
 
         if (defaultApk.exists()) {
-            defaultApk.copyTo(outputDir.resolve(versionedApkName), overwrite = true)
+            defaultApk.copyTo(java.io.File(outputDir, apkVersionedName), overwrite = true)
             defaultApk.delete()
-            logger.lifecycle("APK written as $versionedApkName")
         }
     }
 }
