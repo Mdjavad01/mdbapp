@@ -22,7 +22,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,8 +52,10 @@ import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopProduct
  *
  * Tapping a product opens the checkout, not the website: the purchase happens
  * inside the app, which is the whole point of the tab.
+ *
+ * The layout follows the catalogue — a featured rail, then one card per product
+ * — so the two shopping surfaces in the app behave the same way.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShopScreen(
     state: UiState<ShopCatalog>,
@@ -89,10 +91,11 @@ fun ShopScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 if (catalog.featured.isNotEmpty()) {
                     item(key = "featured-title") {
-                        SectionTitle(stringResource(R.string.shop_featured))
+                        SectionHeader(stringResource(R.string.shop_featured))
                     }
                     item(key = "featured-row") {
                         LazyRow(
@@ -102,7 +105,7 @@ fun ShopScreen(
                             // Positional keys: the bridge can list the same
                             // product twice (featured plus a category), and a
                             // duplicated key is a hard crash, not a warning.
-                            itemsIndexed(items = catalog.featured) { index, product ->
+                            itemsIndexed(items = catalog.featured) { _, product ->
                                 FeaturedCard(product, onClick = { onOpenProduct(product.id) })
                             }
                         }
@@ -111,9 +114,9 @@ fun ShopScreen(
 
                 catalog.categories.forEachIndexed { categoryIndex, category ->
                     item(key = "cat-$categoryIndex") {
-                        SectionTitle(category.name)
+                        SectionHeader(category.name)
                     }
-                    itemsIndexed(items = category.products) { index, product ->
+                    itemsIndexed(items = category.products) { _, product ->
                         ProductRow(product, onClick = { onOpenProduct(product.id) })
                     }
                 }
@@ -123,119 +126,147 @@ fun ShopScreen(
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
+private fun SectionHeader(text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         modifier = Modifier.padding(
             start = Spacing.md,
             end = Spacing.md,
             top = Spacing.md,
-            bottom = Spacing.sm,
+            bottom = Spacing.xs,
         ),
-    )
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 4.dp, height = 16.dp)
+                .clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.primary),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
 }
 
 @Composable
 private fun FeaturedCard(product: ShopProduct, onClick: () -> Unit) {
     Card(
         modifier = Modifier
-            .width(170.dp)
+            .width(220.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
     ) {
         Column {
-            ProductImage(
-                imageUrl = product.imageUrl,
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(110.dp),
-                corner = 0.dp,
-            )
-
-            Column(
-                modifier = Modifier.padding(Spacing.sm),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                    .height(150.dp)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
             ) {
-                Text(
-                    text = product.title,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                product.imageUrl?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+
+                // The price sits on the image: it is the first thing a buyer
+                // looks for, and the padding below is then free for the title.
                 Text(
                     text = PersianFormat.formatToman(product.priceToman),
                     style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(Spacing.sm)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
+                        .padding(horizontal = Spacing.sm, vertical = 4.dp),
                 )
             }
+
+            Text(
+                text = product.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(Spacing.sm),
+            )
         }
     }
 }
 
 @Composable
 private fun ProductRow(product: ShopProduct, onClick: () -> Unit) {
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            .padding(horizontal = Spacing.md)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
     ) {
-        ProductImage(
-            imageUrl = product.imageUrl,
-            modifier = Modifier.size(72.dp),
-            corner = 12.dp,
-        )
-
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+        Row(
+            modifier = Modifier.padding(Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            Text(
-                text = product.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = PersianFormat.formatToman(product.priceToman),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
+            Box(
+                modifier = Modifier
+                    .size(92.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                contentAlignment = Alignment.Center,
+            ) {
+                product.imageUrl?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
 
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) {
+                Text(
+                    text = product.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = PersianFormat.formatToman(product.priceToman),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
 
-@Composable
-private fun ProductImage(imageUrl: String?, modifier: Modifier, corner: androidx.compose.ui.unit.Dp) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(corner))
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (imageUrl != null) {
-            AsyncImage(
-                model = imageUrl,
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
         }
     }
