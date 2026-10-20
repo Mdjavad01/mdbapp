@@ -1,39 +1,40 @@
 package com.mrdastbaaf.mdbapp.features.auth.presentation.login
 
-import androidx.compose.foundation.Image
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
@@ -46,17 +47,17 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mrdastbaaf.mdbapp.R
+import com.mrdastbaaf.mdbapp.core.ui.component.AuthHeader
+import com.mrdastbaaf.mdbapp.core.ui.component.GradientButton
 import com.mrdastbaaf.mdbapp.core.ui.state.UiMessage
-import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
 import com.mrdastbaaf.mdbapp.core.ui.theme.MdbTheme
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 
 /**
  * Step one of sign-in: the phone number.
  *
- * The field uses `KeyboardType.Phone` and never rewrites what the user types — a
- * Persian keyboard's digits are accepted as-is and normalised on submit by
- * [com.mrdastbaaf.mdbapp.core.util.PhoneNormalizer], which is the same
+ * The field never rewrites what the user types — Persian digits are accepted
+ * as-is and normalised on submit by `PhoneNormalizer`, which is the same
  * conversion the server requires (`^09[0-9]{9}$`, ASCII only).
  *
  * The `contentType = PhoneNumber` hint lets the platform offer the user's own
@@ -98,137 +99,111 @@ private fun LoginContent(
     onPhoneChange: (String) -> Unit,
     onSubmit: () -> Unit,
 ) {
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Full-bleed gradient: it starts at y=0 so it reaches under the
-            // status bar, while the content below still respects the Scaffold
-            // insets.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(300.dp)
-                    .background(BrandGradient),
-            )
+    // One entrance animation, played once. The card rises into place rather
+    // than appearing, which is what makes the first frame feel finished.
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
 
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
+            .imePadding(),
+    ) {
+        AuthHeader(
+            title = stringResource(R.string.auth_brand_name),
+            subtitle = stringResource(R.string.auth_login_subtitle),
+        )
+
+        AnimatedVisibility(
+            visible = entered,
+            enter = fadeIn(tween(durationMillis = 320)) +
+                slideInVertically(tween(durationMillis = 420)) { height -> height / 8 },
+        ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .verticalScroll(rememberScrollState())
-                    .imePadding()
+                    .offset(y = (-Spacing.xxl))
                     .padding(horizontal = Spacing.lg),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Spacing.md),
             ) {
-                Spacer(Modifier.height(Spacing.xl))
-
-                BrandMark()
-
-                Spacer(Modifier.height(Spacing.md))
-
-                Text(
-                    text = stringResource(R.string.auth_brand_name),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                )
-
-                Spacer(Modifier.height(Spacing.xs))
-
-                Text(
-                    text = stringResource(R.string.auth_login_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.88f),
-                    textAlign = TextAlign.Center,
-                )
-
-                Spacer(Modifier.height(Spacing.xl))
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                ),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(Spacing.md),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.md),
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                 ) {
-                    Text(
-                        text = stringResource(R.string.auth_login_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-
-                    OutlinedTextField(
-                        value = state.phoneInput,
-                        onValueChange = onPhoneChange,
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            // Lets the platform offer the number saved on the
-                            // device instead of making the user type it.
-                            .semantics { contentType = ContentType.PhoneNumber },
-                        label = { Text(stringResource(R.string.auth_phone_label)) },
-                        placeholder = { Text(stringResource(R.string.auth_phone_hint)) },
-                        singleLine = true,
-                        isError = state.errorMessage != null,
-                        supportingText = state.errorMessage?.let { message ->
-                            { Text(message.asString()) }
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Phone,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { onSubmit() }),
-                    )
-
-                    Button(
-                        onClick = onSubmit,
-                        enabled = state.canSubmit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(Spacing.minTouchTarget),
+                            .padding(Spacing.lg),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md),
                     ) {
-                        if (state.isSubmitting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier
-                                    .padding(end = Spacing.sm)
-                                    .size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
+                        Text(
+                            text = stringResource(R.string.auth_login_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+
+                        OutlinedTextField(
+                            value = state.phoneInput,
+                            onValueChange = onPhoneChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentType = ContentType.PhoneNumber },
+                            label = { Text(stringResource(R.string.auth_phone_label)) },
+                            placeholder = { Text(stringResource(R.string.auth_phone_hint)) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            isError = state.errorMessage != null,
+                            textStyle = MaterialTheme.typography.titleMedium,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                            ),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Phone,
+                                imeAction = ImeAction.Done,
+                            ),
+                            keyboardActions = KeyboardActions(onDone = { onSubmit() }),
+                        )
+
+                        AnimatedVisibility(visible = state.errorMessage != null) {
+                            Text(
+                                text = state.errorMessage?.asString().orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
                             )
                         }
-                        Text(stringResource(R.string.auth_request_code))
+
+                        GradientButton(
+                            text = stringResource(R.string.auth_request_code),
+                            onClick = onSubmit,
+                            enabled = state.canSubmit,
+                            isLoading = state.isSubmitting,
+                        )
                     }
                 }
-            }
 
-            Spacer(Modifier.height(Spacing.md))
+                Text(
+                    text = stringResource(R.string.auth_login_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.sm),
+                )
 
-            Text(
-                text = stringResource(R.string.auth_login_note),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-
-            Spacer(Modifier.height(Spacing.xxl))
+                Spacer(Modifier.height(Spacing.xl))
             }
         }
     }
-}
-
-/** The brand mark: the same artwork the launcher uses. */
-@Composable
-private fun BrandMark() {
-    Image(
-        painter = painterResource(R.drawable.logo_mark),
-        contentDescription = null,
-        modifier = Modifier.size(104.dp),
-    )
 }
 
 @Preview(name = "ورود", showBackground = true, locale = "fa")
@@ -236,7 +211,7 @@ private fun BrandMark() {
 private fun LoginPreview() {
     MdbTheme {
         LoginContent(
-            state = LoginUiState(phoneInput = "۰۹۱۲۳۴۵۶۷۸۹"),
+            state = LoginUiState(phoneInput = "09123456789"),
             onPhoneChange = {},
             onSubmit = {},
         )
