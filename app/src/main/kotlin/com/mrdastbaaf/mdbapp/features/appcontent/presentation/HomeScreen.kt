@@ -86,7 +86,7 @@ fun HomeScreen(
     onOpenCourse: (Int) -> Unit,
     onOpenPage: (String) -> Unit,
     onBrowseCourses: () -> Unit,
-    onOpenMembership: () -> Unit,
+    onOpenPlans: () -> Unit,
 ) {
     var entered by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { entered = true }
@@ -126,7 +126,7 @@ fun HomeScreen(
                             HeroCard(
                                 hero = hero,
                                 onPrimary = onBrowseCourses,
-                                onSecondary = onOpenMembership,
+                                onSecondary = onOpenPlans,
                             )
                         }
                     }

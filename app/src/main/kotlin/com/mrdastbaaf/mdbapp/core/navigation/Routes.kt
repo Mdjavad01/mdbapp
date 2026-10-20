@@ -73,6 +73,9 @@ object Routes {
     const val CHECKOUT_PLAN = "checkout/plan/{planId}"
     fun checkoutPlan(planId: String): String = "checkout/plan/${encode(planId)}"
 
+    /** The subscription plans, on their own route. */
+    const val PLANS = "plans"
+
     /** `page/{pageId}` — a guide page from `/app-pages`. */
     const val PAGE = "page/{pageId}"
     fun page(pageId: String): String = "page/${encode(pageId)}"

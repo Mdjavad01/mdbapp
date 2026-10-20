@@ -20,13 +20,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.settings.ThemeViewModel
-import com.mrdastbaaf.mdbapp.core.util.ExternalLinks
 import com.mrdastbaaf.mdbapp.features.account.presentation.DashboardScreen
 import com.mrdastbaaf.mdbapp.features.appcontent.presentation.HomeScreen
 // Aliased: two ViewModels are called HomeViewModel — this one drives the
@@ -63,6 +61,7 @@ fun MainScaffold(
     onOpenProduct: (Int) -> Unit,
     onOpenPage: (String) -> Unit,
     onBuyPlan: (String) -> Unit,
+    onOpenPlans: () -> Unit,
     onSignedOut: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(MainTab.HOME) }
@@ -112,11 +111,16 @@ fun MainScaffold(
                     onOpenCourse = onOpenCourse,
                     onOpenPage = onOpenPage,
                     onBrowseCourses = { tab = MainTab.COURSES },
+                    onOpenPlans = onOpenPlans,
                 )
 
                 MainTab.COURSES -> CatalogueRoute(onOpenCourse = onOpenCourse)
                 MainTab.SHOP -> ShopRoute(onOpenProduct = onOpenProduct)
-                MainTab.ACCOUNT -> AccountRoute(onSignedOut = onSignedOut, onBuyPlan = onBuyPlan)
+                MainTab.ACCOUNT -> AccountRoute(
+                    onSignedOut = onSignedOut,
+                    onBuyPlan = onBuyPlan,
+                    onOpenPlans = onOpenPlans,
+                )
             }
         }
     }
@@ -127,11 +131,11 @@ private fun HomeRoute(
     onOpenCourse: (Int) -> Unit,
     onOpenPage: (String) -> Unit,
     onBrowseCourses: () -> Unit,
+    onOpenPlans: () -> Unit,
 ) {
     val viewModel: HomeContentViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
-    val context = LocalContext.current
 
     HomeScreen(
         state = state,
@@ -140,9 +144,7 @@ private fun HomeRoute(
         onOpenCourse = onOpenCourse,
         onOpenPage = onOpenPage,
         onBrowseCourses = onBrowseCourses,
-        onOpenMembership = {
-            ExternalLinks.open(context, ExternalLinks.MEMBERSHIP_URL)
-        },
+        onOpenPlans = onOpenPlans,
     )
 }
 
@@ -176,7 +178,11 @@ private fun ShopRoute(onOpenProduct: (Int) -> Unit) {
 }
 
 @Composable
-private fun AccountRoute(onSignedOut: () -> Unit, onBuyPlan: (String) -> Unit) {
+private fun AccountRoute(
+    onSignedOut: () -> Unit,
+    onBuyPlan: (String) -> Unit,
+    onOpenPlans: () -> Unit,
+) {
     val dashboardViewModel: DashboardViewModel = hiltViewModel()
     val homeViewModel: HomeViewModel = hiltViewModel()
     val sessionViewModel: SessionViewModel = hiltViewModel()
@@ -189,8 +195,6 @@ private fun AccountRoute(onSignedOut: () -> Unit, onBuyPlan: (String) -> Unit) {
     val isOffline by homeViewModel.isOffline.collectAsStateWithLifecycle()
     val themePreference by themeViewModel.preference.collectAsStateWithLifecycle()
     val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
-
-    val context = LocalContext.current
 
     // An explicit sign-out (or a token revoked elsewhere) must leave this tab,
     // not sit on a dashboard for a session that no longer exists.
@@ -215,8 +219,6 @@ private fun AccountRoute(onSignedOut: () -> Unit, onBuyPlan: (String) -> Unit) {
         onThemeSelected = themeViewModel::select,
         onSignOut = sessionViewModel::logout,
         onBuyPlan = onBuyPlan,
-        onOpenMembership = {
-            ExternalLinks.open(context, ExternalLinks.MEMBERSHIP_URL)
-        },
+        onOpenPlans = onOpenPlans,
     )
 }

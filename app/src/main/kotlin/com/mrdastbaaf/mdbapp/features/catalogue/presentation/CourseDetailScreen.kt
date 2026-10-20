@@ -36,7 +36,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,7 +52,6 @@ import com.mrdastbaaf.mdbapp.core.ui.state.dataOrNull
 import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
 import com.mrdastbaaf.mdbapp.core.ui.theme.MdbTheme
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
-import com.mrdastbaaf.mdbapp.core.util.ExternalLinks
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 import com.mrdastbaaf.mdbapp.features.auth.domain.model.MembershipTier
 import com.mrdastbaaf.mdbapp.features.catalogue.domain.model.Course
@@ -75,8 +73,8 @@ fun CourseDetailScreen(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onPlayLesson: (String) -> Unit,
+    onOpenPlans: () -> Unit,
 ) {
-    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -203,11 +201,7 @@ fun CourseDetailScreen(
 
                 if (!detail.course.owned) {
                     item(key = "access-note") {
-                        AccessNote(
-                            onOpenMembership = {
-                                ExternalLinks.open(context, ExternalLinks.MEMBERSHIP_URL)
-                            },
-                        )
+                        AccessNote(onOpenPlans = onOpenPlans)
                     }
                 }
             }
@@ -444,7 +438,7 @@ private fun LessonCard(
 }
 
 @Composable
-private fun AccessNote(onOpenMembership: () -> Unit) {
+private fun AccessNote(onOpenPlans: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -461,7 +455,7 @@ private fun AccessNote(onOpenMembership: () -> Unit) {
             )
             GradientButton(
                 text = stringResource(R.string.access_renew),
-                onClick = onOpenMembership,
+                onClick = onOpenPlans,
             )
         }
     }
@@ -501,6 +495,7 @@ private fun CourseDetailPreview() {
             onBack = {},
             onRetry = {},
             onPlayLesson = {},
+            onOpenPlans = {},
         )
     }
 }

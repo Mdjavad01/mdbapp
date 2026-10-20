@@ -17,6 +17,7 @@ import com.mrdastbaaf.mdbapp.core.session.SessionState
 import com.mrdastbaaf.mdbapp.features.auth.presentation.login.LoginScreen
 import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpScreen
 import com.mrdastbaaf.mdbapp.features.auth.presentation.otp.OtpViewModel
+import com.mrdastbaaf.mdbapp.features.account.presentation.PlansScreen
 import com.mrdastbaaf.mdbapp.features.appcontent.presentation.PageScreen
 import com.mrdastbaaf.mdbapp.features.appcontent.presentation.PageViewModel
 import com.mrdastbaaf.mdbapp.features.catalogue.presentation.CourseDetailScreen
@@ -110,6 +111,7 @@ fun MdbNavHost(
                 onBuyPlan = { planId ->
                     navController.navigate(Routes.checkoutPlan(planId))
                 },
+                onOpenPlans = { navController.navigate(Routes.PLANS) },
                 onSignedOut = { resetTo(Routes.LOGIN) },
             )
         }
@@ -132,6 +134,16 @@ fun MdbNavHost(
                 onPlayLesson = { lessonId ->
                     navController.navigate(Routes.player(lessonId))
                 },
+                onOpenPlans = { navController.navigate(Routes.PLANS) },
+            )
+        }
+
+        // ── Plans ───────────────────────────────────────────────────────────
+
+        composable(Routes.PLANS) {
+            PlansScreen(
+                onBack = { navController.popBackStack() },
+                onBuyPlan = { planId -> navController.navigate(Routes.checkoutPlan(planId)) },
             )
         }
 

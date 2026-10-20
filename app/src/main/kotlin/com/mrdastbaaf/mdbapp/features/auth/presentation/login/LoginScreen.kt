@@ -159,12 +159,22 @@ private fun LoginContent(
                             singleLine = true,
                             shape = RoundedCornerShape(16.dp),
                             isError = state.errorMessage != null,
-                            textStyle = MaterialTheme.typography.titleMedium.copy(textAlign = TextAlign.Start),
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.Normal,
+                            ),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = MaterialTheme.colorScheme.primary,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
                                 focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                // The example is a hint, not content.
+                                focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                                unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             ),
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Phone,

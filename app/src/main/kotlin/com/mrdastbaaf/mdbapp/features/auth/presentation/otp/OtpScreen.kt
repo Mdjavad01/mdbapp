@@ -40,15 +40,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -272,6 +278,7 @@ private fun OtpContent(
  * shakes the row — the shake is the only error signal that reaches the user
  * before they read the message.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun DigitRow(
     code: String,
@@ -282,11 +289,14 @@ private fun DigitRow(
 ) {
     val focusRequester = remember { FocusRequester() }
     val shake = remember { Animatable(0f) }
+    val haptics = LocalHapticFeedback.current
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
     LaunchedEffect(shakeOn) {
         if (shakeOn != null) {
+            // A wrong code should be felt, not only read.
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
             repeat(3) {
                 shake.animateTo(10f, tween(durationMillis = 55))
                 shake.animateTo(-10f, tween(durationMillis = 55))
@@ -304,12 +314,14 @@ private fun DigitRow(
         modifier = Modifier
             .fillMaxWidth()
             .offset { IntOffset(shake.value.roundToInt(), 0) }
-            .focusRequester(focusRequester),
+            .focusRequester(focusRequester)
+            // Lets the keyboard offer the code straight from the SMS.
+            .semantics { contentType = ContentType.SmsOtpCode },
         // The real field is invisible; the boxes are the UI.
         textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
         cursorBrush = SolidColor(Color.Transparent),
         keyboardOptions = KeyboardOptions(
-            keyboardType = KeyboardType.NumberPassword,
+            keyboardType = KeyboardType.Number,
             imeAction = ImeAction.Done,
         ),
         keyboardActions = KeyboardActions(onDone = { onSubmit() }),
