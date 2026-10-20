@@ -65,9 +65,13 @@ object Routes {
     // ── Content ─────────────────────────────────────────────────────────────
     const val SHOP = "shop"
 
-    /** `checkout/{productId}` — the shipping form and the in-app gateway. */
-    const val CHECKOUT = "checkout/{productId}"
-    fun checkout(productId: Int): String = "checkout/$productId"
+    /** Physical product: shipping form, then the in-app gateway. */
+    const val CHECKOUT_PRODUCT = "checkout/product/{productId}"
+    fun checkout(productId: Int): String = "checkout/product/$productId"
+
+    /** Subscription: no shipping form, same gateway. */
+    const val CHECKOUT_PLAN = "checkout/plan/{planId}"
+    fun checkoutPlan(planId: String): String = "checkout/plan/${encode(planId)}"
 
     /** `page/{pageId}` — a guide page from `/app-pages`. */
     const val PAGE = "page/{pageId}"

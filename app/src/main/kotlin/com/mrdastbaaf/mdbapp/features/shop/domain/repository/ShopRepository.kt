@@ -24,6 +24,15 @@ interface ShopRepository {
 
     suspend fun createOrder(productId: Int, shipping: ShippingDetails): Result<CheckoutSession>
 
+    /**
+     * The same handshake for a subscription.
+     *
+     * Lives here rather than in the account repository because it is the same
+     * gateway, the same order table and the same verification — only the id the
+     * bridge branches on differs.
+     */
+    suspend fun createPlanOrder(planId: String): Result<CheckoutSession>
+
     /** Confirms the payment with the token from the gateway redirect. */
     suspend fun verifyPayment(trackId: Long, success: Boolean, cbToken: String): Result<String?>
 }

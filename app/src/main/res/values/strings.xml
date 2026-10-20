@@ -131,7 +131,7 @@
     <string name="dashboard_membership_none">اشتراک فعالی ندارید</string>
     <string name="dashboard_membership_none_hint">با خرید اشتراک، به همهٔ جلسه‌های دوره‌ها دسترسی پیدا می‌کنید.</string>
     <string name="dashboard_plan_popular">پیشنهاد ویژه</string>
-    <string name="dashboard_plan_buy">خرید در سایت</string>
+    <string name="dashboard_plan_buy">خرید اشتراک</string>
     <string name="dashboard_appearance_title">ظاهر برنامه</string>
     <string name="theme_system">سیستمی</string>
     <string name="theme_light">روشن</string>

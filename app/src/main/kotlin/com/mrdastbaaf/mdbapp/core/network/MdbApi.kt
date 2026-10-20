@@ -21,6 +21,7 @@ import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.LessonProgressReque
 import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackDto
 import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackRequestDto
 import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackTicketDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.PlanOrderRequestDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderRequestDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderResponseDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopProductsDto
@@ -171,6 +172,10 @@ interface MdbApi {
      */
     @POST(ApiPaths.PAYMENT_INITIATE)
     suspend fun initiateShopOrder(@Body body: ShopOrderRequestDto): ShopOrderResponseDto
+
+    /** Same endpoint, subscription branch: `plan_id` instead of `product_id`. */
+    @POST(ApiPaths.PAYMENT_INITIATE)
+    suspend fun initiatePlanOrder(@Body body: PlanOrderRequestDto): ShopOrderResponseDto
 
     /** Settles the order using the `cb_token` from the gateway redirect. */
     @POST(ApiPaths.PAYMENT_VERIFY)

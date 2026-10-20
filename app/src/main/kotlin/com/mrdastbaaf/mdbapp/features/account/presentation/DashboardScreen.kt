@@ -82,6 +82,7 @@ fun DashboardScreen(
     onRetryPlans: () -> Unit,
     onRetryOrders: () -> Unit,
     onThemeSelected: (ThemePreference) -> Unit,
+    onBuyPlan: (String) -> Unit,
     onSignOut: () -> Unit,
     onOpenMembership: () -> Unit,
 ) {
@@ -129,7 +130,7 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
                     items(items = list, key = { it.id }) { plan ->
-                        PlanCard(plan = plan, onBuy = onOpenMembership)
+                        PlanCard(plan = plan, onBuy = { onBuyPlan(plan.id) })
                     }
                 }
             }

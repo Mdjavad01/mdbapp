@@ -62,6 +62,7 @@ fun MainScaffold(
     onOpenCourse: (Int) -> Unit,
     onOpenProduct: (Int) -> Unit,
     onOpenPage: (String) -> Unit,
+    onBuyPlan: (String) -> Unit,
     onSignedOut: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(MainTab.HOME) }
@@ -115,7 +116,7 @@ fun MainScaffold(
 
                 MainTab.COURSES -> CatalogueRoute(onOpenCourse = onOpenCourse)
                 MainTab.SHOP -> ShopRoute(onOpenProduct = onOpenProduct)
-                MainTab.ACCOUNT -> AccountRoute(onSignedOut = onSignedOut)
+                MainTab.ACCOUNT -> AccountRoute(onSignedOut = onSignedOut, onBuyPlan = onBuyPlan)
             }
         }
     }
@@ -175,7 +176,7 @@ private fun ShopRoute(onOpenProduct: (Int) -> Unit) {
 }
 
 @Composable
-private fun AccountRoute(onSignedOut: () -> Unit) {
+private fun AccountRoute(onSignedOut: () -> Unit, onBuyPlan: (String) -> Unit) {
     val dashboardViewModel: DashboardViewModel = hiltViewModel()
     val homeViewModel: HomeViewModel = hiltViewModel()
     val sessionViewModel: SessionViewModel = hiltViewModel()
@@ -213,6 +214,7 @@ private fun AccountRoute(onSignedOut: () -> Unit) {
         onRetryOrders = dashboardViewModel::refresh,
         onThemeSelected = themeViewModel::select,
         onSignOut = sessionViewModel::logout,
+        onBuyPlan = onBuyPlan,
         onOpenMembership = {
             ExternalLinks.open(context, ExternalLinks.MEMBERSHIP_URL)
         },

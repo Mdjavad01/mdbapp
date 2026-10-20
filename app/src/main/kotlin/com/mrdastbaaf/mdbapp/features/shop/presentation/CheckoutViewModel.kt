@@ -7,8 +7,8 @@ import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.error.Failure
 import com.mrdastbaaf.mdbapp.core.ui.state.UiMessage
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
+import com.mrdastbaaf.mdbapp.features.account.domain.repository.AccountRepository
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.CheckoutSession
-import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopProduct
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShippingDetails
 import com.mrdastbaaf.mdbapp.features.shop.domain.repository.ShopRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,8 +26,20 @@ sealed interface PaymentOutcome {
     data class Failed(val message: String?) : PaymentOutcome
 }
 
+/**
+ * What is being bought.
+ *
+ * A physical product needs a shipping address; a subscription does not, and
+ * asking for one would be nonsense. The flag drives the form, not the price.
+ */
+data class CheckoutSummary(
+    val title: String,
+    val priceToman: Long,
+    val requiresShipping: Boolean,
+)
+
 data class CheckoutUiState(
-    val product: ShopProduct? = null,
+    val summary: CheckoutSummary? = null,
     val fullName: String = "",
     val phone: String = "",
     val address: String = "",
@@ -41,7 +53,8 @@ data class CheckoutUiState(
 )
 
 /**
- * The checkout: a shipping form, an order, and the gateway.
+ * The checkout, for both things the site sells: a physical product and a
+ * subscription.
  *
  * The payment itself happens in a WebView on Zibal's own page — the app never
  * touches card data. When the gateway redirects to the bridge's callback URL the
@@ -51,17 +64,45 @@ data class CheckoutUiState(
 @HiltViewModel
 class CheckoutViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val repository: ShopRepository,
+    private val shop: ShopRepository,
+    private val account: AccountRepository,
 ) : ViewModel() {
 
-    private val productId: Int = savedStateHandle.get<Int>(ARG_PRODUCT_ID) ?: 0
+    private val productId: Int? = savedStateHandle.get<Int>(ARG_PRODUCT_ID)?.takeIf { it > 0 }
+    private val planId: String? = savedStateHandle.get<String>(ARG_PLAN_ID)?.takeIf { it.isNotBlank() }
 
     private val _state = MutableStateFlow(CheckoutUiState())
     val state: StateFlow<CheckoutUiState> = _state.asStateFlow()
 
     init {
+        loadSummary()
+    }
+
+    private fun loadSummary() {
         viewModelScope.launch {
-            _state.update { it.copy(product = repository.product(productId)) }
+            val summary = when {
+                productId != null -> shop.product(productId)?.let { product ->
+                    CheckoutSummary(
+                        title = product.title,
+                        priceToman = product.priceToman,
+                        requiresShipping = true,
+                    )
+                }
+
+                planId != null -> account.plans().getOrNull()
+                    ?.firstOrNull { it.id == planId }
+                    ?.let { plan ->
+                        CheckoutSummary(
+                            title = plan.title,
+                            priceToman = plan.priceToman,
+                            requiresShipping = false,
+                        )
+                    }
+
+                else -> null
+            }
+
+            _state.update { it.copy(summary = summary) }
         }
     }
 
@@ -78,24 +119,34 @@ class CheckoutViewModel @Inject constructor(
 
     fun submit() {
         val current = _state.value
-        if (current.isSubmitting || current.product == null) return
+        val summary = current.summary ?: return
+        if (current.isSubmitting) return
 
-        validate(current)?.let { message ->
-            _state.update { it.copy(error = message) }
-            return
+        if (summary.requiresShipping) {
+            validate(current)?.let { message ->
+                _state.update { it.copy(error = message) }
+                return
+            }
         }
 
         viewModelScope.launch {
             _state.update { it.copy(isSubmitting = true, error = null) }
 
-            val shipping = ShippingDetails(
-                fullName = current.fullName.trim(),
-                phone = current.phone.trim(),
-                address = current.address.trim(),
-                postalCode = current.postalCode.trim(),
-            )
+            val result = if (productId != null) {
+                shop.createOrder(
+                    productId = productId,
+                    shipping = ShippingDetails(
+                        fullName = current.fullName.trim(),
+                        phone = current.phone.trim(),
+                        address = current.address.trim(),
+                        postalCode = current.postalCode.trim(),
+                    ),
+                )
+            } else {
+                shop.createPlanOrder(planId.orEmpty())
+            }
 
-            repository.createOrder(productId, shipping).fold(
+            result.fold(
                 onSuccess = { session ->
                     _state.update { it.copy(isSubmitting = false, session = session) }
                 },
@@ -131,7 +182,7 @@ class CheckoutViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(session = null, isVerifying = true) }
 
-            repository.verifyPayment(trackId, success, cbToken).fold(
+            shop.verifyPayment(trackId, success, cbToken).fold(
                 onSuccess = { message ->
                     _state.update {
                         it.copy(isVerifying = false, outcome = PaymentOutcome.Success(message))
@@ -202,6 +253,7 @@ class CheckoutViewModel @Inject constructor(
 
     companion object {
         const val ARG_PRODUCT_ID = "productId"
+        const val ARG_PLAN_ID = "planId"
 
         private val PHONE = Regex("^09\\d{9}$")
         private val POSTAL = Regex("^\\d{10}$")

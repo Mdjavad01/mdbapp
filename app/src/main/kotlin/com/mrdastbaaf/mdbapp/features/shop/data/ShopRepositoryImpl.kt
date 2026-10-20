@@ -4,7 +4,9 @@ import com.mrdastbaaf.mdbapp.core.error.Failure
 import com.mrdastbaaf.mdbapp.core.network.MdbApi
 import com.mrdastbaaf.mdbapp.core.network.safeApiCall
 import com.mrdastbaaf.mdbapp.core.util.HtmlText
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.PlanOrderRequestDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderRequestDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderResponseDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopProductDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.VerifyPaymentRequestDto
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.CheckoutSession
@@ -70,22 +72,28 @@ class ShopRepositoryImpl @Inject constructor(
                 postalCode = shipping.postalCode,
             ),
         )
-    }.mapCatching { dto ->
-        val orderId = dto.orderId?.takeIf { it.isNotBlank() }
-        val trackId = dto.trackId
-        val paymentUrl = dto.paymentUrl?.takeIf { it.isNotBlank() }
+    }.mapCatching { it.toSession() }
 
-        if (orderId == null || trackId == null || paymentUrl == null) {
+    private fun ShopOrderResponseDto.toSession(): CheckoutSession {
+        val orderId = orderId?.takeIf { it.isNotBlank() }
+        val track = trackId
+        val url = paymentUrl?.takeIf { it.isNotBlank() }
+
+        if (orderId == null || track == null || url == null) {
             throw Failure.InvalidResponse("اطلاعات پرداخت از سرور ناقص بود.")
         }
 
-        CheckoutSession(
+        return CheckoutSession(
             orderId = orderId,
-            orderNumber = dto.orderNumber.orEmpty(),
-            trackId = trackId,
-            paymentUrl = paymentUrl,
+            orderNumber = orderNumber.orEmpty(),
+            trackId = track,
+            paymentUrl = url,
         )
     }
+
+    override suspend fun createPlanOrder(planId: String): Result<CheckoutSession> =
+        safeApiCall(json) { api.initiatePlanOrder(PlanOrderRequestDto(planId = planId)) }
+            .mapCatching { it.toSession() }
 
     override suspend fun verifyPayment(
         trackId: Long,

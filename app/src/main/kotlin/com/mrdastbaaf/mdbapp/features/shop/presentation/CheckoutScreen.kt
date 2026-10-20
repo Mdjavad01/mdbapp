@@ -56,7 +56,6 @@ import androidx.compose.ui.res.stringResource
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
-import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopProduct
 
 /**
  * Checkout: shipping details, then the gateway — without leaving the app.
@@ -102,8 +101,10 @@ fun CheckoutScreen(
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
-            state.product?.let { OrderSummary(it) }
+            state.summary?.let { OrderSummary(it) }
 
+            // A subscription needs no address; asking for one would be noise.
+            if (state.summary?.requiresShipping == true) {
             Text(
                 text = stringResource(R.string.checkout_shipping),
                 style = MaterialTheme.typography.titleSmall,
@@ -153,6 +154,7 @@ fun CheckoutScreen(
                     imeAction = ImeAction.Done,
                 ),
             )
+            }
 
             state.error?.let { message ->
                 Text(
@@ -164,7 +166,7 @@ fun CheckoutScreen(
 
             Button(
                 onClick = viewModel::submit,
-                enabled = state.product != null && !state.isSubmitting,
+                enabled = state.summary != null && !state.isSubmitting,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(Spacing.minTouchTarget),
@@ -211,7 +213,7 @@ fun CheckoutScreen(
 // ── Pieces ──────────────────────────────────────────────────────────────────
 
 @Composable
-private fun OrderSummary(product: ShopProduct) {
+private fun OrderSummary(summary: CheckoutSummary) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -230,7 +232,7 @@ private fun OrderSummary(product: ShopProduct) {
                 color = MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = product.title,
+                text = summary.title,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 2,
@@ -247,7 +249,7 @@ private fun OrderSummary(product: ShopProduct) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = PersianFormat.formatToman(product.priceToman),
+                    text = PersianFormat.formatToman(summary.priceToman),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )

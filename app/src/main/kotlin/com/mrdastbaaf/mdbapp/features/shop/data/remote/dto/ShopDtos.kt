@@ -51,6 +51,15 @@ data class ShopOrderRequestDto(
     @SerialName("postal_code") val postalCode: String,
 )
 
+/**
+ * Subscription purchase. The bridge branches on which id is present, so a plan
+ * order must send `plan_id` and **no** `product_id`.
+ */
+@Serializable
+data class PlanOrderRequestDto(
+    @SerialName("plan_id") val planId: String,
+)
+
 @Serializable
 data class ShopOrderResponseDto(
     val orderId: String? = null,

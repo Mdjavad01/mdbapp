@@ -11,6 +11,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -176,6 +177,32 @@ class ShopRepositoryImplTest {
         assertEquals("ord_1", session.orderId)
         assertEquals(987_654L, session.trackId)
         assertEquals("https://gateway.zibal.ir/start/987654", session.paymentUrl)
+    }
+
+    @Test
+    fun `a subscription order sends plan_id and never product_id`() = runTest {
+        server.enqueue(
+            jsonResponse(
+                200,
+                """
+                {
+                  "orderId": "ord_2",
+                  "orderNumber": "MD-2002",
+                  "trackId": 111222,
+                  "paymentUrl": "https://gateway.zibal.ir/start/111222"
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val session = repository.createPlanOrder("gold-12").getOrThrow()
+
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("\"plan_id\":\"gold-12\""))
+        // The bridge branches on which id is present; sending both would create
+        // the wrong kind of order.
+        assertFalse(body.contains("product_id"))
+        assertEquals(111_222L, session.trackId)
     }
 
     @Test

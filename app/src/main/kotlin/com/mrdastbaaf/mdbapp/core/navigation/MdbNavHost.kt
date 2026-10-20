@@ -107,6 +107,9 @@ fun MdbNavHost(
                 onOpenPage = { pageId ->
                     navController.navigate(Routes.page(pageId))
                 },
+                onBuyPlan = { planId ->
+                    navController.navigate(Routes.checkoutPlan(planId))
+                },
                 onSignedOut = { resetTo(Routes.LOGIN) },
             )
         }
@@ -146,9 +149,18 @@ fun MdbNavHost(
         // ── Checkout ────────────────────────────────────────────────────────
 
         composable(
-            route = Routes.CHECKOUT,
+            route = Routes.CHECKOUT_PRODUCT,
             arguments = listOf(
                 navArgument(CheckoutViewModel.ARG_PRODUCT_ID) { type = NavType.IntType },
+            ),
+        ) {
+            CheckoutScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Routes.CHECKOUT_PLAN,
+            arguments = listOf(
+                navArgument(CheckoutViewModel.ARG_PLAN_ID) { type = NavType.StringType },
             ),
         ) {
             CheckoutScreen(onBack = { navController.popBackStack() })
