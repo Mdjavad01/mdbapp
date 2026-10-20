@@ -1,5 +1,9 @@
 package com.mrdastbaaf.mdbapp.features.account.presentation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,20 +17,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,12 +39,15 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +59,7 @@ import com.mrdastbaaf.mdbapp.core.settings.ThemePreference
 import com.mrdastbaaf.mdbapp.core.ui.component.BrandTopAppBar
 import com.mrdastbaaf.mdbapp.core.ui.state.UiState
 import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
+import com.mrdastbaaf.mdbapp.core.ui.theme.Ruby
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 import com.mrdastbaaf.mdbapp.features.account.domain.model.MembershipPlan
@@ -63,11 +72,12 @@ import com.mrdastbaaf.mdbapp.features.auth.domain.model.UserProfile
 import com.mrdastbaaf.mdbapp.features.home.domain.model.ServerInfo
 
 /**
- * The account tab, shaped like the web app's dashboard: who you are, what your
- * subscription is, what you can buy, and what you have bought.
+ * The account tab.
  *
- * Written as a pure function of its state so every section can be previewed
- * without Hilt.
+ * Everything the user needs to know about themselves in one scroll: who they
+ * are, what their subscription is, what they can buy, and what they have
+ * bought. The sections arrive in a short stagger rather than all at once — one
+ * entrance, no continuous animation, so scrolling stays at full frame rate.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +97,8 @@ fun DashboardScreen(
     onOpenMembership: () -> Unit,
 ) {
     var showTechnical by rememberSaveable { mutableStateOf(false) }
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
 
     Scaffold(
         topBar = {
@@ -112,59 +124,44 @@ fun DashboardScreen(
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
-            ProfileHeader(profile)
-
-            MembershipCard(
-                membership = profile?.membership,
+            ProfileHero(
+                profile = profile,
                 onOpenMembership = onOpenMembership,
             )
 
-            SectionTitle(stringResource(R.string.dashboard_plans_title))
+            Reveal(entered, index = 0) {
+                SectionTitle(stringResource(R.string.dashboard_plans_title))
 
-            SectionContent(
-                state = plans,
-                emptyText = stringResource(R.string.dashboard_plans_empty),
-                onRetry = onRetryPlans,
-            ) { list ->
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-                ) {
-                    items(items = list, key = { it.id }) { plan ->
-                        PlanCard(plan = plan, onBuy = { onBuyPlan(plan.id) })
-                    }
-                }
-            }
-
-            SectionTitle(stringResource(R.string.dashboard_orders_title))
-
-            SectionContent(
-                state = orders,
-                emptyText = stringResource(R.string.dashboard_orders_empty),
-                onRetry = onRetryOrders,
-            ) { list ->
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                    ),
-                ) {
-                    Column {
-                        list.forEachIndexed { index, order ->
-                            OrderRow(order)
-                            if (index != list.lastIndex) {
-                                HorizontalDivider(
-                                    color = MaterialTheme.colorScheme.outlineVariant,
-                                    modifier = Modifier.padding(horizontal = Spacing.md),
-                                )
-                            }
+                SectionContent(
+                    state = plans,
+                    emptyText = stringResource(R.string.dashboard_plans_empty),
+                    onRetry = onRetryPlans,
+                ) { list ->
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        itemsIndexed(items = list) { _, plan ->
+                            PlanCard(plan = plan, onBuy = { onBuyPlan(plan.id) })
                         }
                     }
                 }
             }
 
-            AppearanceCard(
-                preference = themePreference,
-                onSelected = onThemeSelected,
-            )
+            Reveal(entered, index = 1) {
+                SectionTitle(stringResource(R.string.dashboard_orders_title))
+
+                SectionContent(
+                    state = orders,
+                    emptyText = stringResource(R.string.dashboard_orders_empty),
+                    onRetry = onRetryOrders,
+                ) { list ->
+                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        list.forEach { order -> OrderCard(order) }
+                    }
+                }
+            }
+
+            Reveal(entered, index = 2) {
+                AppearanceCard(preference = themePreference, onSelected = onThemeSelected)
+            }
 
             TextButton(
                 onClick = { showTechnical = !showTechnical },
@@ -176,6 +173,7 @@ fun DashboardScreen(
                     } else {
                         stringResource(R.string.account_technical_show)
                     },
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
 
@@ -183,15 +181,39 @@ fun DashboardScreen(
                 TechnicalCard(serverInfo = serverInfo, isOffline = isOffline, onRetry = onRefresh)
             }
 
-            TextButton(
-                onClick = onSignOut,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = stringResource(R.string.dashboard_sign_out),
                     color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
+
+            Spacer(Modifier.height(Spacing.lg))
+        }
+    }
+}
+
+/**
+ * A one-shot entrance per section.
+ *
+ * The delay is index × 60 ms: enough to read as a sequence, short enough that
+ * the last section is on screen before the eye reaches it. Nothing animates
+ * afterwards, so a long scroll costs no extra frames.
+ */
+@Composable
+private fun Reveal(
+    visible: Boolean,
+    index: Int,
+    content: @Composable () -> Unit,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(durationMillis = 280, delayMillis = index * 60)) +
+            slideInVertically(tween(durationMillis = 340, delayMillis = index * 60)) { it / 12 },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            content()
         }
     }
 }
@@ -199,119 +221,122 @@ fun DashboardScreen(
 // ── Profile ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ProfileHeader(profile: UserProfile?) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = Spacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = profile?.fullName?.trim()?.take(1).orEmpty(),
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = profile?.fullName ?: stringResource(R.string.account_signed_out),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            if (profile != null) {
-                Text(
-                    text = PersianFormat.toPersianDigits(profile.maskedPhone),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-// ── Membership ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun MembershipCard(membership: Membership?, onOpenMembership: () -> Unit) {
+private fun ProfileHero(profile: UserProfile?, onOpenMembership: () -> Unit) {
+    val membership = profile?.membership
     val active = membership != null && membership.status == MembershipStatus.ACTIVE
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (active) {
-                // The gradient is painted by the Column below, so the card
-                // itself must not paint over it.
-                Color.Transparent
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerLow
-            },
-        ),
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(BrandGradient)
+            .padding(Spacing.lg),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (active) Modifier.background(BrandGradient) else Modifier)
-                .padding(Spacing.md),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = profile?.fullName?.trim()?.take(1).orEmpty(),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = profile?.fullName ?: stringResource(R.string.account_signed_out),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (profile != null) {
+                        Text(
+                            text = PersianFormat.toPersianDigits(profile.maskedPhone),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.82f),
+                        )
+                    }
+                }
+            }
+
             if (active && membership != null) {
-                Text(
-                    text = stringResource(
-                        R.string.dashboard_membership_active,
-                        membership.tier.label(),
-                    ),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = stringResource(
-                        R.string.dashboard_membership_days,
-                        PersianFormat.formatNumber(membership.daysRemaining.toLong()),
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.92f),
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    HeroPill(
+                        text = stringResource(
+                            R.string.dashboard_membership_active,
+                            membership.tier.label(),
+                        ),
+                    )
+                    HeroPill(
+                        text = stringResource(
+                            R.string.dashboard_membership_days,
+                            PersianFormat.formatNumber(membership.daysRemaining.toLong()),
+                        ),
+                    )
+                }
+
                 if (membership.formattedExpireDateJalali.isNotBlank()) {
                     Text(
                         text = stringResource(
                             R.string.account_membership_expires_on,
                             PersianFormat.toPersianDigits(membership.formattedExpireDateJalali),
                         ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.82f),
                     )
                 }
             } else {
-                Text(
-                    text = stringResource(R.string.dashboard_membership_none),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = stringResource(R.string.dashboard_membership_none_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(
-                    onClick = onOpenMembership,
-                    modifier = Modifier.padding(top = Spacing.sm),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
-                    Text(stringResource(R.string.access_renew))
+                    Text(
+                        text = stringResource(R.string.dashboard_membership_none_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Button(
+                        onClick = onOpenMembership,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Ruby,
+                        ),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.access_renew),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun HeroPill(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = Color.White,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.White.copy(alpha = 0.18f))
+            .padding(horizontal = Spacing.sm, vertical = 4.dp),
+    )
 }
 
 @Composable
@@ -326,20 +351,25 @@ private fun MembershipTier.label(): String = when (this) {
 
 @Composable
 private fun PlanCard(plan: MembershipPlan, onBuy: () -> Unit) {
+    val highlighted = plan.isPopular
+    val contentColor = if (highlighted) Color.White else MaterialTheme.colorScheme.onSurface
+    val mutedColor = if (highlighted) {
+        Color.White.copy(alpha = 0.88f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     Card(
-        modifier = Modifier.width(250.dp),
-        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.width(260.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (plan.isPopular) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerLow
-            },
+            containerColor = if (highlighted) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerLow,
         ),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (highlighted) Modifier.background(BrandGradient) else Modifier)
                 .padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
@@ -347,15 +377,20 @@ private fun PlanCard(plan: MembershipPlan, onBuy: () -> Unit) {
                 Text(
                     text = stringResource(R.string.dashboard_plan_popular),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    color = Color.White,
                     fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.2f))
+                        .padding(horizontal = Spacing.sm, vertical = 2.dp),
                 )
             }
 
             Text(
                 text = plan.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = contentColor,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -364,7 +399,7 @@ private fun PlanCard(plan: MembershipPlan, onBuy: () -> Unit) {
                 Text(
                     text = PersianFormat.toPersianDigits(plan.durationLabel),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = mutedColor,
                 )
             }
 
@@ -374,28 +409,39 @@ private fun PlanCard(plan: MembershipPlan, onBuy: () -> Unit) {
             ) {
                 Text(
                     text = PersianFormat.formatToman(plan.priceToman),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = contentColor,
                     fontWeight = FontWeight.Bold,
                 )
                 plan.originalPriceToman?.let { original ->
                     Text(
                         text = PersianFormat.formatToman(original),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = mutedColor,
                         textDecoration = TextDecoration.LineThrough,
                     )
                 }
             }
 
             plan.features.take(3).forEach { feature ->
-                Text(
-                    text = "• $feature",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = if (highlighted) Color.White else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = feature,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = mutedColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             Spacer(Modifier.height(Spacing.xs))
@@ -403,6 +449,14 @@ private fun PlanCard(plan: MembershipPlan, onBuy: () -> Unit) {
             Button(
                 onClick = onBuy,
                 modifier = Modifier.fillMaxWidth(),
+                colors = if (highlighted) {
+                    ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = Ruby,
+                    )
+                } else {
+                    ButtonDefaults.buttonColors()
+                },
             ) {
                 Text(stringResource(R.string.dashboard_plan_buy))
             }
@@ -413,53 +467,62 @@ private fun PlanCard(plan: MembershipPlan, onBuy: () -> Unit) {
 // ── Orders ──────────────────────────────────────────────────────────────────
 
 @Composable
-private fun OrderRow(order: Order) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(Spacing.md),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+private fun OrderCard(order: Order) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
-            Text(
-                text = order.title.ifBlank { order.number },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.width(Spacing.sm))
-            StatusChip(order.status)
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-        ) {
-            Text(
-                text = PersianFormat.formatToman(order.amountToman),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (order.createdAt.isNotBlank()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = PersianFormat.toPersianDigits(order.createdAt.substringBefore(' ')),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = order.title.ifBlank { order.number },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(Spacing.sm))
+                StatusChip(order.status)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = PersianFormat.formatToman(order.amountToman),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (order.createdAt.isNotBlank()) {
+                    Text(
+                        text = PersianFormat.toPersianDigits(order.createdAt.substringBefore(' ')),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            order.adminNote?.let { note ->
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
                 )
             }
-        }
-
-        order.adminNote?.let { note ->
-            Text(
-                text = note,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
         }
     }
 }
@@ -472,12 +535,27 @@ private fun StatusChip(status: OrderStatus) {
         else -> MaterialTheme.colorScheme.error
     }
 
-    Text(
-        text = status.label(),
-        style = MaterialTheme.typography.labelSmall,
-        color = color,
-        fontWeight = FontWeight.Medium,
-    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = 0.12f))
+            .padding(horizontal = Spacing.sm, vertical = 3.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        Text(
+            text = status.label(),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.Medium,
+        )
+    }
 }
 
 @Composable
@@ -502,6 +580,7 @@ private fun AppearanceCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -559,6 +638,7 @@ private fun TechnicalCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -628,12 +708,24 @@ private fun InfoRow(label: String, value: String) {
 
 @Composable
 private fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         modifier = Modifier.padding(top = Spacing.sm),
-    )
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 4.dp, height = 16.dp)
+                .clip(RoundedCornerShape(50))
+                .background(MaterialTheme.colorScheme.primary),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
 }
 
 /**
