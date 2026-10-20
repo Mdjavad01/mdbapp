@@ -159,7 +159,7 @@ private fun LoginContent(
                             singleLine = true,
                             shape = RoundedCornerShape(16.dp),
                             isError = state.errorMessage != null,
-                            textStyle = MaterialTheme.typography.titleMedium,
+                            textStyle = MaterialTheme.typography.titleMedium.copy(textAlign = TextAlign.Start),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = MaterialTheme.colorScheme.primary,
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,

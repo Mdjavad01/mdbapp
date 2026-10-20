@@ -129,6 +129,10 @@ class OtpViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             isSubmitting = false,
+                            // Clear the code as well: a full field rejects the
+                            // next keystroke, so leaving it filled traps the
+                            // user with a wrong code they cannot overwrite.
+                            code = "",
                             // `invalid_otp` and `otp_locked` both arrive with the
                             // remaining-attempt count already in the message.
                             errorMessage = failure.toUiMessage(),

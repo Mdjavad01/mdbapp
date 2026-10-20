@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +46,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -294,9 +297,10 @@ private fun DigitRow(
 
     BasicTextField(
         value = code,
-        onValueChange = { value ->
-            if (value.length <= length) onCodeChange(value)
-        },
+        // No length guard here: a guard that silently drops the seventh
+        // character makes the field feel dead once it is full. The ViewModel
+        // already truncates.
+        onValueChange = onCodeChange,
         modifier = Modifier
             .fillMaxWidth()
             .offset { IntOffset(shake.value.roundToInt(), 0) }
@@ -310,6 +314,10 @@ private fun DigitRow(
         ),
         keyboardActions = KeyboardActions(onDone = { onSubmit() }),
         decorationBox = {
+            // Digits read left-to-right even in a right-to-left language, so the
+            // boxes fill left-to-right: box 1 on the left, box 6 on the right.
+            // Laying them out RTL makes a typed 123456 look like 654321.
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -349,6 +357,7 @@ private fun DigitRow(
                         )
                     }
                 }
+            }
             }
         },
     )
