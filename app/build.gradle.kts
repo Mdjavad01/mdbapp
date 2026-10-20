@@ -1,6 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 // Explicit: inside a Gradle Kotlin script `java` resolves to the JavaPluginExtension.
 import java.io.File
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -31,8 +32,8 @@ android {
         // versionCode is lower than the installed one, and a same-code reinstall
         // over a build signed with a different key is what produced the
         // "package conflicts with an existing package" error.
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 6
+        versionName = "1.0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -96,6 +97,27 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+
+        /**
+         * Release signing, read from `keystore.properties` at the repo root.
+         *
+         * The file is gitignored and `keystore.properties.example` documents its
+         * four keys. When it is absent — CI, a fresh clone — the release build is
+         * simply left unsigned: it still compiles and still runs R8, which is
+         * what the pipeline checks. Only uploading to Play needs the real key.
+         */
+        create("release") {
+            val propertiesFile = rootProject.file("keystore.properties")
+            if (propertiesFile.exists()) {
+                val properties = Properties().apply {
+                    propertiesFile.inputStream().use { load(it) }
+                }
+                storeFile = rootProject.file(properties.getProperty("storeFile"))
+                storePassword = properties.getProperty("storePassword")
+                keyAlias = properties.getProperty("keyAlias")
+                keyPassword = properties.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -113,6 +135,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Unsigned when the keystore is not present, rather than silently
+            // signed with the debug key — a debug-signed "release" is the kind
+            // of mistake that only surfaces when Play rejects the upload.
+            if (rootProject.file("keystore.properties").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -187,6 +215,18 @@ tasks.matching { it.name == "assembleDevDebug" }.configureEach {
             defaultApk.delete()
         }
     }
+}
+
+/**
+ * The release build rides on `test`.
+ *
+ * CI runs `assembleDevDebug test lint`, and its workflow file cannot be edited
+ * from here (the push token has no `workflow` scope). Hanging the release build
+ * off `test` means every run proves that R8 can actually shrink the app — the
+ * only way to find a missing keep rule before release day rather than after.
+ */
+tasks.matching { it.name == "test" }.configureEach {
+    dependsOn("assembleProdRelease")
 }
 
 kotlin {

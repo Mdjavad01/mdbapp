@@ -51,6 +51,7 @@ import androidx.media3.ui.PlayerView
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.error.Failure
 import com.mrdastbaaf.mdbapp.core.security.SecureScreen
+import com.mrdastbaaf.mdbapp.core.ui.component.WatermarkOverlay
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.ExternalLinks
 import com.mrdastbaaf.mdbapp.features.player.domain.model.PlaybackSession
@@ -240,17 +241,12 @@ private fun VideoSurface(
             modifier = Modifier.fillMaxSize(),
         )
 
-        if (watermarkText.isNotBlank()) {
-            Text(
-                text = watermarkText,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(Spacing.md),
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.55f),
-                fontWeight = FontWeight.Medium,
-            )
-        }
+        // Tiled and drifting: a corner label is trivially cropped out of a
+        // screen recording, this is not.
+        WatermarkOverlay(
+            text = watermarkText,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
