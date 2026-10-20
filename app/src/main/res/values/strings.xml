@@ -109,6 +109,7 @@
     <string name="catalogue_empty_all">در حال حاضر دوره‌ای برای نمایش وجود ندارد.</string>
     <string name="catalogue_empty_mine">هنوز دوره‌ای نخریده‌اید.</string>
     <string name="catalogue_owned">خریداری‌شده</string>
+    <string name="catalogue_free_preview_badge">%1$s جلسه رایگان</string>
     <string name="catalogue_free">رایگان</string>
     <string name="catalogue_lessons_count">%1$s جلسه</string>
     <string name="catalogue_placeholder">دوره</string>

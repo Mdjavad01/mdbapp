@@ -1,5 +1,7 @@
 package com.mrdastbaaf.mdbapp.features.catalogue.presentation
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,20 +20,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -48,12 +52,12 @@ import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 import com.mrdastbaaf.mdbapp.features.catalogue.domain.model.Course
 
 /**
- * The catalogue tab.
+ * The course list.
  *
- * Written as a pure function of its state so it can be previewed without Hilt —
- * the route composable in the navigation graph is what injects the ViewModel.
+ * A segmented control rather than two chips: the choice is binary and permanent,
+ * and a segmented control says "one of these two" without the extra chrome two
+ * separate chips carry.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CatalogueScreen(
     state: CatalogueUiState,
@@ -125,7 +129,6 @@ fun CatalogueScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModeSelector(
     selected: CatalogueMode,
@@ -134,18 +137,59 @@ private fun ModeSelector(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
-        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm)
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(4.dp),
     ) {
-        FilterChip(
+        Segment(
+            label = stringResource(R.string.catalogue_tab_all),
             selected = selected == CatalogueMode.ALL,
             onClick = { onSelect(CatalogueMode.ALL) },
-            label = { Text(stringResource(R.string.catalogue_tab_all)) },
         )
-        FilterChip(
+        Segment(
+            label = stringResource(R.string.catalogue_tab_mine),
             selected = selected == CatalogueMode.MINE,
             onClick = { onSelect(CatalogueMode.MINE) },
-            label = { Text(stringResource(R.string.catalogue_tab_mine)) },
+        )
+    }
+}
+
+@Composable
+private fun RowScope.Segment(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val background by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        animationSpec = tween(durationMillis = 220),
+        label = "segment-bg",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.onPrimary
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "segment-fg",
+    )
+
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(50))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = contentColor,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
         )
     }
 }
@@ -156,6 +200,7 @@ private fun CourseCard(course: Course, onClick: (() -> Unit)?) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = onClick != null) { onClick?.invoke() },
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -163,6 +208,7 @@ private fun CourseCard(course: Course, onClick: (() -> Unit)?) {
         Row(
             modifier = Modifier.padding(Spacing.sm),
             horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             CourseThumbnail(course)
 
@@ -174,6 +220,7 @@ private fun CourseCard(course: Course, onClick: (() -> Unit)?) {
                     text = course.title,
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -189,7 +236,7 @@ private fun CourseCard(course: Course, onClick: (() -> Unit)?) {
                     )
                 }
 
-                Spacer(Modifier.height(Spacing.xs))
+                Spacer(Modifier.height(2.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -207,6 +254,12 @@ private fun CourseCard(course: Course, onClick: (() -> Unit)?) {
                     )
                 }
             }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            )
         }
     }
 }
@@ -215,8 +268,8 @@ private fun CourseCard(course: Course, onClick: (() -> Unit)?) {
 private fun CourseThumbnail(course: Course) {
     Box(
         modifier = Modifier
-            .size(88.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .size(104.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
         contentAlignment = Alignment.Center,
     ) {
@@ -233,6 +286,33 @@ private fun CourseThumbnail(course: Course) {
                 text = stringResource(R.string.catalogue_placeholder),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        // One badge, in priority order: owned beats free-preview, because a
+        // bought course is the more useful fact about it.
+        val badge = when {
+            course.owned -> stringResource(R.string.catalogue_owned) to MaterialTheme.colorScheme.primary
+            course.freePreviewCount > 0 -> stringResource(
+                R.string.catalogue_free_preview_badge,
+                PersianFormat.formatNumber(course.freePreviewCount.toLong()),
+            ) to MaterialTheme.colorScheme.tertiary
+            else -> null
+        }
+
+        badge?.let { (text, color) ->
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(color)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
     }
@@ -260,9 +340,9 @@ private fun PriceLabel(course: Course) {
 
     Text(
         text = text,
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.titleSmall,
         color = color,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
     )
 }
 
