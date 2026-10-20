@@ -16,13 +16,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,14 +36,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,6 +53,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.res.stringResource
 import com.mrdastbaaf.mdbapp.R
+import com.mrdastbaaf.mdbapp.core.ui.component.BrandTopAppBar
+import com.mrdastbaaf.mdbapp.core.ui.component.GradientButton
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 
@@ -74,8 +75,8 @@ fun CheckoutScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.checkout_title)) },
+            BrandTopAppBar(
+                title = stringResource(R.string.checkout_title),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -84,11 +85,6 @@ fun CheckoutScreen(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
             )
         },
     ) { innerPadding ->
@@ -115,6 +111,7 @@ fun CheckoutScreen(
                 value = state.fullName,
                 onValueChange = viewModel::onNameChange,
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
                 label = { Text(stringResource(R.string.checkout_name)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -124,6 +121,7 @@ fun CheckoutScreen(
                 value = PersianFormat.toPersianDigits(state.phone),
                 onValueChange = viewModel::onPhoneChange,
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
                 label = { Text(stringResource(R.string.checkout_phone)) },
                 placeholder = { Text(stringResource(R.string.auth_phone_hint)) },
                 singleLine = true,
@@ -139,6 +137,7 @@ fun CheckoutScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp),
+                shape = RoundedCornerShape(16.dp),
                 label = { Text(stringResource(R.string.checkout_address)) },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             )
@@ -147,6 +146,7 @@ fun CheckoutScreen(
                 value = PersianFormat.toPersianDigits(state.postalCode),
                 onValueChange = viewModel::onPostalChange,
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
                 label = { Text(stringResource(R.string.checkout_postal)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(
@@ -164,24 +164,12 @@ fun CheckoutScreen(
                 )
             }
 
-            Button(
+            GradientButton(
+                text = stringResource(R.string.checkout_pay),
                 onClick = viewModel::submit,
-                enabled = state.summary != null && !state.isSubmitting,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(Spacing.minTouchTarget),
-            ) {
-                if (state.isSubmitting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .padding(end = Spacing.sm)
-                            .size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-                Text(stringResource(R.string.checkout_pay))
-            }
+                enabled = state.summary != null,
+                isLoading = state.isSubmitting,
+            )
 
             Spacer(Modifier.height(Spacing.lg))
         }
@@ -250,7 +238,8 @@ private fun OrderSummary(summary: CheckoutSummary) {
                 )
                 Text(
                     text = PersianFormat.formatToman(summary.priceToman),
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }

@@ -116,6 +116,7 @@
 
     <!-- ===================== Course detail ===================== -->
     <string name="course_detail_title">جزئیات دوره</string>
+    <string name="course_detail_start">شروع دوره</string>
     <string name="course_detail_lessons">سرفصل‌ها (%1$s جلسه)</string>
     <string name="course_detail_free_preview">پیش‌نمایش رایگان</string>
     <string name="course_detail_locked">نیازمند اشتراک</string>
