@@ -32,8 +32,8 @@ android {
         // versionCode is lower than the installed one, and a same-code reinstall
         // over a build signed with a different key is what produced the
         // "package conflicts with an existing package" error.
-        versionCode = 9
-        versionName = "1.0.8"
+        versionCode = 10
+        versionName = "1.0.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

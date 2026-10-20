@@ -1,5 +1,9 @@
 package com.mrdastbaaf.mdbapp.features.appcontent.presentation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,10 +16,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -24,8 +30,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,19 +37,27 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.ui.component.AsyncStateView
 import com.mrdastbaaf.mdbapp.core.ui.component.BrandTopAppBar
+import com.mrdastbaaf.mdbapp.core.ui.component.KilimPattern
 import com.mrdastbaaf.mdbapp.core.ui.state.UiState
 import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
 import com.mrdastbaaf.mdbapp.core.ui.theme.Ruby
@@ -56,14 +68,16 @@ import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.Hero
 import com.mrdastbaaf.mdbapp.features.catalogue.domain.model.Course
 
 /**
- * The landing screen.
+ * The landing screen — the one that has to look like the product.
  *
- * All copy comes from `GET /app-ui`, so the owner can change the headline,
- * the CTAs and the featured list from the WordPress panel without a release.
- * The layout is fixed: badge, headline, two CTAs, three stats, then the sections
- * the app knows how to draw.
+ * The hero is the brand gradient with a drawn kilim lattice over it. A carpet
+ * photograph was the obvious idea and the wrong one: it is busy exactly where
+ * the headline needs quiet, it fights dark mode, and it would add a megabyte to
+ * the APK for something a Canvas draws in a few hundred bytes.
+ *
+ * All copy comes from `GET /app-ui`, so the owner can change the headline, the
+ * CTAs and the featured list without a release. The layout is fixed.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     state: UiState<HomeUiState>,
@@ -74,6 +88,9 @@ fun HomeScreen(
     onBrowseCourses: () -> Unit,
     onOpenMembership: () -> Unit,
 ) {
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+
     Scaffold(
         topBar = {
             BrandTopAppBar(
@@ -105,21 +122,25 @@ fun HomeScreen(
             ) {
                 home.hero?.let { hero ->
                     item(key = "hero") {
-                        HeroCard(
-                            hero = hero,
-                            onPrimary = onBrowseCourses,
-                            onSecondary = onOpenMembership,
-                        )
+                        Reveal(entered, index = 0) {
+                            HeroCard(
+                                hero = hero,
+                                onPrimary = onBrowseCourses,
+                                onSecondary = onOpenMembership,
+                            )
+                        }
                     }
                 }
 
                 if (home.featured.isNotEmpty()) {
                     item(key = "featured-title") {
-                        SectionHeader(
-                            title = home.featuredTitle
-                                ?: stringResource(R.string.home_featured_fallback),
-                            subtitle = home.featuredSubtitle,
-                        )
+                        Reveal(entered, index = 1) {
+                            SectionHeader(
+                                title = home.featuredTitle
+                                    ?: stringResource(R.string.home_featured_fallback),
+                                subtitle = home.featuredSubtitle,
+                            )
+                        }
                     }
                     item(key = "featured-row") {
                         LazyRow(
@@ -131,9 +152,7 @@ fun HomeScreen(
                             itemsIndexed(items = home.featured) { _, course ->
                                 FeaturedCourseCard(
                                     course = course,
-                                    onClick = {
-                                        course.productId?.let(onOpenCourse)
-                                    },
+                                    onClick = { course.productId?.let(onOpenCourse) },
                                 )
                             }
                         }
@@ -142,17 +161,32 @@ fun HomeScreen(
 
                 if (home.pages.isNotEmpty()) {
                     item(key = "pages-title") {
-                        SectionHeader(
-                            title = stringResource(R.string.home_pages_title),
-                            subtitle = null,
-                        )
+                        Reveal(entered, index = 2) {
+                            SectionHeader(
+                                title = stringResource(R.string.home_pages_title),
+                                subtitle = null,
+                            )
+                        }
                     }
                     item(key = "pages") {
-                        PagesCard(pages = home.pages, onOpenPage = onOpenPage)
+                        Reveal(entered, index = 3) {
+                            PagesCard(pages = home.pages, onOpenPage = onOpenPage)
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun Reveal(visible: Boolean, index: Int, content: @Composable () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(durationMillis = 300, delayMillis = index * 70)) +
+            slideInVertically(tween(durationMillis = 380, delayMillis = index * 70)) { it / 12 },
+    ) {
+        content()
     }
 }
 
@@ -167,12 +201,34 @@ private fun HeroCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(Spacing.md)
-            .clip(RoundedCornerShape(24.dp))
-            .background(BrandGradient)
-            .padding(Spacing.lg),
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm)
+            .clip(RoundedCornerShape(28.dp))
+            .background(BrandGradient),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        // Texture, then depth. Both are drawn behind the content and neither
+        // animates, so the hero costs one frame.
+        KilimPattern(modifier = Modifier.matchParentSize(), alpha = 0.13f)
+
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.10f),
+                            Color.Transparent,
+                            Color.Black.copy(alpha = 0.14f),
+                        ),
+                    ),
+                ),
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.lg, vertical = Spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        ) {
             if (hero.badgeText.isNotBlank()) {
                 Text(
                     text = hero.badgeText,
@@ -188,9 +244,10 @@ private fun HeroCard(
 
             Text(
                 text = hero.headline,
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.headlineMedium,
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
+                lineHeight = 38.sp,
             )
 
             if (hero.subheadline.isNotBlank()) {
@@ -198,14 +255,14 @@ private fun HeroCard(
                     text = hero.subheadline,
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.9f),
+                    lineHeight = 22.sp,
                 )
             }
 
             Spacer(Modifier.height(Spacing.xs))
 
-            // Stacked, full width. Side by side, a long Persian CTA label
-            // collapses into a one-letter-per-line sliver — the row gives each
-            // button half the width regardless of how much text it holds.
+            // Stacked, full width: side by side, a long Persian CTA collapses
+            // into a one-letter-per-line sliver.
             Button(
                 onClick = onPrimary,
                 modifier = Modifier.fillMaxWidth(),
@@ -220,6 +277,7 @@ private fun HeroCard(
                     },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
 
@@ -227,9 +285,7 @@ private fun HeroCard(
                 OutlinedButton(
                     onClick = onSecondary,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = Color.White,
-                    ),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
                 ) {
                     Text(
                         text = hero.ctaSecondaryText,
@@ -240,15 +296,25 @@ private fun HeroCard(
             }
 
             if (hero.stats.isNotEmpty()) {
-                Spacer(Modifier.height(Spacing.sm))
+                Spacer(Modifier.height(Spacing.xs))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Equal thirds. Without the weight the longest label wins the
-                    // space and the numbers overlap each other.
-                    hero.stats.forEach { stat ->
-                        Column(modifier = Modifier.weight(1f)) {
+                    hero.stats.forEachIndexed { index, stat ->
+                        if (index > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(30.dp)
+                                    .background(Color.White.copy(alpha = 0.18f)),
+                            )
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = Spacing.sm),
+                        ) {
                             Text(
                                 text = PersianFormat.toPersianDigits(stat.value),
                                 style = MaterialTheme.typography.titleMedium,
@@ -285,16 +351,29 @@ private fun SectionHeader(title: String, subtitle: String?) {
         ),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 4.dp, height = 16.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         if (!subtitle.isNullOrBlank()) {
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 12.dp),
             )
         }
     }
@@ -304,9 +383,9 @@ private fun SectionHeader(title: String, subtitle: String?) {
 private fun FeaturedCourseCard(course: Course, onClick: () -> Unit) {
     Card(
         modifier = Modifier
-            .width(190.dp)
+            .width(200.dp)
             .clickable(enabled = course.productId != null, onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -315,7 +394,7 @@ private fun FeaturedCourseCard(course: Course, onClick: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(110.dp)
+                    .height(120.dp)
                     .background(MaterialTheme.colorScheme.surfaceContainerHighest),
             ) {
                 course.imageUrl?.let { url ->
@@ -336,6 +415,7 @@ private fun FeaturedCourseCard(course: Course, onClick: () -> Unit) {
                     text = course.title,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -345,8 +425,8 @@ private fun FeaturedCourseCard(course: Course, onClick: () -> Unit) {
                     } else {
                         PersianFormat.formatToman(course.priceToman)
                     },
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -360,6 +440,7 @@ private fun PagesCard(pages: List<AppPage>, onOpenPage: (String) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = Spacing.md),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -372,23 +453,44 @@ private fun PagesCard(pages: List<AppPage>, onOpenPage: (String) -> Unit) {
                         .clickable { onOpenPage(page.id) }
                         .padding(horizontal = Spacing.md, vertical = Spacing.sm),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                        )
+                    }
+
                     Text(
                         text = page.title,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
+
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     )
                 }
+
                 if (index != pages.lastIndex) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(horizontal = Spacing.md),
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 52.dp)
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                     )
                 }
             }
