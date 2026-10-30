@@ -26,6 +26,10 @@
 
 .mrd-scope { max-width: 1080px; }
 
+/* صفحهٔ فیش‌ها نُه ستون دارد؛ در ۱۰۸۰px هر ستون ~۸۷px می‌شد و ستون «عملیات»
+   می‌شکست. فقط همین صفحه عریض می‌شود — فرم‌های کوتاه همان ۱۰۸۰ می‌مانند. */
+.mrd-scope.mrd-scope--wide { max-width: 1680px; }
+
 .mrd-hero {
 	display: flex;
 	align-items: center;
@@ -198,6 +202,15 @@
 	overflow: auto;
 	margin: 14px 0;
 }
+
+/* جدول فشرده: پدینگ سلول کمتر، و عرض کمینه تا جدول به‌جای له‌شدن اسکرول کند. */
+.mrd-table-wrap--dense .widefat { min-width: 1120px; }
+
+.mrd-table-wrap--dense .widefat th,
+.mrd-table-wrap--dense .widefat td { padding: 10px 10px; }
+
+/* دکمه‌های تایید/رد نباید در دو خط بشکنند. */
+.mrd-table-wrap--dense .widefat td:last-child { white-space: nowrap; }
 
 .mrd-scope .mrd-table-wrap .widefat {
 	border: 0;

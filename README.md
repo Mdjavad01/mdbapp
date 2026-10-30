@@ -25,6 +25,25 @@ branch pushes there and this one stops being used.
 
 ## Changelog
 
+### 1.7.18
+
+**The receipt queue is readable.** That table has nine columns and the admin
+shell caps content at 1080px, so each column got about 87px: the "عملیات" cell
+wrapped, the table scrolled sideways, and the card around it spent 40 more
+pixels on padding for a second frame nobody needed.
+
+- The page uses a 1680px container (`.mrd-scope--wide`); every other page keeps
+  the old width, because forms do not want to be 1600px wide.
+- The table is dense: 10px cell padding and a 1120px minimum, so it scrolls only
+  when the window is genuinely narrow.
+- The redundant `.mrd-card` wrapper is gone — the table already draws a frame.
+- Confirm/reject buttons no longer wrap.
+
+**Cache invalidation follows the version.** The category transient key now
+carries the plugin version, so installing a release takes effect immediately
+instead of after the ten-minute TTL. The old key is why 1.7.17 could appear not
+to have worked.
+
 ### 1.7.17
 
 **The course category no longer appears in the shop.** `product_cat` holds the

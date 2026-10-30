@@ -837,7 +837,7 @@ class MrDastbaaf_Admin_Pages_Controller {
         $approve_confirm = 'با تایید این فیش اشتراک خریدار فعال یا تمدید می‌شود. ادامه می‌دهید؟';
         $reject_confirm = 'این فیش رد می‌شود و علت آن در سفارش ثبت خواهد شد. مطمئنید؟';
         ?>
-        <div class="wrap mrd-scope">
+        <div class="wrap mrd-scope mrd-scope--wide">
             <div class="mrd-hero">
                 <div class="mrd-hero__icon" aria-hidden="true">🧾</div>
                 <div>
@@ -889,8 +889,7 @@ class MrDastbaaf_Admin_Pages_Controller {
                 <?php endforeach; ?>
             </ul>
 
-            <div class="mrd-card">
-            <div class="mrd-table-wrap">
+            <div class="mrd-table-wrap mrd-table-wrap--dense">
             <table class="widefat striped">
                 <thead>
                     <tr>
@@ -983,7 +982,6 @@ class MrDastbaaf_Admin_Pages_Controller {
                     <?php endif; ?>
                 </tbody>
             </table>
-            </div>
             </div>
 
             <?php if ('pending' !== $status_filter): ?>

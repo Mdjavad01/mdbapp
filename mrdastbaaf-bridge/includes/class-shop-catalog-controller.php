@@ -36,7 +36,6 @@ if (!defined('ABSPATH')) {
 
 class MrDastbaaf_Shop_Catalog_Controller {
 
-    const CATEGORIES_CACHE_KEY = 'mrdastbaaf_shop_categories_tree';
     const CATEGORIES_CACHE_TTL = 600;
     const DEFAULT_PER_PAGE = 24;
     const MAX_PER_PAGE = 60;
@@ -66,7 +65,7 @@ class MrDastbaaf_Shop_Catalog_Controller {
             return new WP_Error('woocommerce_missing', 'ووکامرس فعال نیست؛ امکان نمایش فروشگاه وجود ندارد.', array('status' => 503));
         }
 
-        $cached = get_transient(self::CATEGORIES_CACHE_KEY);
+        $cached = get_transient(self::cache_key());
         if (is_array($cached)) {
             return rest_ensure_response(array(
                 'success'    => true,
@@ -104,7 +103,7 @@ class MrDastbaaf_Shop_Catalog_Controller {
             );
         }
 
-        set_transient(self::CATEGORIES_CACHE_KEY, $categories, self::CATEGORIES_CACHE_TTL);
+        set_transient(self::cache_key(), $categories, self::CATEGORIES_CACHE_TTL);
 
         return rest_ensure_response(array(
             'success'    => true,
@@ -229,7 +228,18 @@ class MrDastbaaf_Shop_Catalog_Controller {
      * ادمین در کنترلر صفحات ادمین و کنترلر خود محصولات صدا می‌زند.
      */
     public static function flush_cache() {
-        delete_transient(self::CATEGORIES_CACHE_KEY);
+        delete_transient(self::cache_key());
+    }
+
+    /**
+     * The transient key carries the plugin version.
+     *
+     * Without it, installing a release that changes the tree leaves the old
+     * tree serving for up to ten minutes, and the only symptom is "the fix did
+     * not work". Bumping the version is now enough to invalidate.
+     */
+    private static function cache_key() {
+        return 'mrdastbaaf_shop_categories_tree_' . md5((string) MRDASTBAAF_BRIDGE_VERSION);
     }
 
     /**
