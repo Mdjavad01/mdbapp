@@ -11,7 +11,14 @@ import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.HomeConfig
  */
 interface AppContentRepository {
 
-    suspend fun home(): Result<HomeConfig>
+    /**
+     * The home payload, including the bottom-bar switches.
+     *
+     * Cached for a minute in memory because three callers ask for it at startup
+     * (the shell, the home tab, the account card) and they all want the same
+     * bytes. [force] is the pull-to-refresh path.
+     */
+    suspend fun home(force: Boolean = false): Result<HomeConfig>
 
     /** Pages this user may see. The server filters by access level. */
     suspend fun pages(): Result<List<AppPage>>

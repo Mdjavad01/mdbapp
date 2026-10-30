@@ -30,6 +30,25 @@ data class HomeConfig(
     val featuredTitle: String?,
     val featuredSubtitle: String?,
     val featuredCourseIds: List<Int>,
+    /**
+     * The panel's bottom-bar switches.
+     *
+     * These describe the **web app's** dock (`home`, `catalogue`, `membership`,
+     * `dashboard`) — there is no key for the shop, and none for a tab the
+     * Android app has but the site does not. So this is read as a set of
+     * "turned off" signals for the tabs that do correspond, never as a
+     * replacement for the app's own tab list: following it literally would
+     * delete the shop tab, which the web dock has never had.
+     */
+    val dock: List<AppMenuItem> = emptyList(),
+    /** The `physical_products` section switch — the app's only shop toggle. */
+    val shopEnabled: Boolean = true,
+)
+
+data class AppMenuItem(
+    val key: String,
+    val label: String,
+    val enabled: Boolean,
 )
 
 /** A page in the app's guide list. */

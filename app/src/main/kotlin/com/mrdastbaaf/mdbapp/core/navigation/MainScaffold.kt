@@ -1,5 +1,6 @@
 package com.mrdastbaaf.mdbapp.core.navigation
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
@@ -17,15 +18,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.settings.ThemeViewModel
 import com.mrdastbaaf.mdbapp.features.account.presentation.DashboardScreen
+import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.HomeConfig
 import com.mrdastbaaf.mdbapp.features.appcontent.presentation.HomeScreen
 // Aliased: two ViewModels are called HomeViewModel — this one drives the
 // landing screen, the other supplies the server-info card on the account tab.
@@ -38,8 +42,50 @@ import com.mrdastbaaf.mdbapp.features.home.presentation.HomeViewModel
 import com.mrdastbaaf.mdbapp.features.shop.presentation.ShopScreen
 import com.mrdastbaaf.mdbapp.features.shop.presentation.ShopViewModel
 
-/** The destinations reachable from the bottom bar. */
-enum class MainTab { HOME, COURSES, SHOP, ACCOUNT }
+/**
+ * The destinations reachable from the bottom bar.
+ *
+ * [key] is the panel's dock key, not the app's own name: `catalogue` and
+ * `dashboard` are what the site calls the courses tab and the account tab. There
+ * is no key for [SHOP] — the web dock has never had a shop tab — so the shop is
+ * switched by the `physical_products` section instead.
+ */
+enum class MainTab(
+    val key: String,
+    @StringRes val labelRes: Int,
+    val icon: ImageVector,
+) {
+    HOME("home", R.string.nav_home, Icons.Filled.Home),
+    COURSES("catalogue", R.string.nav_courses, Icons.Filled.PlayArrow),
+    SHOP("shop", R.string.nav_shop, Icons.Filled.ShoppingCart),
+    ACCOUNT("dashboard", R.string.nav_account, Icons.Filled.Person),
+    ;
+
+    companion object {
+        /**
+         * The tabs the panel has not switched off.
+         *
+         * Read as a set of "off" signals, never as a replacement list: the panel
+         * describes the website's dock, and copying it literally would delete the
+         * shop tab, which the site does not have. [HOME] is never hidden — an app
+         * that opens on a tab the owner disabled elsewhere is a bug report, and
+         * one tab alone is not a shell, so a combination that leaves fewer than
+         * two falls back to all four.
+         */
+        fun visibleIn(config: HomeConfig?): List<MainTab> {
+            if (config == null) return values().toList()
+
+            val dock = config.dock.associateBy { it.key }
+            val hidden = mutableSetOf<MainTab>()
+            if (dock[COURSES.key]?.enabled == false) hidden += COURSES
+            if (dock[ACCOUNT.key]?.enabled == false) hidden += ACCOUNT
+            if (!config.shopEnabled) hidden += SHOP
+
+            val visible = values().filterNot { it in hidden }
+            return if (visible.size < 2) values().toList() else visible
+        }
+    }
+}
 
 /**
  * The signed-in shell.
@@ -64,44 +110,32 @@ fun MainScaffold(
     onOpenPlans: () -> Unit,
     onSignedOut: () -> Unit,
 ) {
+    val shell: AppShellViewModel = hiltViewModel()
+    val config by shell.config.collectAsStateWithLifecycle()
+    val tabs = remember(config) { MainTab.visibleIn(config) }
+
     var tab by rememberSaveable { mutableStateOf(MainTab.HOME) }
+
+    // A tab the owner switches off in the panel must not stay selected under the
+    // user's finger; the first surviving tab takes over.
+    LaunchedEffect(tabs) {
+        if (tab !in tabs) tab = tabs.first()
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(
-                    selected = tab == MainTab.HOME,
-                    onClick = { tab = MainTab.HOME },
-                    icon = {
-                        Icon(imageVector = Icons.Filled.Home, contentDescription = null)
-                    },
-                    label = { Text(stringResource(R.string.nav_home)) },
-                )
-                NavigationBarItem(
-                    selected = tab == MainTab.COURSES,
-                    onClick = { tab = MainTab.COURSES },
-                    icon = {
-                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null)
-                    },
-                    label = { Text(stringResource(R.string.nav_courses)) },
-                )
-                NavigationBarItem(
-                    selected = tab == MainTab.SHOP,
-                    onClick = { tab = MainTab.SHOP },
-                    icon = {
-                        Icon(imageVector = Icons.Filled.ShoppingCart, contentDescription = null)
-                    },
-                    label = { Text(stringResource(R.string.nav_shop)) },
-                )
-                NavigationBarItem(
-                    selected = tab == MainTab.ACCOUNT,
-                    onClick = { tab = MainTab.ACCOUNT },
-                    icon = {
-                        Icon(imageVector = Icons.Filled.Person, contentDescription = null)
-                    },
-                    label = { Text(stringResource(R.string.nav_account)) },
-                )
+                tabs.forEach { entry ->
+                    NavigationBarItem(
+                        selected = tab == entry,
+                        onClick = { tab = entry },
+                        icon = {
+                            Icon(imageVector = entry.icon, contentDescription = null)
+                        },
+                        label = { Text(stringResource(entry.labelRes)) },
+                    )
+                }
             }
         },
     ) { innerPadding ->
@@ -110,7 +144,10 @@ fun MainScaffold(
                 MainTab.HOME -> HomeRoute(
                     onOpenCourse = onOpenCourse,
                     onOpenPage = onOpenPage,
-                    onBrowseCourses = { tab = MainTab.COURSES },
+                    // Guarded: a hidden courses tab has nowhere to go, so the
+                    // hero's CTA stays put instead of selecting a tab that is
+                    // not on screen.
+                    onBrowseCourses = { if (MainTab.COURSES in tabs) tab = MainTab.COURSES },
                     onOpenPlans = onOpenPlans,
                 )
 

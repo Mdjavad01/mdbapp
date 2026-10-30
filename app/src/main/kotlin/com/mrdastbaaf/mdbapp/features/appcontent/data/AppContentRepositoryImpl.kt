@@ -6,12 +6,15 @@ import com.mrdastbaaf.mdbapp.core.network.safeApiCall
 import com.mrdastbaaf.mdbapp.core.util.HtmlText
 import com.mrdastbaaf.mdbapp.features.appcontent.data.remote.dto.AppPageContentDto
 import com.mrdastbaaf.mdbapp.features.appcontent.data.remote.dto.AppUiDto
+import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppMenuItem
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppPage
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppPageContent
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.Hero
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.HeroStat
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.HomeConfig
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.repository.AppContentRepository
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,13 +27,34 @@ import javax.inject.Singleton
  * executing the site's scripts, and a text view keeps the page inside the app's
  * own typography and dark theme.
  */
+/** One minute: long enough to deduplicate a launch, short enough to feel live. */
+private const val HOME_TTL_MILLIS = 60_000L
+
 @Singleton
 class AppContentRepositoryImpl @Inject constructor(
     private val api: MdbApi,
     private val json: Json,
 ) : AppContentRepository {
 
-    override suspend fun home(): Result<HomeConfig> =
+    /**
+     * Guards against a thundering herd on launch.
+     *
+     * The shell, the home tab and the account card all ask for `/app-ui` within
+     * the same second. Without this lock each one would open its own request —
+     * three times the load on the server for one screen, multiplied by every
+     * install. The second and third callers wait, then read the cache.
+     */
+    private val homeMutex = Mutex()
+    @Volatile private var cachedHome: HomeConfig? = null
+    @Volatile private var cachedAtMillis: Long = 0L
+
+    override suspend fun home(force: Boolean): Result<HomeConfig> = homeMutex.withLock {
+        val fresh = cachedHome
+        val age = System.currentTimeMillis() - cachedAtMillis
+        if (!force && fresh != null && age in 0 until HOME_TTL_MILLIS) {
+            return Result.success(fresh)
+        }
+
         safeApiCall(json) { api.getAppUi() }
             .mapCatching { dto -> dto.toDomain() }
             .mapCatching { config ->
@@ -41,6 +65,11 @@ class AppContentRepositoryImpl @Inject constructor(
                 }
                 config
             }
+            .onSuccess {
+                cachedHome = it
+                cachedAtMillis = System.currentTimeMillis()
+            }
+    }
 
     override suspend fun pages(): Result<List<AppPage>> =
         safeApiCall(json) { api.getAppPages() }
@@ -89,12 +118,25 @@ class AppContentRepositoryImpl @Inject constructor(
         }
 
         val featured = sections.firstOrNull { it.key == "featured_courses" && it.enabled != false }
+        val physical = sections.firstOrNull { it.key == "physical_products" }
 
         return HomeConfig(
             hero = heroDomain,
             featuredTitle = HtmlText.strip(featured?.title).takeIf { it.isNotEmpty() },
             featuredSubtitle = HtmlText.strip(featured?.subtitle).takeIf { it.isNotEmpty() },
             featuredCourseIds = featuredCourseIds.filter { it > 0 },
+            dock = (menu?.dock ?: emptyList()).mapNotNull { item ->
+                val key = item.key?.trim().orEmpty()
+                if (key.isEmpty()) return@mapNotNull null
+                AppMenuItem(
+                    key = key,
+                    label = HtmlText.strip(item.label),
+                    // Absent means "not switched off": an older bridge that
+                    // does not send the flag must not hide a tab.
+                    enabled = item.enabled != false,
+                )
+            },
+            shopEnabled = physical?.enabled != false,
         )
     }
 

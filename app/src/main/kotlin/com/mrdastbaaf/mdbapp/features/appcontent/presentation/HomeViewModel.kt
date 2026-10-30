@@ -55,14 +55,17 @@ class HomeViewModel @Inject constructor(
         )
 
     init {
-        refresh()
+        load(force = false)
     }
 
-    fun refresh() {
+    /** Pull-to-refresh: the only path allowed to bypass the repository cache. */
+    fun refresh() = load(force = true)
+
+    private fun load(force: Boolean) {
         viewModelScope.launch {
             _state.value = UiState.Loading
 
-            val config = content.home().getOrElse { throwable ->
+            val config = content.home(force).getOrElse { throwable ->
                 _state.value = UiState.Error(
                     throwable as? Failure ?: Failure.Unknown(cause = throwable),
                 )
