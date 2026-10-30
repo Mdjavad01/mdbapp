@@ -3,18 +3,21 @@
     <!--
       Brand palette for XML-only surfaces: the splash screen, the adaptive
       launcher icon background, and the window background before the first
-      Compose frame. The Compose scheme lives in core/ui/theme/Color.kt and is
-      the one the UI actually uses — keep the two in sync.
-    -->
-    <color name="brand_ruby">#C2183B</color>
-    <color name="brand_ruby_dark">#8C0A24</color>
-    <color name="brand_gold">#B07A00</color>
-    <color name="brand_cream">#FFF8F6</color>
-    <color name="brand_ink">#211014</color>
+      Compose frame.
 
-    <color name="ic_launcher_background">#C2183B</color>
+      The live palette is BrandPalette in core/ui/theme/BrandPalette.kt, and it
+      is the only one the UI reads. This file exists because the splash screen
+      is drawn by the system before any Compose code runs — so if you change the
+      brand, change it here too. Values are sampled from mrdastbaaf.com.
+    -->
+    <color name="brand_primary">#9A3412</color>
+    <color name="brand_accent">#D97706</color>
+    <color name="brand_canvas">#FDFBF7</color>
+    <color name="brand_ink">#150702</color>
+
+    <color name="ic_launcher_background">#9A3412</color>
 
     <!-- Window backgrounds -->
-    <color name="app_window_background_light">#FFF8F6</color>
-    <color name="app_window_background_dark">#150A0D</color>
+    <color name="app_window_background_light">#FDFBF7</color>
+    <color name="app_window_background_dark">#0F0502</color>
 </resources>

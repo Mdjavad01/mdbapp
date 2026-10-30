@@ -31,7 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
-import com.mrdastbaaf.mdbapp.core.ui.theme.Ruby
+import com.mrdastbaaf.mdbapp.core.ui.theme.LocalBrand
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 import com.mrdastbaaf.mdbapp.features.account.domain.model.MembershipPlan
@@ -150,7 +150,7 @@ fun PlanCard(
                 colors = if (highlighted) {
                     ButtonDefaults.buttonColors(
                         containerColor = Color.White,
-                        contentColor = Ruby,
+                        contentColor = LocalBrand.current.primary,
                     )
                 } else {
                     ButtonDefaults.buttonColors()

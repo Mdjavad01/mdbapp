@@ -60,7 +60,7 @@ import com.mrdastbaaf.mdbapp.core.ui.component.BrandTopAppBar
 import com.mrdastbaaf.mdbapp.core.ui.component.KilimPattern
 import com.mrdastbaaf.mdbapp.core.ui.state.UiState
 import com.mrdastbaaf.mdbapp.core.ui.theme.BrandGradient
-import com.mrdastbaaf.mdbapp.core.ui.theme.Ruby
+import com.mrdastbaaf.mdbapp.core.ui.theme.LocalBrand
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppPage
@@ -268,7 +268,7 @@ private fun HeroCard(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color.White,
-                    contentColor = Ruby,
+                    contentColor = LocalBrand.current.primary,
                 ),
             ) {
                 Text(
