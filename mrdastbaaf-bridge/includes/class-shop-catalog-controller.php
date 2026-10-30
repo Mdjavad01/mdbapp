@@ -88,10 +88,13 @@ class MrDastbaaf_Shop_Catalog_Controller {
             return rest_ensure_response(array('success' => true, 'categories' => array()));
         }
 
+        $excluded = self::excluded_slugs();
+
         $categories = array();
         foreach ($terms as $term) {
-            // محصولات بدون دسته در ووکامرس زیر «uncategorized» می‌نشینند؛ همان
-            // یک گروه هم کافی است و دستهٔ پیش‌فرض ووکامرس نباید اسم دیگری بگیرد.
+            if (in_array((string) $term->slug, $excluded, true)) {
+                continue;
+            }
             $categories[] = array(
                 'id'     => (int) $term->term_id,
                 'slug'   => (string) $term->slug,
@@ -250,5 +253,36 @@ class MrDastbaaf_Shop_Catalog_Controller {
         foreach ($events as $event) {
             add_action($event, array(__CLASS__, 'flush_cache'));
         }
+    }
+
+    /**
+     * Shop categories that must not appear in the app, by slug.
+     *
+     * The course category lives in this same taxonomy, but a course product is
+     * not a physical item: left in, the shop menu shows the course category
+     * between the looms and the yarn. Extend it with a filter rather than by
+     * editing this file:
+     *
+     *   add_filter('mrdastbaaf_shop_excluded_categories', function ($list) {
+     *       $list[] = 'all-products';
+     *       return $list;
+     *   });
+     *
+     * @return string[]
+     */
+    private static function excluded_slugs() {
+        $default = array('courses');
+        $list = apply_filters('mrdastbaaf_shop_excluded_categories', $default);
+        if (!is_array($list)) {
+            return $default;
+        }
+        $clean = array();
+        foreach ($list as $slug) {
+            $slug = sanitize_title((string) $slug);
+            if ('' !== $slug) {
+                $clean[] = $slug;
+            }
+        }
+        return $clean;
     }
 }

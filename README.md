@@ -25,6 +25,15 @@ branch pushes there and this one stops being used.
 
 ## Changelog
 
+### 1.7.17
+
+**The course category no longer appears in the shop.** `product_cat` holds the
+course products too, so `GET /shop/categories` listed «دوره های آموزشی» between
+the looms and the yarn. Slugs in the exclusion list are filtered out; the
+default is `courses`, and more can be added with the
+`mrdastbaaf_shop_excluded_categories` filter — the site has a catch-all
+`all-products` category that probably belongs there as well.
+
 ### 1.7.16
 
 **Shop for 1800 products.** The site has more than ten categories and 1800
