@@ -8,17 +8,99 @@ data class ShopProduct(
     val imageUrl: String?,
 )
 
+/**
+ * One WooCommerce category.
+ *
+ * [parentId] is 0 for a root. The bridge sends every category flat, including
+ * the ancestors of a ticked category even when those hold no ticked products of
+ * their own — those arrive with an empty [products] list and exist purely to
+ * group their children.
+ */
 data class ShopCategory(
     val id: Int,
     val name: String,
     val products: List<ShopProduct>,
+    val parentId: Int = 0,
 )
+
+/**
+ * A category with its children resolved.
+ *
+ * [products] is the whole subtree, not just the node's own list: tapping
+ * «دست‌ساز» has to show what is inside its subcategories, otherwise the parent
+ * looks empty and the user has to guess which chip holds the goods.
+ */
+data class ShopNode(
+    val category: ShopCategory,
+    val children: List<ShopNode> = emptyList(),
+) {
+    val products: List<ShopProduct> =
+        category.products + children.flatMap { it.products }
+
+    val count: Int get() = products.size
+
+    /** True when this node only exists to hold children. */
+    val isGroup: Boolean get() = category.products.isEmpty() && children.isNotEmpty()
+}
 
 data class ShopCatalog(
     val featured: List<ShopProduct>,
     val categories: List<ShopCategory>,
 ) {
-    val isEmpty: Boolean get() = featured.isEmpty() && categories.all { it.products.isEmpty() }
+    /** Built once per response — [ShopNode.products] walks the subtree. */
+    val roots: List<ShopNode> = buildShopTree(categories)
+
+    private val index: Map<Int, ShopNode> =
+        roots.flatMap { it.flatten() }.associateBy { it.category.id }
+
+    fun node(id: Int): ShopNode? = index[id]
+
+    val isEmpty: Boolean
+        get() = featured.isEmpty() && roots.isEmpty() && categories.all { it.products.isEmpty() }
+}
+
+private fun ShopNode.flatten(): List<ShopNode> = listOf(this) + children.flatMap { it.flatten() }
+
+/**
+ * Turns the flat list into a forest.
+ *
+ * Three cases are treated as a root, and all three happen in real WooCommerce
+ * data: no parent, a parent that is not in the response (its products were
+ * never ticked, so the bridge did not send it), and a term whose parent is
+ * itself. Anything still unreachable afterwards — a corrupt two-node cycle — is
+ * promoted to a root rather than dropped, because a category the owner ticked
+ * must never be invisible.
+ */
+private fun buildShopTree(categories: List<ShopCategory>): List<ShopNode> {
+    val known = categories.filter { it.id > 0 }.associateBy { it.id }
+
+    fun childrenOf(parentId: Int, depth: Int): List<ShopNode> {
+        if (depth > 8) return emptyList()
+        return categories
+            .filter { it.id != parentId && it.parentId == parentId }
+            .map { child -> ShopNode(child, childrenOf(child.id, depth + 1)) }
+    }
+
+    val roots = categories
+        .filter { it.parentId == 0 || it.parentId == it.id || known[it.parentId] == null }
+        .map { root -> ShopNode(root, childrenOf(root.id, 1)) }
+
+    val reachable = roots.flatMap { it.flatten() }.map { it.category.id }.toSet()
+    val orphans = categories
+        .filter { it.id !in reachable }
+        .map { orphan -> ShopNode(orphan, childrenOf(orphan.id, 1)) }
+
+    // A node with no products anywhere below it is noise in a menu: the owner
+    // ticked nothing in it, or everything in it was unpublished. Pruned after
+    // the tree is built, so a parent is judged by its subtree rather than by
+    // its own list.
+    return pruneEmpty(roots + orphans)
+}
+
+private fun pruneEmpty(nodes: List<ShopNode>): List<ShopNode> = nodes.mapNotNull { node ->
+    val children = pruneEmpty(node.children)
+    val pruned = ShopNode(node.category, children)
+    if (pruned.count == 0 && children.isEmpty()) null else pruned
 }
 
 /** What the checkout form collects. The server stores it with the order. */

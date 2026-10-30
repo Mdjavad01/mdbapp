@@ -98,7 +98,7 @@ class ShopRepositoryImplTest {
     }
 
     @Test
-    fun `drops products without an id and categories left empty`() = runTest {
+    fun `drops products without an id and prunes a category left with nothing`() = runTest {
         server.enqueue(
             jsonResponse(
                 200,
@@ -116,8 +116,11 @@ class ShopRepositoryImplTest {
 
         val catalog = repository.catalog().getOrThrow()
 
-        assertEquals(1, catalog.categories.size)
-        assertEquals(2, catalog.categories.first().id)
+        // The empty category is still parsed — the bridge sends empty ancestors
+        // on purpose — but it must not reach the menu.
+        assertEquals(2, catalog.categories.size)
+        assertEquals(1, catalog.roots.size)
+        assertEquals(2, catalog.roots.first().category.id)
     }
 
     @Test

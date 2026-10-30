@@ -165,6 +165,12 @@
     <string name="shop_title">فروشگاه</string>
     <string name="shop_featured">پیشنهاد ما</string>
     <string name="shop_empty">در حال حاضر محصولی برای نمایش وجود ندارد.</string>
+    <string name="shop_categories">دسته‌بندی‌ها</string>
+    <string name="shop_all_products">همهٔ محصولات</string>
+    <string name="shop_all_chip">همه</string>
+    <string name="shop_product_count">%1$s محصول</string>
+    <string name="shop_subcategories">زیردسته دارد</string>
+    <string name="shop_coming_soon">به‌زودی</string>
 
     <!-- ===================== Checkout ===================== -->
     <string name="checkout_title">تکمیل خرید</string>

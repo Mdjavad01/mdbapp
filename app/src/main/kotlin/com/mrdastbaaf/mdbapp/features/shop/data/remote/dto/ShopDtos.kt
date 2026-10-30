@@ -27,6 +27,10 @@ data class ShopCategoryDto(
     val id: Int? = null,
     val slug: String? = null,
     val name: String? = null,
+    /** Term id of the parent category, 0 for a root. Added in bridge 1.9.0. */
+    val parent: Int? = null,
+    /** The category's own product count. Absent on older bridges. */
+    val count: Int? = null,
     val products: List<ShopProductDto> = emptyList(),
 )
 

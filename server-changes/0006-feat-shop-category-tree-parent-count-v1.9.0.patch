@@ -1,0 +1,135 @@
+From 1e593ec66aa4e31f22ca513facb9eb61900adea3 Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Fri, 30 Oct 2026 08:53:39 +0330
+Subject: [PATCH] feat(shop): return parent and count, and include ancestor
+ categories (v1.9.0)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The app needs to show the shop as menu and submenu. GET /shop/products was a
+flat list of categories with no way to tell a parent from a child, so the app
+had nothing to nest.
+
+- Every category now carries parent (term_id, 0 for a root) and count (its own
+  products, not the subtree — summing is the client's job).
+- Ancestors of a ticked category are included even when they hold no ticked
+  products themselves, so a subcategory is never orphaned. Such a parent comes
+  back with products: [] and count: 0 and acts purely as a group.
+- The walk is depth-capped at 10 to survive a corrupt term tree.
+
+Backward compatible: the web app derives its category chips from products
+inside each category, so an empty parent adds no chip and nothing changes for
+it. Products still appear once, in their own category, so no duplicates either
+way.
+
+Plugin 1.9.0. Tests: 324 pass.
+---
+ .../includes/class-shop-controller.php        | 40 +++++++++++++++++--
+ .../mrdastbaaf-bridge/mrdastbaaf-bridge.php   |  4 +-
+ 2 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-shop-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-shop-controller.php
+index c923f30..e5388fd 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-shop-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-shop-controller.php
+@@ -133,6 +133,11 @@ class MrDastbaaf_Shop_Controller {
+      * اساس دسته‌های product_cat (مرتب بر اساس نام دسته؛ محصولات مرتب بر اساس
+      * عنوان) + آرایهٔ top-level «featured» (محصولات ویژهٔ اسلایدر — v1.5.0).
+      * عمومی است و هیچ دادهٔ کاربری ندارد.
++     *
++     * v1.9.0: هر دسته فیلدهای `parent` و `count` را برمی‌گرداند و نیاکانِ
++     * دسته‌های تیک‌خورده هم در پاسخ می‌آیند (حتی با `products` خالی) تا کلاینت
++     * بتواند درخت «منو → زیرمنو» بسازد. `count` تعداد محصولِ خودِ همان دسته
++     * است، نه مجموع زیرشاخه‌ها — جمع زدن کار کلاینت است.
+      */
+     public function handle_get_shop_products() {
+         if (!class_exists('WooCommerce')) {
+@@ -230,17 +235,40 @@ class MrDastbaaf_Shop_Controller {
+             }
+         }
+ 
++        // v1.9.0: درخت دسته‌ها. نیاکانِ هر دستهٔ تیک‌خورده هم به پاسخ اضافه
++        // می‌شوند، حتی اگر خودشان هیچ محصول تیک‌خورده‌ای نداشته باشند، تا اپ
++        // بتواند «منو → زیرمنو» بسازد. بدون این، یک زیردسته که والدش تیک
++        // نخورده در فهرست بی‌ریشه می‌ماند و کاربر راهی به بقیهٔ هم‌خانواده‌ها
++        // ندارد. والدِ خالی `products: []` و `count: 0` می‌گیرد و فقط نقش گروه
++        // دارد؛ کلاینت‌های فعلی (وب‌اپ) چیپ دسته را از محصولات می‌سازند، پس
++        // افزودن والدِ خالی برایشان هیچ چیزی را عوض نمی‌کند.
++        $emit = $buckets;
++        foreach (array_keys($buckets) as $bucket_id) {
++            if ($bucket_id <= 0 || !isset($emit[$bucket_id]['term'])) {
++                continue;
++            }
++            $ancestor_id = (int) $emit[$bucket_id]['term']->parent;
++            // سقف پیمایش، محافظِ حلقهٔ خراب در درخت اصطلاحات (والدِ خودش).
++            for ($depth = 0; $ancestor_id > 0 && $depth < 10; $depth++) {
++                if (!isset($emit[$ancestor_id])) {
++                    $ancestor = get_term($ancestor_id, 'product_cat');
++                    if (!is_object($ancestor) || is_wp_error($ancestor)) {
++                        break;
++                    }
++                    $emit[$ancestor_id] = array('term' => $ancestor, 'ids' => array());
++                }
++                $ancestor_id = (int) $emit[$ancestor_id]['term']->parent;
++            }
++        }
++
+         $categories = array();
+-        foreach ($buckets as $bucket) {
++        foreach ($emit as $bucket) {
+             $product_list = array();
+             foreach ($bucket['ids'] as $pid) {
+                 if (isset($items[$pid])) {
+                     $product_list[] = $items[$pid];
+                 }
+             }
+-            if (empty($product_list)) {
+-                continue;
+-            }
+             // قطعیت ترتیب محصولات داخل هر دسته: عنوان صعودی
+             usort($product_list, array(__CLASS__, 'sort_products_by_title'));
+ 
+@@ -249,6 +277,8 @@ class MrDastbaaf_Shop_Controller {
+                     'id'       => (int) $bucket['term']->term_id,
+                     'slug'     => (string) $bucket['term']->slug,
+                     'name'     => (string) $bucket['term']->name,
++                    'parent'   => (int) $bucket['term']->parent,
++                    'count'    => count($product_list),
+                     'products' => $product_list,
+                 );
+             } else {
+@@ -256,6 +286,8 @@ class MrDastbaaf_Shop_Controller {
+                     'id'       => 0,
+                     'slug'     => '',
+                     'name'     => 'سایر',
++                    'parent'   => 0,
++                    'count'    => count($product_list),
+                     'products' => $product_list,
+                 );
+             }
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+index 75875ee..dc5c4ff 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+@@ -3,7 +3,7 @@
+  * Plugin Name: Mr. Dastbaaf PWA Bridge (پل ارتباطی مستر دستباف)
+  * Plugin URI: https://mrdastbaaf.com
+  * Description: افزونه اختصاصی ایجاد اندپوینت‌های REST API ایمن برای ارتباط وب‌اپلیکیشن PWA مستر دستباف با وردپرس، اوتینو، نیاس کورس و درگاه زیبال.
+- * Version: 1.8.0
++ * Version: 1.9.0
+  * Author: تیم فنی مستر دستباف
+  * Author URI: https://mrdastbaaf.com
+  * Text Domain: mrdastbaaf-bridge
+@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
+     exit; // Exit if accessed directly
+ }
+ 
+-define('MRDASTBAAF_BRIDGE_VERSION', '1.8.0');
++define('MRDASTBAAF_BRIDGE_VERSION', '1.9.0');
+ 
+ /**
+  * v1.2.0: نسخهٔ افزونه و ثابت بالا باید همیشه همگام باشند (باگ قبلی همگام‌نبودن تکرار نشود).
+-- 
+2.55.0.windows.3
+

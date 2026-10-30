@@ -55,6 +55,7 @@ feat/plugin-health-and-order-status
 | 3 | `0003-feat-playback-truthful-streamType-videoType…` | Corrects `streamType` (was hard-coded `"hls"` while serving MP4), adds `videoType` and per-quality `type`, adds `watermarkFullName`. | 16 |
 | 4 | `0004-feat-playback-expiring-signed-URLs-via-a-PHP-gateway…` | Replaces the **permanent** CDN URL with a short-lived signed URL served through a PHP gateway (`s.php`) on the download host. Ships the gateway, the `.htaccess` and the Apache runbook. | 114 |
 | 5 | `0005-feat-api-restrict-auth-health-add-GET-payment-order…` | Restricts `GET /auth/health` to a token in production; adds `GET /payment/order/{orderId}` for post-payment polling. | 71 |
+| 6 | `0006-feat-shop-category-tree-parent-count-v1.9.0.patch` | `GET /shop/products` now returns `parent` and `count` per category and includes the ancestors of ticked categories (empty `products`, `count: 0`) so the app can build a menu → submenu. Backward compatible with the web app. Plugin 1.9.0. | 1 |
 
 Total: **324 assertions** across seven test files.
 

@@ -124,15 +124,20 @@ class ShopRepositoryImpl @Inject constructor(
     }
 
     private fun com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopCategoryDto.toDomain(): ShopCategory? {
-        val products = products.mapNotNull { it.toDomain() }
-        if (products.isEmpty()) return null
+        val categoryId = id ?: return null
+        // The bridge synthesises a "سایر" bucket for uncategorised products,
+        // and it arrives with an empty name.
+        val categoryName = HtmlText.strip(name).ifEmpty { if (categoryId == 0) "سایر" else "" }
+        if (categoryName.isEmpty()) return null
 
+        // An empty category is kept rather than dropped: since bridge 1.9.0 the
+        // response includes ancestors that hold no ticked products of their own,
+        // and dropping one would orphan every subcategory under it.
         return ShopCategory(
-            id = id ?: 0,
-            // The bridge synthesises a "سایر" bucket for uncategorised products,
-            // and it arrives with an empty name.
-            name = HtmlText.strip(name).ifEmpty { "سایر" },
-            products = products,
+            id = categoryId,
+            name = categoryName,
+            products = products.mapNotNull { it.toDomain() },
+            parentId = parent ?: 0,
         )
     }
 }
