@@ -1,0 +1,95 @@
+From fe4eca0158e8219b12e96875df99b1d03eca49f1 Mon Sep 17 00:00:00 2001
+From: Mdjavad2nd prf <md.javad01@gmail.com>
+Date: Fri, 30 Oct 2026 09:15:43 +0330
+Subject: [PATCH] feat(plans): duration is the product, tier is an
+ implementation detail (v1.9.1)
+
+The owner sells 1, 3, 6 and 12 months of the same membership. He does not want
+bronze, silver and diamond as products, and the app was printing the tier name
+on the member's own card.
+
+- GET /memberships/plans now returns durationDays (the raw integer) so a client
+  can compute a per-month price without parsing "90_days".
+- The plan form no longer offers a tier dropdown. The column stays and the
+  current value is carried in a hidden input, because tier_rank() still gates
+  course access and the upgrade path compares ranks; removing it from the
+  schema would silently break entitlements. New plans default to bronze, so all
+  four durations sit on one level.
+
+No schema change, no migration: four duration plans are four rows the owner
+already knows how to create.
+
+Plugin 1.9.1. Tests: 324 pass.
+---
+ .../includes/class-admin-pages-controller.php    | 16 ++++++++++------
+ .../includes/class-memberships-controller.php    |  3 +++
+ .../mrdastbaaf-bridge/mrdastbaaf-bridge.php      |  4 ++--
+ 3 files changed, 15 insertions(+), 8 deletions(-)
+
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-admin-pages-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-admin-pages-controller.php
+index b7ab429..81eb1de 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-admin-pages-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-admin-pages-controller.php
+@@ -435,13 +435,17 @@ class MrDastbaaf_Admin_Pages_Controller {
+                         </td>
+                     </tr>
+                     <tr>
+-                        <th scope="row"><label for="mrd-plan-tier">سطح پلن</label></th>
++                        <th scope="row"><label for="mrd-plan-tier">سطح دسترسی</label></th>
+                         <td>
+-                            <select id="mrd-plan-tier" name="tier">
+-                                <?php foreach (array('free' => 'رایگان', 'bronze' => 'برنزی', 'silver' => 'نقره‌ای', 'gold' => 'طلایی') as $tier_key => $tier_label): ?>
+-                                    <option value="<?php echo esc_attr($tier_key); ?>" <?php selected($is_edit ? (string) $editing->tier : 'bronze', $tier_key); ?>><?php echo esc_html($tier_label); ?></option>
+-                                <?php endforeach; ?>
+-                            </select>
++                            <?php
++                            // v1.9.1: سطح دیگر انتخابِ محصول نیست. کارفرما پلن را
++                            // بر اساس «مدت» می‌فروشد (۱/۳/۶/۱۲ ماه) و برنز و نقره
++                            // و الماس را نمی‌خواهد؛ ولی ستون tier در دسترسی دوره‌ها
++                            // و منطق ارتقا استفاده می‌شود، پس حذف نمی‌شود — فقط از
++                            // دید پنهان می‌ماند و مقدار فعلی‌اش حفظ می‌شود.
++                            ?>
++                            <input type="hidden" name="tier" value="<?php echo esc_attr($is_edit ? (string) $editing->tier : 'bronze'); ?>" />
++                            <p class="description">در نسخهٔ فعلی اپ نمایش داده نمی‌شود و پلن‌ها فقط با «مدت» از هم جدا می‌شوند. مقدار این پلن: <code dir="ltr"><?php echo esc_html($is_edit ? (string) $editing->tier : 'bronze'); ?></code></p>
+                         </td>
+                     </tr>
+                     <tr>
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php b/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
+index 6bce0dd..845d1af 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/includes/class-memberships-controller.php
+@@ -74,6 +74,9 @@ class MrDastbaaf_Memberships_Controller {
+                 'originalPriceToman' => $r->original_price_toman ? (int) $r->original_price_toman : null,
+                 'duration' => $r->duration_days . '_days',
+                 'durationLabel' => $r->duration_label,
++                // v1.9.1: عدد خام مدت، تا کلاینت مجبور نباشد «90_days» را تجزیه
++                // کند و «قیمت ماهانه» را از همین بسازد.
++                'durationDays' => (int) $r->duration_days,
+                 'features' => json_decode($r->features_json, true) ?: array(),
+                 'isPopular' => (bool) $r->is_popular,
+                 'isActive' => (bool) $r->is_active,
+diff --git a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+index dc5c4ff..481a21b 100644
+--- a/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
++++ b/wordpress-plugin/mrdastbaaf-bridge/mrdastbaaf-bridge.php
+@@ -3,7 +3,7 @@
+  * Plugin Name: Mr. Dastbaaf PWA Bridge (پل ارتباطی مستر دستباف)
+  * Plugin URI: https://mrdastbaaf.com
+  * Description: افزونه اختصاصی ایجاد اندپوینت‌های REST API ایمن برای ارتباط وب‌اپلیکیشن PWA مستر دستباف با وردپرس، اوتینو، نیاس کورس و درگاه زیبال.
+- * Version: 1.9.0
++ * Version: 1.9.1
+  * Author: تیم فنی مستر دستباف
+  * Author URI: https://mrdastbaaf.com
+  * Text Domain: mrdastbaaf-bridge
+@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
+     exit; // Exit if accessed directly
+ }
+ 
+-define('MRDASTBAAF_BRIDGE_VERSION', '1.9.0');
++define('MRDASTBAAF_BRIDGE_VERSION', '1.9.1');
+ 
+ /**
+  * v1.2.0: نسخهٔ افزونه و ثابت بالا باید همیشه همگام باشند (باگ قبلی همگام‌نبودن تکرار نشود).
+-- 
+2.55.0.windows.3
+

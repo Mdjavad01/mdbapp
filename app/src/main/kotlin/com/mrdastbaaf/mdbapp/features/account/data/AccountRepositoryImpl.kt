@@ -51,6 +51,11 @@ class AccountRepositoryImpl @Inject constructor(
             originalPriceToman = originalPriceToman?.takeIf { it > 0 },
             durationLabel = durationLabel?.takeIf { it.isNotBlank() }
                 ?: duration?.takeIf { it.isNotBlank() }.orEmpty(),
+            // Prefer the explicit field; on an older bridge fall back to the
+            // "90_days" machine string rather than leaving the ladder flat.
+            durationDays = durationDays
+                ?: duration?.substringBefore('_')?.toIntOrNull()
+                ?: 0,
             features = features.map { HtmlText.strip(it) }.filter { it.isNotEmpty() },
             isPopular = isPopular == true,
             colorScheme = colorScheme?.takeIf { it.isNotBlank() },

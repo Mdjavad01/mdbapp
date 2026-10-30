@@ -129,6 +129,9 @@
     <string name="dashboard_orders_title">سفارش‌های من</string>
     <string name="dashboard_orders_empty">هنوز سفارشی ثبت نکرده‌اید.</string>
     <string name="dashboard_membership_active">اشتراک %1$s</string>
+    <string name="dashboard_membership_active_plain">اشتراک فعال</string>
+    <string name="plan_per_month">%1$s در ماه</string>
+    <string name="plan_savings">٪%1$s ارزان‌تر از ماهانه</string>
     <string name="dashboard_membership_days">%1$s روز باقی‌مانده</string>
     <string name="dashboard_membership_none">اشتراک فعالی ندارید</string>
     <string name="dashboard_membership_none_hint">با خرید اشتراک، به همهٔ جلسه‌های دوره‌ها دسترسی پیدا می‌کنید.</string>

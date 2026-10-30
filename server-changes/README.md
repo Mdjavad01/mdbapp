@@ -56,6 +56,7 @@ feat/plugin-health-and-order-status
 | 4 | `0004-feat-playback-expiring-signed-URLs-via-a-PHP-gateway…` | Replaces the **permanent** CDN URL with a short-lived signed URL served through a PHP gateway (`s.php`) on the download host. Ships the gateway, the `.htaccess` and the Apache runbook. | 114 |
 | 5 | `0005-feat-api-restrict-auth-health-add-GET-payment-order…` | Restricts `GET /auth/health` to a token in production; adds `GET /payment/order/{orderId}` for post-payment polling. | 71 |
 | 6 | `0006-feat-shop-category-tree-parent-count-v1.9.0.patch` | `GET /shop/products` now returns `parent` and `count` per category and includes the ancestors of ticked categories (empty `products`, `count: 0`) so the app can build a menu → submenu. Backward compatible with the web app. Plugin 1.9.0. | 1 |
+| 7 | `0007-feat-plans-duration-days-hide-tier-v1.9.1.patch` | `GET /memberships/plans` returns `durationDays`; the plan form stops offering a tier dropdown (the column stays and is carried in a hidden input, because `tier_rank()` still gates course access). Plugin 1.9.1. | 1 |
 
 Total: **324 assertions** across seven test files.
 

@@ -48,6 +48,8 @@ fun PlanCard(
     plan: MembershipPlan,
     onBuy: () -> Unit,
     modifier: Modifier = Modifier,
+    /** How much cheaper per month than the shortest plan, when that applies. */
+    savingsPercent: Int? = null,
 ) {
     val highlighted = plan.isPopular
     val contentColor = if (highlighted) Color.White else MaterialTheme.colorScheme.onSurface
@@ -84,20 +86,30 @@ fun PlanCard(
                 )
             }
 
+            // The duration is the axis: these plans differ only in how long they
+            // last, so the length is the headline and the owner's title is the
+            // qualifier. When he typed the same words in both fields — which is
+            // what the panel invites — the duplicate is dropped rather than
+            // printed twice.
+            val headline = plan.durationLabel.ifBlank { plan.title }
+            val subtitle = plan.title.takeIf { it != headline }
+
             Text(
-                text = plan.title,
-                style = MaterialTheme.typography.titleMedium,
+                text = PersianFormat.toPersianDigits(headline),
+                style = MaterialTheme.typography.titleLarge,
                 color = contentColor,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
 
-            if (plan.durationLabel.isNotBlank()) {
+            if (subtitle != null) {
                 Text(
-                    text = PersianFormat.toPersianDigits(plan.durationLabel),
-                    style = MaterialTheme.typography.labelMedium,
+                    text = PersianFormat.toPersianDigits(subtitle),
+                    style = MaterialTheme.typography.bodySmall,
                     color = mutedColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
 
@@ -119,6 +131,39 @@ fun PlanCard(
                         textDecoration = TextDecoration.LineThrough,
                     )
                 }
+            }
+
+            plan.perMonthToman?.let { perMonth ->
+                Text(
+                    text = stringResource(
+                        R.string.plan_per_month,
+                        PersianFormat.formatToman(perMonth),
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = mutedColor,
+                )
+            }
+
+            if (savingsPercent != null && savingsPercent > 0) {
+                Text(
+                    text = stringResource(
+                        R.string.plan_savings,
+                        PersianFormat.toPersianDigits(savingsPercent.toString()),
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (highlighted) Color.White else MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            if (highlighted) {
+                                Color.White.copy(alpha = 0.22f)
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                        )
+                        .padding(horizontal = Spacing.sm, vertical = 2.dp),
+                )
             }
 
             plan.features.take(3).forEach { feature ->

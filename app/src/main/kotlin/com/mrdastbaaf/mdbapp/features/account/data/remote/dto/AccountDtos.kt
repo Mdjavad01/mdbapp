@@ -15,6 +15,8 @@ data class MembershipPlanDto(
     /** `"{days}_days"` — machine value. Use [durationLabel] for display. */
     val duration: String? = null,
     val durationLabel: String? = null,
+    /** Added in bridge 1.9.0. Absent on older builds — [duration] is the fallback. */
+    val durationDays: Int? = null,
     val features: List<String> = emptyList(),
     val isPopular: Boolean? = null,
     val isActive: Boolean? = null,

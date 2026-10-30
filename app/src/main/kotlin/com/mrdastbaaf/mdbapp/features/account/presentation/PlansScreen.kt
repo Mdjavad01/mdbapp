@@ -65,16 +65,23 @@ fun PlansScreen(
                 .background(MaterialTheme.colorScheme.background)
                 .padding(innerPadding),
         ) { list ->
+            // Shortest first. The server sorts by price, which is not the same
+            // thing once durations differ, and a ladder that jumps 12 → 1 → 6 is
+            // unreadable.
+            val ladder = list.sortedBy { it.durationDays }
+            val baseline = ladder.firstOrNull { it.durationDays > 0 }
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(Spacing.md),
                 verticalArrangement = Arrangement.spacedBy(Spacing.md),
             ) {
-                itemsIndexed(items = list) { _, plan ->
+                itemsIndexed(items = ladder) { _, plan ->
                     PlanCard(
                         plan = plan,
                         onBuy = { onBuyPlan(plan.id) },
                         modifier = Modifier.fillMaxWidth(),
+                        savingsPercent = plan.savingsAgainst(baseline),
                     )
                 }
             }

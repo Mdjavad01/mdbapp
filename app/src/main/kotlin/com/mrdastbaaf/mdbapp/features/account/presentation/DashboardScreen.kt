@@ -68,7 +68,6 @@ import com.mrdastbaaf.mdbapp.features.account.domain.model.Order
 import com.mrdastbaaf.mdbapp.features.account.domain.model.OrderStatus
 import com.mrdastbaaf.mdbapp.features.auth.domain.model.Membership
 import com.mrdastbaaf.mdbapp.features.auth.domain.model.MembershipStatus
-import com.mrdastbaaf.mdbapp.features.auth.domain.model.MembershipTier
 import com.mrdastbaaf.mdbapp.features.auth.domain.model.UserProfile
 import com.mrdastbaaf.mdbapp.features.home.domain.model.ServerInfo
 
@@ -278,11 +277,11 @@ private fun ProfileHero(profile: UserProfile?, onOpenPlans: () -> Unit) {
 
             if (active && membership != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    // No tier name: the owner sells duration, and "برنزی" is a
+                    // word he never chose. What matters to the member is that it
+                    // is active and how long is left.
                     HeroPill(
-                        text = stringResource(
-                            R.string.dashboard_membership_active,
-                            membership.tier.label(),
-                        ),
+                        text = stringResource(R.string.dashboard_membership_active_plain),
                     )
                     HeroPill(
                         text = stringResource(
@@ -342,14 +341,6 @@ private fun HeroPill(text: String) {
             .background(Color.White.copy(alpha = 0.18f))
             .padding(horizontal = Spacing.sm, vertical = 4.dp),
     )
-}
-
-@Composable
-private fun MembershipTier.label(): String = when (this) {
-    MembershipTier.BRONZE -> stringResource(R.string.tier_bronze)
-    MembershipTier.SILVER -> stringResource(R.string.tier_silver)
-    MembershipTier.GOLD -> stringResource(R.string.tier_gold)
-    MembershipTier.FREE -> stringResource(R.string.dashboard_membership_none)
 }
 
 // ── Plans ───────────────────────────────────────────────────────────────────
