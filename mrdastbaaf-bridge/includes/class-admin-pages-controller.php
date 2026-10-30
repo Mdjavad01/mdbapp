@@ -879,15 +879,17 @@ class MrDastbaaf_Admin_Pages_Controller {
                 </form>
             </div>
 
+            <div class="mrd-card mrd-card--tabs">
             <ul class="subsubsub">
                 <?php foreach ($tabs as $tab_key => $tab_label): ?>
                     <li>
                         <a href="<?php echo esc_url(add_query_arg(array('page' => self::RECEIPTS_SLUG, 'status' => $tab_key), admin_url('admin.php'))); ?>" <?php echo $tab_key === $status_filter ? 'class="current"' : ''; ?>>
                             <?php echo esc_html($tab_label); ?><?php echo 'pending' === $tab_key ? ' (' . esc_html(number_format_i18n($pending_count)) . ')' : ''; ?>
-                        </a><?php echo 'all' !== $tab_key ? ' | ' : ''; ?>
+                        </a>
                     </li>
                 <?php endforeach; ?>
             </ul>
+            </div>
 
             <div class="mrd-table-wrap mrd-table-wrap--dense">
             <table class="widefat striped">

@@ -204,7 +204,57 @@
 }
 
 /* جدول فشرده: پدینگ سلول کمتر، و عرض کمینه تا جدول به‌جای له‌شدن اسکرول کند. */
-.mrd-table-wrap--dense .widefat { min-width: 1120px; }
+/* تب‌های وضعیت: بدون قاب و شناور بالای جدولی که خودش قاب دارد، بی‌ریشه
+   دیده می‌شدند. حالا همان کارت بقیهٔ صفحه‌اند و به‌شکل قرص هستند. */
+.mrd-card--tabs { padding: 8px 14px; }
+
+.mrd-card--tabs .subsubsub {
+	float: none;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.mrd-card--tabs .subsubsub li { margin: 0; }
+
+.mrd-card--tabs .subsubsub a {
+	display: inline-block;
+	padding: 5px 12px;
+	border-radius: 999px;
+	text-decoration: none;
+	color: var(--mrd-muted);
+	font-size: 13px;
+	line-height: 1.6;
+}
+
+.mrd-card--tabs .subsubsub a:hover {
+	background: var(--mrd-teal-soft);
+	color: var(--mrd-teal-dark);
+}
+
+.mrd-card--tabs .subsubsub a.current {
+	background: var(--mrd-amber);
+	color: #fff;
+	font-weight: 700;
+}
+
+.mrd-table-wrap--dense .widefat { min-width: 1240px; table-layout: fixed; }
+
+/* عرض ثابت ستون‌ها: بدون این، ستون «جزئیات فیش» بقیه را له می‌کرد و جدول
+   بی‌دلیل اسکرول می‌خورد. ستون پنجم (جزئیات) بقیهٔ فضا را می‌گیرد. */
+.mrd-table-wrap--dense .widefat th:nth-child(1) { width: 118px; }
+.mrd-table-wrap--dense .widefat th:nth-child(2) { width: 150px; }
+.mrd-table-wrap--dense .widefat th:nth-child(3) { width: 132px; }
+.mrd-table-wrap--dense .widefat th:nth-child(4) { width: 112px; }
+.mrd-table-wrap--dense .widefat th:nth-child(6) { width: 92px; }
+.mrd-table-wrap--dense .widefat th:nth-child(7) { width: 104px; }
+.mrd-table-wrap--dense .widefat th:nth-child(8) { width: 96px; }
+.mrd-table-wrap--dense .widefat th:nth-child(9) { width: 132px; }
+
+.mrd-table-wrap--dense .widefat td { word-break: break-word; }
 
 .mrd-table-wrap--dense .widefat th,
 .mrd-table-wrap--dense .widefat td { padding: 10px 10px; }

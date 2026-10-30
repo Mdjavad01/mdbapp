@@ -25,6 +25,18 @@ branch pushes there and this one stops being used.
 
 ## Changelog
 
+### 1.7.19
+
+**The status tabs sit in a card like everything else.** They were a bare
+`ul.subsubsub` floating between two cards, with WordPress's default pipe
+separators. They are now pills inside a `.mrd-card--tabs`, and the separator is
+gone.
+
+**The table's columns have widths.** With `table-layout: auto` the "جزئیات فیش"
+cell — three lines plus a note — took whatever it wanted and pushed the rest
+into a horizontal scrollbar. Columns 1–4 and 6–9 now have fixed widths and the
+details column takes the remainder; the minimum width went from 1120 to 1240.
+
 ### 1.7.18
 
 **The receipt queue is readable.** That table has nine columns and the admin
