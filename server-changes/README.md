@@ -57,6 +57,7 @@ feat/plugin-health-and-order-status
 | 5 | `0005-feat-api-restrict-auth-health-add-GET-payment-order…` | Restricts `GET /auth/health` to a token in production; adds `GET /payment/order/{orderId}` for post-payment polling. | 71 |
 | 6 | `0006-feat-shop-category-tree-parent-count-v1.9.0.patch` | `GET /shop/products` now returns `parent` and `count` per category and includes the ancestors of ticked categories (empty `products`, `count: 0`) so the app can build a menu → submenu. Backward compatible with the web app. Plugin 1.9.0. | 1 |
 | 7 | `0007-feat-plans-duration-days-hide-tier-v1.9.1.patch` | `GET /memberships/plans` returns `durationDays`; the plan form stops offering a tier dropdown (the column stays and is carried in a hidden input, because `tier_rank()` still gates course access). Plugin 1.9.1. | 1 |
+| 8 | `0008-feat-shop-category-tree-and-pagination-v1.7.16.patch` | Built on the **released 1.7.15**, so it applies on its own. Adds `GET /shop/categories` (tree only, 10-min transient, zero queries on a hit) and `GET /shop/catalog?category=&page=` (one page, 24 products, with totals). Products come from WooCommerce visibility instead of a hand-ticked list, because the shop has 1800 items. `/shop/products` is untouched. | 1 |
 
 Total: **324 assertions** across seven test files.
 
