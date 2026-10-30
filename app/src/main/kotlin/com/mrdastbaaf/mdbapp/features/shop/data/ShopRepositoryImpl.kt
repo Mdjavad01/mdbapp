@@ -12,7 +12,6 @@ import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.VerifyPaymentRequestD
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.CheckoutSession
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCatalog
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCategory
-import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCategory
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopPage
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopProduct
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShippingDetails
@@ -31,6 +30,9 @@ import javax.inject.Singleton
  * to draw one row would be wasteful on a mobile connection. [catalog] with
  * `force = true` bypasses the cache for the pull-to-refresh action.
  */
+/** Five minutes: the owner edits categories far less often than the hero copy. */
+private const val CATEGORIES_TTL_MILLIS = 300_000L
+
 @Singleton
 class ShopRepositoryImpl @Inject constructor(
     private val api: MdbApi,
