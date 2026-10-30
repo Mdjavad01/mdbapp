@@ -203,13 +203,23 @@ private fun CatalogueRoute(onOpenCourse: (Int) -> Unit) {
 @Composable
 private fun ShopRoute(onOpenProduct: (Int) -> Unit) {
     val viewModel: ShopViewModel = hiltViewModel()
-    val state by viewModel.state.collectAsStateWithLifecycle()
+    val menu by viewModel.menu.collectAsStateWithLifecycle()
+    val path by viewModel.path.collectAsStateWithLifecycle()
+    val page by viewModel.page.collectAsStateWithLifecycle()
+    val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
 
     ShopScreen(
-        state = state,
+        menu = menu,
+        path = path,
+        page = page,
+        loadingMore = loadingMore,
         isOffline = isOffline,
-        onRetry = viewModel::refresh,
+        onRetry = viewModel::retry,
+        onOpen = viewModel::open,
+        onBack = viewModel::back,
+        onJumpTo = viewModel::jumpTo,
+        onLoadMore = viewModel::loadMore,
         onOpenProduct = onOpenProduct,
     )
 }

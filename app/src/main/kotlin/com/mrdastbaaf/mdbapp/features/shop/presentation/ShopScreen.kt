@@ -10,10 +10,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -22,8 +20,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -32,14 +32,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -50,67 +45,47 @@ import com.mrdastbaaf.mdbapp.R
 import com.mrdastbaaf.mdbapp.core.ui.component.AsyncStateView
 import com.mrdastbaaf.mdbapp.core.ui.component.BrandTopAppBar
 import com.mrdastbaaf.mdbapp.core.ui.state.UiState
-import com.mrdastbaaf.mdbapp.core.ui.state.dataOrNull
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.PersianFormat
-import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCatalog
-import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCategory
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopNode
+import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopPage
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopProduct
 
-/** The "everything" pseudo-section: not a term id, so it can never collide. */
-private const val ALL_PRODUCTS_ID = -1
-
 /**
- * The physical shop, as a menu and then a section.
+ * The shop, as a menu and then a section.
  *
- * It used to be one long scroll: every category and every product on a single
- * page. With two or three categories that is fine; with a real WooCommerce tree
- * it is a wall the user scrolls past. So the tab now opens on a list of
- * categories — the menu — and a category opens its own page, with its
- * subcategories as chips across the top and its products underneath.
+ * The catalogue has ten categories and 1800 products, so nothing is loaded up
+ * front: the tab opens on a tree of categories, and a category asks the server
+ * for one page of twenty-four at a time.
  *
- * Both levels live in this composable rather than in two nav destinations: the
- * catalogue is already cached in memory, so switching is instant, and the bottom
- * bar stays where it is instead of the shop pushing a new screen over it.
- * [BackHandler] makes the system back button leave the section before it leaves
- * the tab.
- *
- * Tapping a product opens the checkout, not the website: the purchase happens
- * inside the app, which is the whole point of the tab.
+ * The path is a list rather than a navigation destination. The shop never pushes
+ * a screen over the tab — the bottom bar stays put — and going back is a pop off
+ * that list, which also gives the breadcrumb something to point at.
  */
 @Composable
 fun ShopScreen(
-    state: UiState<ShopCatalog>,
+    menu: UiState<List<ShopNode>>,
+    path: List<ShopNode>,
+    page: UiState<ShopPage>,
+    loadingMore: Boolean,
     isOffline: Boolean,
     onRetry: () -> Unit,
+    onOpen: (ShopNode) -> Unit,
+    onBack: () -> Unit,
+    onJumpTo: (Int) -> Unit,
+    onLoadMore: () -> Unit,
     onOpenProduct: (Int) -> Unit,
 ) {
-    var openCategoryId by rememberSaveable { mutableStateOf<Int?>(null) }
-    val catalog = state.dataOrNull
-    val allLabel = stringResource(R.string.shop_all_products)
-    val openNode = openCategoryId?.let { id ->
-        when {
-            catalog == null -> null
-            // A sentinel, not a real term: -1 is the "everything" pseudo-section.
-            id == ALL_PRODUCTS_ID -> ShopNode(
-                category = ShopCategory(
-                    id = ALL_PRODUCTS_ID,
-                    name = allLabel,
-                    products = catalog.roots.flatMap { it.products }.distinctBy { it.id },
-                ),
-            )
-            else -> catalog.node(id)
-        }
-    }
+    val current = path.lastOrNull()
 
-    BackHandler(enabled = openNode != null) { openCategoryId = null }
+    // Back leaves the section before it leaves the tab.
+    BackHandler(enabled = current != null) { onBack() }
 
     // Typed explicitly: a bare `if` returning a lambda infers a plain function
-    // type, which does not satisfy BrandTopAppBar's @Composable parameter.
-    val backIcon: (@Composable () -> Unit)? = if (openNode != null) {
+    // type, which does not satisfy the @Composable parameter.
+    val backIcon: (@Composable () -> Unit)? = if (current != null) {
         {
-            IconButton(onClick = { openCategoryId = null }) {
+            IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.action_back),
@@ -124,10 +99,10 @@ fun ShopScreen(
     Scaffold(
         topBar = {
             BrandTopAppBar(
-                title = openNode?.category?.name ?: stringResource(R.string.shop_title),
+                title = current?.category?.name ?: stringResource(R.string.shop_title),
                 navigationIcon = backIcon,
                 actions = {
-                    if (openNode == null) {
+                    if (current == null) {
                         IconButton(onClick = onRetry) {
                             Icon(
                                 imageVector = Icons.Filled.Refresh,
@@ -139,22 +114,25 @@ fun ShopScreen(
             )
         },
     ) { innerPadding ->
-        AsyncStateView(
-            state = state,
-            isOffline = isOffline,
-            onRetry = onRetry,
-            emptyMessage = stringResource(R.string.shop_empty),
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .padding(innerPadding),
-        ) { loaded ->
-            if (openNode != null) {
-                CategoryPage(node = openNode, onOpenProduct = onOpenProduct)
+        ) {
+            if (current == null) {
+                ShopMenu(menu = menu, isOffline = isOffline, onRetry = onRetry, onOpen = onOpen)
             } else {
-                ShopMenu(
-                    catalog = loaded,
-                    onOpenCategory = { id -> openCategoryId = id },
+                SectionPage(
+                    path = path,
+                    current = current,
+                    page = page,
+                    loadingMore = loadingMore,
+                    isOffline = isOffline,
+                    onRetry = onRetry,
+                    onOpen = onOpen,
+                    onJumpTo = onJumpTo,
+                    onLoadMore = onLoadMore,
                     onOpenProduct = onOpenProduct,
                 )
             }
@@ -166,70 +144,34 @@ fun ShopScreen(
 
 @Composable
 private fun ShopMenu(
-    catalog: ShopCatalog,
-    onOpenCategory: (Int) -> Unit,
-    onOpenProduct: (Int) -> Unit,
+    menu: UiState<List<ShopNode>>,
+    isOffline: Boolean,
+    onRetry: () -> Unit,
+    onOpen: (ShopNode) -> Unit,
 ) {
-    LazyColumn(
+    AsyncStateView(
+        state = menu,
+        isOffline = isOffline,
+        onRetry = onRetry,
+        emptyMessage = stringResource(R.string.shop_empty),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = Spacing.lg),
-        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-    ) {
-        if (catalog.featured.isNotEmpty()) {
-            item(key = "featured-title") {
-                SectionHeader(stringResource(R.string.shop_featured))
+    ) { roots ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = Spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+        ) {
+            item(key = "title") { SectionHeader(stringResource(R.string.shop_categories)) }
+
+            itemsIndexed(items = roots) { _, node ->
+                MenuRow(node = node, onClick = { onOpen(node) })
             }
-            item(key = "featured-row") {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = Spacing.md),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-                ) {
-                    // Positional keys: the bridge can list the same product twice
-                    // (featured plus a category), and a duplicated key is a hard
-                    // crash, not a warning.
-                    itemsIndexed(items = catalog.featured) { _, product ->
-                        FeaturedCard(product, onClick = { onOpenProduct(product.id) })
-                    }
-                }
-            }
-        }
-
-        item(key = "categories-title") {
-            SectionHeader(stringResource(R.string.shop_categories))
-        }
-
-        // Every category in one tap, before choosing a section. Without this the
-        // user has to know which subcategory holds what.
-        item(key = "all-products") {
-            val total = catalog.roots.sumOf { it.count }
-            MenuRow(
-                title = stringResource(R.string.shop_all_products),
-                count = total,
-                onClick = { onOpenCategory(ALL_PRODUCTS_ID) },
-                showCount = total > 0,
-            )
-        }
-
-        itemsIndexed(items = catalog.roots) { _, root ->
-            MenuRow(
-                title = root.category.name,
-                count = root.count,
-                onClick = { onOpenCategory(root.category.id) },
-                showCount = root.count > 0,
-                hasChildren = root.children.isNotEmpty(),
-            )
         }
     }
 }
 
 @Composable
-private fun MenuRow(
-    title: String,
-    count: Int,
-    onClick: () -> Unit,
-    showCount: Boolean,
-    hasChildren: Boolean = false,
-) {
+private fun MenuRow(node: ShopNode, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -253,21 +195,25 @@ private fun MenuRow(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = title,
+                    text = node.category.name,
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = when {
-                        showCount -> stringResource(
-                            R.string.shop_product_count,
-                            PersianFormat.toPersianDigits(count.toString()),
+                    text = if (node.children.isNotEmpty()) {
+                        stringResource(
+                            R.string.shop_subcategories_count,
+                            PersianFormat.toPersianDigits(node.children.size.toString()),
+                            PersianFormat.toPersianDigits(node.count.toString()),
                         )
-                        hasChildren -> stringResource(R.string.shop_subcategories)
-                        else -> stringResource(R.string.shop_coming_soon)
+                    } else {
+                        stringResource(
+                            R.string.shop_product_count,
+                            PersianFormat.toPersianDigits(node.count.toString()),
+                        )
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -286,79 +232,137 @@ private fun MenuRow(
 // ── Level 2: one section ────────────────────────────────────────────────────
 
 @Composable
-private fun CategoryPage(
-    node: ShopNode,
+private fun SectionPage(
+    path: List<ShopNode>,
+    current: ShopNode,
+    page: UiState<ShopPage>,
+    loadingMore: Boolean,
+    isOffline: Boolean,
+    onRetry: () -> Unit,
+    onOpen: (ShopNode) -> Unit,
+    onJumpTo: (Int) -> Unit,
+    onLoadMore: () -> Unit,
     onOpenProduct: (Int) -> Unit,
 ) {
-    // 0 means "everything in this section". Keyed on the node so opening a
-    // different category never inherits the previous chip selection.
-    var selectedChildId by rememberSaveable(node.category.id) { mutableStateOf(0) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        // «مواد اولیه › نخ و نقشه ها» — a three-level shop needs the path, or
+        // the user cannot tell where they are or how to get back up.
+        Breadcrumb(path = path, onJumpTo = onJumpTo)
 
-    val shown = node.children.firstOrNull { it.category.id == selectedChildId } ?: node
-    val products = shown.products
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = Spacing.lg),
-        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-    ) {
-        if (node.children.isNotEmpty()) {
-            item(key = "chips") {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = Spacing.md),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                ) {
-                    item(key = "chip-all") {
-                        SectionChip(
-                            label = stringResource(R.string.shop_all_chip),
-                            selected = selectedChildId == 0,
-                            onClick = { selectedChildId = 0 },
-                        )
-                    }
-                    itemsIndexed(items = node.children) { _, child ->
-                        SectionChip(
-                            label = child.category.name,
-                            selected = selectedChildId == child.category.id,
-                            onClick = { selectedChildId = child.category.id },
-                        )
-                    }
-                }
-            }
+        if (current.children.isNotEmpty()) {
+            ChildChips(children = current.children, onOpen = onOpen)
         }
 
-        if (products.isEmpty()) {
-            item(key = "empty") {
-                Text(
-                    text = stringResource(R.string.shop_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(Spacing.md),
-                )
-            }
-        } else {
-            itemsIndexed(items = products) { _, product ->
-                ProductRow(product, onClick = { onOpenProduct(product.id) })
+        AsyncStateView(
+            state = page,
+            isOffline = isOffline,
+            onRetry = onRetry,
+            emptyMessage = stringResource(R.string.shop_empty),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        ) { data ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(top = Spacing.xs, bottom = Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                itemsIndexed(items = data.products) { _, product ->
+                    ProductRow(product = product, onClick = { onOpenProduct(product.id) })
+                }
+
+                if (data.hasMore) {
+                    item(key = "more") {
+                        MoreRow(isLoading = loadingMore, onClick = onLoadMore)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SectionChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, maxLines = 1) },
-        shape = RoundedCornerShape(50),
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = MaterialTheme.colorScheme.primary,
-            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-        ),
-    )
+private fun Breadcrumb(path: List<ShopNode>, onJumpTo: (Int) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        itemsIndexed(items = path) { index, node ->
+            val isLast = index == path.lastIndex
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = node.category.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isLast) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(enabled = !isLast) { onJumpTo(index) }
+                        .padding(horizontal = 2.dp, vertical = 2.dp),
+                )
+                if (!isLast) {
+                    Text(
+                        text = "›",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChildChips(children: List<ShopNode>, onOpen: (ShopNode) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+    ) {
+        itemsIndexed(items = children) { _, child ->
+            FilterChip(
+                selected = false,
+                onClick = { onOpen(child) },
+                label = {
+                    Text(
+                        text = "${child.category.name} (${PersianFormat.toPersianDigits(child.count.toString())})",
+                        maxLines = 1,
+                    )
+                },
+                shape = RoundedCornerShape(50),
+                colors = FilterChipDefaults.filterChipColors(
+                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MoreRow(isLoading: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        contentAlignment = Alignment.Center,
+    ) {
+        Button(onClick = onClick, enabled = !isLoading) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(end = Spacing.sm)
+                        .size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+            Text(stringResource(R.string.shop_more))
+        }
+    }
 }
 
 // ── Shared pieces ───────────────────────────────────────────────────────────
@@ -387,63 +391,6 @@ private fun SectionHeader(text: String) {
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.SemiBold,
         )
-    }
-}
-
-@Composable
-private fun FeaturedCard(product: ShopProduct, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .width(220.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(150.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-            ) {
-                product.imageUrl?.let { url ->
-                    AsyncImage(
-                        model = url,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-
-                // The price sits on the image: it is the first thing a buyer
-                // looks for, and the padding below is then free for the title.
-                Text(
-                    text = PersianFormat.formatToman(product.priceToman),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(Spacing.sm)
-                        .clip(RoundedCornerShape(50))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
-                        .padding(horizontal = Spacing.sm, vertical = 4.dp),
-                )
-            }
-
-            Text(
-                text = product.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(Spacing.sm),
-            )
-        }
     }
 }
 
