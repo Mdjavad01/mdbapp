@@ -11,6 +11,25 @@ data class ShopProductsDto(
     val categories: List<ShopCategoryDto> = emptyList(),
 )
 
+/** `GET /shop/categories` — the tree only, no products. */
+@Serializable
+data class ShopCategoriesDto(
+    val success: Boolean? = null,
+    val categories: List<ShopCategoryDto> = emptyList(),
+)
+
+/** `GET /shop/catalog` — one page of one category. */
+@Serializable
+data class ShopCatalogPageDto(
+    val success: Boolean? = null,
+    val category: ShopCategoryDto? = null,
+    val page: Int? = null,
+    val perPage: Int? = null,
+    val total: Int? = null,
+    val totalPages: Int? = null,
+    val products: List<ShopProductDto> = emptyList(),
+)
+
 @Serializable
 data class ShopProductDto(
     val id: Int? = null,

@@ -12,9 +12,13 @@ import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.VerifyPaymentRequestD
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.CheckoutSession
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCatalog
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCategory
+import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCategory
+import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopPage
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopProduct
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShippingDetails
 import com.mrdastbaaf.mdbapp.features.shop.domain.repository.ShopRepository
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,6 +39,18 @@ class ShopRepositoryImpl @Inject constructor(
 
     private var cached: ShopCatalog? = null
 
+    /**
+     * The tree, and the products the user has actually scrolled past.
+     *
+     * [seenProducts] is what makes checkout possible without the full
+     * catalogue: the checkout screen only ever opens from a product the user
+     * just tapped, so that product is always in this map.
+     */
+    private val categoriesMutex = Mutex()
+    @Volatile private var cachedCategories: List<ShopCategory>? = null
+    @Volatile private var categoriesAtMillis: Long = 0L
+    private val seenProducts = java.util.concurrent.ConcurrentHashMap<Int, ShopProduct>()
+
     override suspend fun catalog(force: Boolean): Result<ShopCatalog> {
         if (!force) {
             cached?.let { return Result.success(it) }
@@ -50,7 +66,40 @@ class ShopRepositoryImpl @Inject constructor(
             .onSuccess { cached = it }
     }
 
+    override suspend fun categories(force: Boolean): Result<List<ShopCategory>> =
+        categoriesMutex.withLock {
+            val fresh = cachedCategories
+            val age = System.currentTimeMillis() - categoriesAtMillis
+            if (!force && fresh != null && age in 0 until CATEGORIES_TTL_MILLIS) {
+                return Result.success(fresh)
+            }
+
+            safeApiCall(json) { api.getShopCategories() }
+                .mapCatching { dto -> dto.categories.mapNotNull { it.toDomain() } }
+                .onSuccess {
+                    cachedCategories = it
+                    categoriesAtMillis = System.currentTimeMillis()
+                }
+        }
+
+    override suspend fun page(categoryId: Int, page: Int, perPage: Int): Result<ShopPage> =
+        safeApiCall(json) { api.getShopCatalog(categoryId, page, perPage) }
+            .mapCatching { dto ->
+                val products = dto.products.mapNotNull { it.toDomain() }
+                products.forEach { seenProducts[it.id] = it }
+
+                ShopPage(
+                    categoryId = dto.category?.id ?: categoryId,
+                    categoryName = HtmlText.strip(dto.category?.name),
+                    products = products,
+                    page = dto.page ?: page,
+                    totalPages = dto.totalPages ?: 0,
+                    total = dto.total ?: products.size,
+                )
+            }
+
     override suspend fun product(id: Int): ShopProduct? {
+        seenProducts[id]?.let { return it }
         val catalog = cached ?: catalog().getOrNull() ?: return null
         return catalog.featured.firstOrNull { it.id == id }
             ?: catalog.categories.asSequence()
@@ -138,6 +187,7 @@ class ShopRepositoryImpl @Inject constructor(
             name = categoryName,
             products = products.mapNotNull { it.toDomain() },
             parentId = parent ?: 0,
+            count = count ?: 0,
         )
     }
 }

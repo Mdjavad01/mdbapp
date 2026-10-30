@@ -2,6 +2,8 @@ package com.mrdastbaaf.mdbapp.features.shop.domain.repository
 
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.CheckoutSession
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCatalog
+import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopCategory
+import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopPage
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShopProduct
 import com.mrdastbaaf.mdbapp.features.shop.domain.model.ShippingDetails
 
@@ -18,6 +20,17 @@ interface ShopRepository {
 
     /** Cached after the first success; [force] refetches. */
     suspend fun catalog(force: Boolean = false): Result<ShopCatalog>
+
+    /**
+     * The category tree, without products.
+     *
+     * The shop has 1800 products, so the menu cannot be built from a catalogue
+     * that carries them. Cached for five minutes; [force] bypasses it.
+     */
+    suspend fun categories(force: Boolean = false): Result<List<ShopCategory>>
+
+    /** One page of one category. `categoryId = 0` means every category. */
+    suspend fun page(categoryId: Int, page: Int, perPage: Int = 24): Result<ShopPage>
 
     /** The product the checkout screen is about, from the cached catalogue. */
     suspend fun product(id: Int): ShopProduct?

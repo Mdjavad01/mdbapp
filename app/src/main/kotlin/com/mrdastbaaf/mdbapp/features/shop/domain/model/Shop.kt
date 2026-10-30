@@ -21,6 +21,14 @@ data class ShopCategory(
     val name: String,
     val products: List<ShopProduct>,
     val parentId: Int = 0,
+    /**
+     * How many products the category holds, as the server counts them.
+     *
+     * The menu is built from `/shop/categories`, which carries no products at
+     * all — so the count is the only thing that tells a real category from an
+     * empty one.
+     */
+    val count: Int = 0,
 )
 
 /**
@@ -37,7 +45,8 @@ data class ShopNode(
     val products: List<ShopProduct> =
         category.products + children.flatMap { it.products }
 
-    val count: Int get() = products.size
+    /** Loaded products if any, otherwise the number the server reported. */
+    val count: Int get() = maxOf(products.size, category.count)
 
     /** True when this node only exists to hold children. */
     val isGroup: Boolean get() = category.products.isEmpty() && children.isNotEmpty()
@@ -57,6 +66,27 @@ data class ShopCatalog(
 
     val isEmpty: Boolean
         get() = featured.isEmpty() && roots.isEmpty() && categories.all { it.products.isEmpty() }
+}
+
+/**
+ * The shop menu: categories only, no products.
+ *
+ * Same forest builder as the catalogue — a parent that is missing from the
+ * payload, a term that is its own parent and a two-node cycle are handled there
+ * — but the nodes carry no products, so the count comes from the server.
+ */
+fun buildShopMenu(categories: List<ShopCategory>): List<ShopNode> = buildShopTree(categories)
+
+/** One page of one section, as the app renders it. */
+data class ShopPage(
+    val categoryId: Int,
+    val categoryName: String,
+    val products: List<ShopProduct>,
+    val page: Int,
+    val totalPages: Int,
+    val total: Int,
+) {
+    val hasMore: Boolean get() = page < totalPages
 }
 
 private fun ShopNode.flatten(): List<ShopNode> = listOf(this) + children.flatMap { it.flatten() }

@@ -77,6 +77,15 @@ object ApiPaths {
     const val SHOP_PRODUCTS = "shop/products"
 
     /**
+     * The category tree only — no products. Ten rows for a shop with ten
+     * categories, and the bridge caches it for ten minutes.
+     */
+    const val SHOP_CATEGORIES = "shop/categories"
+
+    /** One page of one category. `?category=&page=&per_page=`. */
+    const val SHOP_CATALOG = "shop/catalog"
+
+    /**
      * Creates an order and returns the gateway URL. Bearer required.
      *
      * Accepts `plan_id`, or `product_id` + `kind=shop` + the shipping fields.

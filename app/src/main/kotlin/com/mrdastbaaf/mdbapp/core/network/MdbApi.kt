@@ -24,6 +24,8 @@ import com.mrdastbaaf.mdbapp.features.player.data.remote.dto.PlaybackTicketDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.PlanOrderRequestDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderRequestDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopOrderResponseDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopCatalogPageDto
+import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopCategoriesDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.ShopProductsDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.VerifyPaymentRequestDto
 import com.mrdastbaaf.mdbapp.features.shop.data.remote.dto.VerifyPaymentResponseDto
@@ -32,6 +34,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 /**
  * Retrofit description of the WordPress bridge.
@@ -163,6 +166,23 @@ interface MdbApi {
     /** The physical catalogue: a featured row plus products grouped by category. */
     @GET(ApiPaths.SHOP_PRODUCTS)
     suspend fun getShopProducts(): ShopProductsDto
+
+    /**
+     * The category tree, with no products in it.
+     *
+     * A shop with 1800 products cannot send them all in one response, so the
+     * menu is built from this and each section asks for its own page.
+     */
+    @GET(ApiPaths.SHOP_CATEGORIES)
+    suspend fun getShopCategories(): ShopCategoriesDto
+
+    /** One page of one category. `category = 0` means every category. */
+    @GET(ApiPaths.SHOP_CATALOG)
+    suspend fun getShopCatalog(
+        @Query("category") categoryId: Int,
+        @Query("page") page: Int,
+        @Query("per_page") perPage: Int,
+    ): ShopCatalogPageDto
 
     /**
      * Creates the order and returns the gateway URL.

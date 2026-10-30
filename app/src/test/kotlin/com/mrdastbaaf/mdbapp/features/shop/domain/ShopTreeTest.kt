@@ -133,6 +133,31 @@ class ShopTreeTest {
     }
 
     @Test
+    fun `the menu is built from server counts, with no products loaded`() {
+        // /shop/categories sends parent and count and no products at all.
+        val catalog = ShopCatalog(
+            featured = emptyList(),
+            categories = listOf(
+                ShopCategory(id = 1600, name = "مواد اولیه", products = emptyList(), count = 1687),
+                ShopCategory(id = 1806, name = "نخ و نقشه ها", products = emptyList(), parentId = 1600, count = 1679),
+                ShopCategory(id = 1829, name = "طرح آیه عرضی", products = emptyList(), parentId = 1806, count = 220),
+                ShopCategory(id = 1791, name = "خالی", products = emptyList(), count = 0),
+            ),
+        )
+
+        val roots = catalog.roots
+        assertEquals(1, roots.size)
+        assertEquals(1600, roots.first().category.id)
+        assertEquals(1687, roots.first().count)
+        // 1600 -> 1806 -> 1829: one child at each level, two levels deep.
+        assertEquals(1, roots.first().children.size)
+        assertEquals(1, roots.first().children.first().children.size)
+        assertEquals(220, catalog.node(1829)?.count)
+        // A category with no products and no children is not a menu entry.
+        assertNull(catalog.node(1791))
+    }
+
+    @Test
     fun `an empty response is empty, a response with products is not`() {
         assertTrue(catalogOf().isEmpty)
         assertTrue(catalogOf(category(id = 1)).isEmpty)
