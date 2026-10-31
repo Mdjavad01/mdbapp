@@ -85,30 +85,45 @@ export function dismissUpdateBanner(serverVersion: string): void {
  * پیش از reload، به مرورگر بگو sw.js را دوباره چک کند تا precache جدید در همان
  * ناوبری ساخته شود (با timeout کوتاه — هرگز کاربر را معطل نکن).
  */
-async function kickServiceWorkerUpdate(): Promise<void> {
+/**
+ * v1.6.3 — بروزرسانی واقعی، نه یک reload ساده.
+ *
+ * باگ گزارش‌شده: بنر «نسخهٔ جدید آماده است» چهار بار زده شد و هر بار برگشت.
+ *
+ * ریشه: `registration.update()` فقط sw.js را تازه می‌کند و صبر نمی‌کند؛ بعد
+ * `location` عوض می‌شد. ولی ناوبری را همان Service Worker قدیمی از **precache
+ * خودش** سرو می‌کند، پس مرورگر دوباره index.html قدیمی را اجرا می‌کرد و بنر
+ * برمی‌گشت. `?_=timestamp` کش HTTP را دور می‌زند، ولی مسیر ناوبری SW به query
+ * کاری ندارد. نتیجه: حلقه.
+ *
+ * راه‌حل: ثبت SW برداشته می‌شود و کش‌ها پاک می‌شوند. صفحهٔ بعدی از شبکه می‌آید
+ * و باندل تازه اجرا می‌شود؛ SW جدید هم در همان بارگذاری خودش دوباره ثبت
+ * می‌شود. حالت آفلاین فقط برای همان یک reload از دست می‌رود — که بهای قابل
+ * قبولی برای خارج‌شدن از حلقه است.
+ */
+export async function triggerPwaUpdate(): Promise<void> {
+  const target = `/?_=${Date.now()}${window.location.hash}`;
+
+  if (!('serviceWorker' in navigator)) {
+    window.location.replace(target);
+    return;
+  }
+
   try {
-    if (!('serviceWorker' in navigator)) return;
-    const registration = await Promise.race([
-      navigator.serviceWorker.getRegistration(),
-      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500)),
-    ]);
-    if (registration) {
-      // fire-and-forget — منتظر install کامل نمی‌مانیم؛ reload با cache-bust
-      // خودش باعث گرفتن sw.js تازه می‌شود.
-      void registration.update();
-    }
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  } catch {
+    /* بی‌صدا — reload در هر حال انجام می‌شود */
+  }
+
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
   } catch {
     /* بی‌صدا */
   }
-}
 
-/**
- * v1.5.6 — اجرای بروزرسانی پس از کلیک کاربر روی «بروزرسانی»:
- * SW را update می‌کند و با URL کش‌باست‌شده reload می‌کند (در همان هش فعلی).
- */
-export async function triggerPwaUpdate(): Promise<void> {
-  await kickServiceWorkerUpdate();
-  window.location.href = `/?_=${Date.now()}#${window.location.hash}`;
+  window.location.replace(target);
 }
 
 export function useVersionChecker(localPwaVersion: string): void {
