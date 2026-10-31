@@ -51,6 +51,24 @@ if (!defined('ABSPATH')) {
 
 class MrDastbaaf_App_UI_Controller {
 
+    /**
+     * یک رنگ برند از تنظیمات، با تضمین فرمت hex.
+     *
+     * مقدار نامعتبر یا خالی به پیش‌فرض برمی‌گردد: یک رنگ خراب در پنل نباید
+     * کل اپ را بی‌رنگ کند.
+     *
+     * @param string $option  نام آپشن وردپرس
+     * @param string $default مقدار پیش‌فرض به شکل #RRGGBB
+     * @return string
+     */
+    private static function theme_color($option, $default) {
+        $value = trim((string) get_option($option, ''));
+        if (preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $value)) {
+            return strtoupper($value);
+        }
+        return $default;
+    }
+
     const OPTION_KEY = 'mrdastbaaf_app_ui';
     const UPDATED_AT_OPTION = 'mrdastbaaf_app_ui_updated_at';
 
@@ -117,6 +135,19 @@ class MrDastbaaf_App_UI_Controller {
                 'stat2Label'       => 'مسترکلاس ویدیویی گام‌به‌گام',
                 'stat3Value'       => '۱۰۰٪ دستی',
                 'stat3Label'       => 'تمدید اشتراک بدون کسر خودکار',
+            ),
+            /**
+             * v1.7.22 — پالت برند، از پنل.
+             *
+             * تا امروز رنگ‌ها در کد کلاینت‌ها بودند: اپ چهار لنگر ثابت داشت و
+             * وب متغیرهای CSS. حالا هر دو از همین پاسخ می‌خوانند، پس تغییر رنگ
+             * یک ذخیره در پیشخوان است، نه یک بیلد.
+             */
+            'theme' => array(
+                'primary' => self::theme_color('mrdastbaaf_brand_primary', '#9A3412'),
+                'accent'  => self::theme_color('mrdastbaaf_brand_accent', '#D97706'),
+                'canvas'  => self::theme_color('mrdastbaaf_brand_canvas', '#FDFBF7'),
+                'success' => self::theme_color('mrdastbaaf_brand_success', '#047857'),
             ),
             // v1.3.5: سکشن «categories» حذف شد؛ ترتیب پیش‌فرض بقیه یک ردیف جلو رفت.
             // داده‌های ذخیره‌شدهٔ قدیمی (sortOrder ۳..۶) بدون مهاجرت کار می‌کنند —
