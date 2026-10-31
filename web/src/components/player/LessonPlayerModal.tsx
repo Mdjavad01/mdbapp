@@ -3,7 +3,7 @@
  * @description Branded video lesson player modal with dynamic forensic watermark, syllabus, and notes
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play,
   Pause,
@@ -143,6 +143,14 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   const stageRef = useRef<HTMLDivElement>(null);
   // v1.1.0 Real-API: المان ویدیوی واقعی (فقط در حالت اتصال واقعی mount می‌شود).
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // v1.6.4: خودِ المان به‌صورت state — تا افکت hls.js روی mountشدن واکنش بدهد.
+  // با ref تنها، اگر افکت یک فریم قبل از mount اجرا شود (که می‌شود)، هیچ‌وقت
+  // دوباره تلاش نمی‌کند و ویدیو بی‌صدا سفید می‌ماند.
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const setVideoNode = useCallback((element: HTMLVideoElement | null) => {
+    videoRef.current = element;
+    setVideoEl(element);
+  }, []);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoCompletedRef = useRef<string | null>(null);
 
@@ -163,7 +171,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   const [hlsLevel, setHlsLevel] = useState(-1);
 
   useEffect(() => {
-    const video = videoRef.current;
+    const video = videoEl;
     if (!isHlsSource || !activeVideoSrc || !video) {
       setHlsLevels([]);
       return;
@@ -197,6 +205,10 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
           .sort((a, b) => b.height - a.height),
       );
       setHlsLevel(hls.currentLevel);
+      // جای autoPlay که برای HLS برداشته شد.
+      void video.play().catch(() => {
+        /* سیاست autoplay مرورگر — کاربر خودش دکمهٔ پخش را می‌زند */
+      });
     });
 
     // تا وقتی autoLevelEnabled است یعنی خود پلیر تصمیم می‌گیرد؛ منو باید
@@ -233,7 +245,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
       hls.destroy();
       hlsRef.current = null;
     };
-  }, [activeVideoSrc, isHlsSource]);
+  }, [activeVideoSrc, isHlsSource, videoEl]);
 
   const handleHlsLevelSelect = (value: string) => {
     const level = Number(value);
@@ -807,11 +819,15 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                 v1.2.8: سخت‌سازی ضد دانلود — بدون کنترل بومی دانلود، بدون PiP، بدون منوی راست‌کلیک */}
             {activeVideoSrc && (
               <video
-                ref={videoRef}
+                ref={setVideoNode}
                 key={activeVideoSrc}
                 src={isHlsSource ? undefined : activeVideoSrc}
                 className="absolute inset-0 z-10 h-full w-full bg-black object-contain"
-                autoPlay
+                // برای HLS نباید autoPlay باشد: المرا بدون src می‌ماند و بعضی
+                // مرورگرها همان لحظه رویداد error می‌دهند — بعد لایهٔ خطا روی
+                // پخشی می‌نشیند که hls.js تازه شروع کرده. پخش را بعد از
+                // MANIFEST_PARSED خودمان صدا می‌زنیم.
+                autoPlay={!isHlsSource}
                 playsInline
                 preload="metadata"
                 controlsList="nodownload noplaybackrate noremoteplayback"
@@ -848,10 +864,13 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                   if (Number.isFinite(duration)) setCurrentTime(duration);
                   setIsPlaying(false);
                 }}
-                onError={() => {
+                onError={(e) => {
                   // v1.3.0: خطای منبع/شبکه ویدیو در حالت Real — اورلی حداقلی با
                   // تلاش مجدد (درخواست تازهٔ بلیط/playback). انقضای بلیط مسیر خودش
                   // را دارد (BUG-62) و در دمو ویدیوی واقعی وجود ندارد.
+                  // v1.6.4: تا وقتی منبعی بارگذاری نشده، هر error بی‌معناست —
+                  // برای HLS منبع را hls.js می‌سازد و خطاهایش را خودش گزارش می‌کند.
+                  if (!e.currentTarget.currentSrc) return;
                   if (ticket?.videoUrl) {
                     setPlaybackErrorDetail(`v${PWA_VERSION} · video.onError`);
                     setIsPlaybackError(true);
