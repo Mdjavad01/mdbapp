@@ -866,7 +866,11 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                 // MANIFEST_PARSED خودمان صدا می‌زنیم.
                 autoPlay={!isHlsSource}
                 playsInline
-                preload="metadata"
+                // v1.6.8: برای HLS هیچ preload‌ای نمی‌دهیم. با MediaSource،
+                // خودِ hls.js بارگذاری را هدایت می‌کند؛ «metadata» المان را
+                // وامی‌دارد پیش از آماده‌شدن منبع دنبال متادیتا برود — همان
+                // حالتی که در تست هدلس تا ابد معلق ماند.
+                preload={isHlsSource ? 'none' : 'metadata'}
                 controlsList="nodownload noplaybackrate noremoteplayback"
                 disablePictureInPicture
                 draggable={false}
@@ -919,13 +923,25 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                   if (ticket?.videoUrl) {
                     const failedUrl = ticket.videoUrl;
                     const hlsNote = hlsFailureRef.current ? ` · hls: ${hlsFailureRef.current}` : '';
-                    // v1.6.7: دلیل hls.js هرگز با این یکی بازنویسی نمی‌شود —
-                    // قبلاً همین باعث شد پیام واقعی («manifestLoadError») با
-                    // یک «video.onError» بی‌محتوا جایگزین شود.
+                    // v1.6.8: اثر انگشت وضعیت — بدون این، «video.onError» می‌تواند
+                    // یعنی «hls.js وصل نشد»، «وصل شد و بی‌صدا ماند»، یا «وصل شد و
+                    // منبع را رد کرد»؛ سه علت کاملاً متفاوت با یک پیام یکسان.
+                    //   rs  = readyState المان (۰ = هیچ داده‌ای بارگذاری نشده)
+                    //   src = منبع فعلی: none | blob (hls.js) | url (مستقیم)
+                    //   lv  = تعداد کیفیت‌های کشف‌شده از منیفست
+                    //   md  = حالت انتخابی: auto | hls | direct
+                    const source = e.currentTarget.currentSrc;
+                    const fingerprint = [
+                      `rs=${e.currentTarget.readyState}`,
+                      `src=${source ? (source.startsWith('blob:') ? 'blob' : 'url') : 'none'}`,
+                      `lv=${hlsLevels.length}`,
+                      `md=${forcedForThisUrl ?? 'auto'}`,
+                    ].join(' · ');
+
                     setPlaybackErrorDetail(
                       (previous) =>
                         previous ??
-                        `v${PWA_VERSION} · video.onError · ${mediaPath(failedUrl)}${hlsNote}`,
+                        `v${PWA_VERSION} · video.onError · ${mediaPath(failedUrl)} · ${fingerprint}${hlsNote}`,
                     );
                     setIsPlaybackError(true);
                   }
