@@ -216,7 +216,11 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
       return;
     }
 
-    const hls = new Hls({ enableWorker: true });
+    // enableWorker: false — عمدی.
+    // hls.js ورکر را از یک Blob می‌سازد و در PWA (که خودش Service Worker دارد)
+    // همین مسیر شکننده است. تنها پیکربندی‌ای که واقعاً تست شد و پخش کرد، بدون
+    // ورکر بود؛ پارس روی رشتهٔ اصلی کمی کندتر است ولی پخش کردن مهم‌تر است.
+    const hls = new Hls({ enableWorker: false });
     hlsRef.current = hls;
     hls.loadSource(activeVideoSrc);
     hls.attachMedia(video);
@@ -913,9 +917,15 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                   }
 
                   if (ticket?.videoUrl) {
+                    const failedUrl = ticket.videoUrl;
                     const hlsNote = hlsFailureRef.current ? ` · hls: ${hlsFailureRef.current}` : '';
+                    // v1.6.7: دلیل hls.js هرگز با این یکی بازنویسی نمی‌شود —
+                    // قبلاً همین باعث شد پیام واقعی («manifestLoadError») با
+                    // یک «video.onError» بی‌محتوا جایگزین شود.
                     setPlaybackErrorDetail(
-                      `v${PWA_VERSION} · video.onError · ${mediaPath(ticket.videoUrl)}${hlsNote}`,
+                      (previous) =>
+                        previous ??
+                        `v${PWA_VERSION} · video.onError · ${mediaPath(failedUrl)}${hlsNote}`,
                     );
                     setIsPlaybackError(true);
                   }
