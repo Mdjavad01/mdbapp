@@ -3,6 +3,7 @@ package com.mrdastbaaf.mdbapp.core.network
 import com.mrdastbaaf.mdbapp.core.config.AppConfig
 import android.content.Context
 import com.mrdastbaaf.mdbapp.core.network.interceptor.AuthInterceptor
+import com.mrdastbaaf.mdbapp.core.network.interceptor.ClientInfoInterceptor
 import com.mrdastbaaf.mdbapp.core.network.interceptor.RetryInterceptor
 import com.mrdastbaaf.mdbapp.core.network.interceptor.PublicCacheInterceptor
 import com.mrdastbaaf.mdbapp.core.network.interceptor.SafeLoggingInterceptor
@@ -72,6 +73,7 @@ object NetworkModule {
         retryInterceptor: RetryInterceptor,
         safeLoggingInterceptor: SafeLoggingInterceptor,
         publicCacheInterceptor: PublicCacheInterceptor,
+        clientInfoInterceptor: ClientInfoInterceptor,
     ): OkHttpClient {
         val builder = OkHttpClient.Builder()
             // 20 MB holds the three public payloads and the odd page body many
@@ -86,6 +88,9 @@ object NetworkModule {
             .retryOnConnectionFailure(true)
             .addInterceptor(safeLoggingInterceptor)
             .addInterceptor(retryInterceptor)
+            // Before auth so every request carries it, including the ones that
+            // have no token yet (login, OTP).
+            .addInterceptor(clientInfoInterceptor)
             .addInterceptor(authInterceptor)
 
         // Certificate pinning is opt-in at build time; see res/xml/network_security_config.xml
