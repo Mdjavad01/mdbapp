@@ -24,6 +24,11 @@ jobs:
   plugin:
     name: Plugin — syntax and tests
     runs-on: ubuntu-latest
+    # The runner ships with Xdebug enabled for coverage. It aborts a script it
+    # suspects of looping (256 frames deep), and one of these tests builds a
+    # deliberately long chain — so it is not a loop, it is the fixture.
+    env:
+      XDEBUG_MODE: 'off'
     steps:
       - uses: actions/checkout@v4
 
