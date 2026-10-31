@@ -44,8 +44,13 @@ Options -Indexes -MultiViews +FollowSymLinks
 #    JS/CSS اشاره می‌کند.
 # ---------------------------------------------------------------------------
 <IfModule mod_headers.c>
-  <FilesMatch "^index\.html$">
+  <FilesMatch "^(index\.html)?$">
     Header set Cache-Control "no-cache, must-revalidate"
+    # v1.6.5: هاست LiteSpeed است و Cache-Control را برای کش لبه کافی نمی‌داند.
+    # بدون این هدر، بعد از هر آپلود تا مدتی همان index.html قدیمی سرو می‌شود —
+    # حتی در حالت ناشناس (که کش مرورگر نقشی ندارد). نشانه‌اش این است که
+    # #/debug نسخهٔ قدیمی را نشان می‌دهد در حالی که فایل‌های تازه روی هاست‌اند.
+    Header set X-LiteSpeed-Cache-Control "no-cache"
   </FilesMatch>
 </IfModule>
 
