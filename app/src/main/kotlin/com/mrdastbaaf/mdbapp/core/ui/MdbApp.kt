@@ -11,6 +11,7 @@ import com.mrdastbaaf.mdbapp.core.session.SessionManager
 import com.mrdastbaaf.mdbapp.core.settings.ThemePreference
 import com.mrdastbaaf.mdbapp.core.settings.ThemeViewModel
 import com.mrdastbaaf.mdbapp.core.ui.theme.MdbTheme
+import com.mrdastbaaf.mdbapp.features.appcontent.presentation.BrandViewModel
 
 /**
  * The application root.
@@ -23,6 +24,10 @@ import com.mrdastbaaf.mdbapp.core.ui.theme.MdbTheme
  * window: [ThemePreference.SYSTEM] follows the device live, while an explicit
  * choice overrides it until the user changes it again.
  *
+ * [brandViewModel] supplies the *palette* — the panel's four anchors, fetched
+ * from `/app-ui` (v1.7.3). Light/dark and the palette are independent: the
+ * owner picks the colours, the user picks the brightness.
+ *
  * [sessionManager] is injected into `MainActivity` and passed down rather than
  * obtained with `hiltViewModel()`: there is no screen-level ViewModel at this
  * level, and inventing one just to reach the Hilt graph would be noise.
@@ -31,8 +36,10 @@ import com.mrdastbaaf.mdbapp.core.ui.theme.MdbTheme
 fun MdbApp(
     sessionManager: SessionManager,
     themeViewModel: ThemeViewModel = hiltViewModel(),
+    brandViewModel: BrandViewModel = hiltViewModel(),
 ) {
     val preference by themeViewModel.preference.collectAsStateWithLifecycle()
+    val brand by brandViewModel.brand.collectAsStateWithLifecycle()
     val systemDark = isSystemInDarkTheme()
 
     val darkTheme = when (preference) {
@@ -41,7 +48,7 @@ fun MdbApp(
         ThemePreference.DARK -> true
     }
 
-    MdbTheme(darkTheme = darkTheme) {
+    MdbTheme(darkTheme = darkTheme, brand = brand) {
         MdbNavHost(
             sessionManager = sessionManager,
             navController = rememberNavController(),

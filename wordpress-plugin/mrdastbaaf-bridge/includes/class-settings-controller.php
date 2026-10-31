@@ -158,6 +158,50 @@ class MrDastbaaf_Settings_Controller {
             'default' => MRDASTBAAF_PWA_VERSION_DEFAULT,
             'show_in_rest' => false,
         ));
+
+        // v1.7.23: پالت برند — چهار لنگر که اپ و وب از GET /app-ui می‌خوانند.
+        // تا امروز رنگ‌ها در کد کلاینت‌ها بودند؛ حالا یک ذخیره در پیشخوان کافی است.
+        // مقدار نامعتبر در sanitize رد و مقدار قبلی حفظ می‌شود (رنگ خراب = اپ بی‌رنگ).
+        $brand_defaults = array(
+            'mrdastbaaf_brand_primary' => '#9A3412',
+            'mrdastbaaf_brand_accent'  => '#D97706',
+            'mrdastbaaf_brand_canvas'  => '#FDFBF7',
+            'mrdastbaaf_brand_success' => '#047857',
+        );
+        foreach ($brand_defaults as $brand_option => $brand_default) {
+            register_setting(self::SETTINGS_GROUP, $brand_option, array(
+                'type' => 'string',
+                // Closure, نه ارجاع به یک متد مشترک: sanitize_callback نام گزینه را
+                // نمی‌گیرد و بدون آن «حفظ مقدار قبلی» یعنی نوشتن رنگ primary روی
+                // accent/canvas.
+                'sanitize_callback' => function ($value) use ($brand_option, $brand_default) {
+                    return self::sanitize_brand_color($value, $brand_option, $brand_default);
+                },
+                'default' => $brand_default,
+                'show_in_rest' => false,
+            ));
+        }
+    }
+
+    /**
+     * v1.7.23: رنگ برند — فقط `#RRGGBB` (یا `#RGB`).
+     *
+     * ورودی نامعتبر مقدار قبلی همان گزینه را نگه می‌دارد، نه پیش‌فرض را: ادمینی
+     * که یک بار رنگ را عوض کرده و بعد اشتباه تایپ می‌کند، نباید رنگ برندش را از
+     * دست بدهد. اگر هیچ مقدار قبلی نبود، پیش‌فرض برند می‌نشیند.
+     *
+     * @param mixed  $value
+     * @param string $option
+     * @param string $default
+     * @return string
+     */
+    public static function sanitize_brand_color($value, $option = 'mrdastbaaf_brand_primary', $default = '#9A3412') {
+        $value = trim((string) $value);
+        if (preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $value)) {
+            return strtoupper($value);
+        }
+        $current = trim((string) get_option($option, ''));
+        return preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $current) ? strtoupper($current) : $default;
     }
 
     /**
@@ -392,6 +436,47 @@ class MrDastbaaf_Settings_Controller {
                         </td>
                     </tr>
                 </table>
+                </div>
+
+                <?php // v1.7.23: پالت برند — همان چهار لنگرِ GET /app-ui → theme ?>
+                <div class="mrd-card">
+                    <h2 class="mrd-card__title">پالت برند (اپ و وب‌اپ)</h2>
+                    <p class="description" style="margin-top:0;">
+                        این چهار رنگ از <code dir="ltr">GET /app-ui</code> به هر دو کلاینت می‌روند: اپ اندروید (نسخهٔ 1.7.3+) تم را از همین‌ها می‌سازد و وب‌اپ (1.8.0+) متغیرهای CSS را. تغییر رنگ یک ذخیره در همین صفحه است، نه یک بیلد و انتشار.
+                        <br>
+                        بقیهٔ رنگ‌ها (سطح‌ها، متن، حاشیه‌ها) در کلاینت از همین چهار لنگر مشتق می‌شوند — لازم نیست جایی دیگری را عوض کنید.
+                    </p>
+                    <table class="form-table" role="presentation">
+                    <?php
+                    $mrd_brand_fields = array(
+                        'mrdastbaaf_brand_primary' => array('رنگ اصلی (Primary)', '#9A3412', 'دکمه‌ها، لینک‌ها، نوار بالای اپ'),
+                        'mrdastbaaf_brand_accent'  => array('رنگ مکمل (Accent)', '#D97706', 'برجسته‌سازی، نشان‌ها، الگوی زمینه'),
+                        'mrdastbaaf_brand_canvas'  => array('رنگ زمینه (Canvas)', '#FDFBF7', 'پس‌زمینهٔ صفحات (کرم برند)'),
+                        'mrdastbaaf_brand_success' => array('رنگ موفقیت (Success)', '#047857', 'نشان دسترسی فعال و پیام‌های موفق'),
+                    );
+                    foreach ($mrd_brand_fields as $mrd_opt => $mrd_meta) {
+                        $mrd_value = (string) get_option($mrd_opt, $mrd_meta[1]);
+                        ?>
+                    <tr>
+                        <th scope="row">
+                            <label for="<?php echo esc_attr($mrd_opt); ?>"><?php echo esc_html($mrd_meta[0]); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="color"
+                                id="<?php echo esc_attr($mrd_opt); ?>"
+                                name="<?php echo esc_attr($mrd_opt); ?>"
+                                value="<?php echo esc_attr($mrd_value); ?>"
+                                style="width:56px;height:34px;padding:0;border:1px solid #c3c4c7;border-radius:6px;vertical-align:middle;background:#fff;"
+                            />
+                            <code dir="ltr" style="margin-inline-start:8px;"><?php echo esc_html($mrd_value); ?></code>
+                            <p class="description"><?php echo esc_html($mrd_meta[2]); ?> — پیش‌فرض: <code dir="ltr"><?php echo esc_html($mrd_meta[1]); ?></code></p>
+                        </td>
+                    </tr>
+                        <?php
+                    }
+                    ?>
+                    </table>
                 </div>
 
                 <?php // v1.7.4: کارت مدیریت نسخه و آپدیت خودکار PWA ?>

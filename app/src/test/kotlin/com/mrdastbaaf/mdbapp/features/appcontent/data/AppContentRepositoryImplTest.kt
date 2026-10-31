@@ -10,6 +10,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -148,6 +149,49 @@ class AppContentRepositoryImplTest {
         // so blocks are separated by "\n", not by a blank line.
         assertEquals("ما یک کارگاه هستیم.\nاز ۱۳۹۰.", page.body)
         assertEquals("1405/07/24", page.updatedAtJalali)
+    }
+
+    @Test
+    fun `reads the panel palette and keeps blanks as null`() = runTest {
+        server.enqueue(
+            jsonResponse(
+                200,
+                """
+                {
+                  "hero": { "headline": "هنر دست" },
+                  "theme": {
+                    "primary": " #123456 ",
+                    "accent": "#ABCDEF",
+                    "canvas": "   ",
+                    "success": null
+                  },
+                  "featuredCourseIds": []
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val theme = repository.home().getOrThrow().theme
+
+        // Trimmed, but not validated here: parsing is the UI's job, and a value
+        // the panel stored wrong has to reach BrandPalette to be rejected.
+        assertEquals("#123456", theme?.primary)
+        assertEquals("#ABCDEF", theme?.accent)
+        // Blank and absent are the same thing: "use the default anchor".
+        assertNull(theme?.canvas)
+        assertNull(theme?.success)
+    }
+
+    @Test
+    fun `an older bridge without a theme block leaves the palette alone`() = runTest {
+        server.enqueue(
+            jsonResponse(200, """{ "hero": { "headline": "هنر دست" }, "featuredCourseIds": [] }"""),
+        )
+
+        val config = repository.home().getOrThrow()
+
+        // Null, not an empty AppTheme — the theme keeps its compiled anchors.
+        assertNull(config.theme)
     }
 
     private fun jsonResponse(code: Int, body: String): MockResponse = MockResponse()

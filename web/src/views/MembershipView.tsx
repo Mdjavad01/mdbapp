@@ -3,11 +3,11 @@
  * @description Configurable membership plans view with manual renewal transparency and tier matrix
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Crown, CheckCircle, ShieldCheck, HelpCircle, ArrowLeft, AlertCircle, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Crown, CheckCircle, HelpCircle, ArrowLeft, AlertCircle, RefreshCw } from 'lucide-react';
 import { MembershipPlan, UserProfile } from '../types';
-import { membershipService } from '../services/membershipService';
-import { formatJalali, daysUntil } from '../utils/format';
+import { membershipService, planDurationToDays } from '../services/membershipService';
+import { formatJalali, daysUntil, formatToman } from '../utils/format';
 import { AsyncState } from '../components/common/AsyncState';
 import { useOnlineRefetch } from '../hooks/useOnlineRefetch';
 
@@ -53,6 +53,27 @@ export const MembershipView: React.FC<MembershipViewProps> = ({
   useOnlineRefetch(loadError, loadPlans);
 
   const formatPrice = (p: number) => p.toLocaleString('fa-IR');
+
+  /**
+   * v1.8.0 — نردبان مدت، همان الگوی اپ اندروید.
+   *
+   * پلن‌ها فقط در «مدت» تفاوت دارند، پس مدت سرتیتر کارت است و عنوان پنل زیرنویس.
+   * ترتیب بر اساس روز (نه قیمت) است: یک نردبان ۱۲ ← ۱ ← ۶ ماهه خوانا نیست.
+   * «٪ ارزان‌تر» نسبت به کوتاه‌ترین پلن محاسبه می‌شود، نه به یک عدد ثابت.
+   */
+  const ladder = useMemo(() => {
+    return plans
+      .map((plan) => ({ plan, days: planDurationToDays(plan.duration) }))
+      .sort((a, b) => a.days - b.days);
+  }, [plans]);
+
+  const perMonthOf = (priceToman: number, days: number): number | null =>
+    days > 0 ? Math.round((priceToman * 30) / days) : null;
+
+  // مبنا = کوتاه‌ترین پلن **پرداختی**، نه پلن رایگان: رایگان قیمت صفر دارد و
+  // ماهانه‌اش صفر می‌شود، پس هر درصدی نسبت به آن بی‌معنا (و تقسیم بر صفر) است.
+  const baseline = ladder.find((row) => row.days > 0 && row.plan.priceToman > 0);
+  const baselinePerMonth = baseline ? perMonthOf(baseline.plan.priceToman, baseline.days) : null;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-10 pb-28">
@@ -151,9 +172,18 @@ export const MembershipView: React.FC<MembershipViewProps> = ({
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {plans.map((plan) => {
+          {ladder.map(({ plan, days }) => {
             const isFree = plan.priceToman === 0;
             const isUserCurrentTier = currentUser?.membership?.tier === plan.tier;
+            const perMonth = perMonthOf(plan.priceToman, days);
+            const savings =
+              !isFree && baseline && baselinePerMonth && perMonth && days > baseline.days
+                ? Math.round((1 - perMonth / baselinePerMonth) * 100)
+                : null;
+            // مدت، سرتیتر است؛ اگر پنل همان واژه را در هر دو فیلد نوشته باشد،
+            // تکرار چاپ نمی‌شود (همان قاعدهٔ PlanCard اپ).
+            const headline = plan.durationLabel.trim() !== '' ? plan.durationLabel : plan.title;
+            const subtitle = plan.title !== headline ? plan.title : null;
 
             return (
               <div
@@ -171,16 +201,16 @@ export const MembershipView: React.FC<MembershipViewProps> = ({
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-base text-amber-950">{plan.title}</h3>
-                    <span className="text-xs text-stone-500 font-medium bg-stone-100 px-2 py-0.5 rounded-md">
-                      {plan.durationLabel}
-                    </span>
-                  </div>
+                  <h3 className="font-black text-lg text-amber-950 leading-tight">{headline}</h3>
+                  {subtitle && (
+                    <p className="text-[11px] text-stone-500 mt-0.5 leading-snug">{subtitle}</p>
+                  )}
 
-                  <p className="text-xs text-stone-500 mt-2 min-h-10 leading-relaxed">
-                    {plan.description}
-                  </p>
+                  {plan.description && (
+                    <p className="text-xs text-stone-500 mt-2 min-h-10 leading-relaxed">
+                      {plan.description}
+                    </p>
+                  )}
 
                   {/* Price */}
                   <div className="my-4 py-3 border-y border-stone-100">
@@ -195,18 +225,31 @@ export const MembershipView: React.FC<MembershipViewProps> = ({
                       </span>
                       {!isFree && <span className="text-xs text-stone-500">تومان</span>}
                     </div>
+                    {/* ماهانه — تنها راه مقایسهٔ منصفانهٔ پلن‌های مختلف‌مدت */}
+                    {!isFree && perMonth && (
+                      <p className="text-[11px] text-stone-500 mt-1">
+                        معادل {formatToman(perMonth)} تومان در ماه
+                      </p>
+                    )}
+                    {savings !== null && savings >= 1 && (
+                      <span className="inline-block mt-2 text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                        {savings.toLocaleString('fa-IR')}٪ ارزان‌تر از پلن یک‌ماهه
+                      </span>
+                    )}
                   </div>
 
                   {/* Feature Checklist */}
-                  <div className="space-y-2 text-xs text-stone-700">
-                    <p className="font-semibold text-[11px] text-stone-500">امکانات دسترسی:</p>
-                    {plan.features.map((feat, idx) => (
-                      <div key={idx} className="flex items-start gap-2">
-                        <CheckCircle className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                        <span className="leading-snug">{feat}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {plan.features.length > 0 && (
+                    <div className="space-y-2 text-xs text-stone-700">
+                      <p className="font-semibold text-[11px] text-stone-500">امکانات دسترسی:</p>
+                      {plan.features.map((feat, idx) => (
+                        <div key={idx} className="flex items-start gap-2">
+                          <CheckCircle className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                          <span className="leading-snug">{feat}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Purchase Button */}
@@ -232,64 +275,12 @@ export const MembershipView: React.FC<MembershipViewProps> = ({
         </div>
       )}
 
-      {/* Comparison Matrix Explanatory Table */}
-      <div className="bg-white rounded-3xl border border-stone-200/90 p-6 shadow-xs space-y-4">
-        <h3 className="font-bold text-base text-amber-950 flex items-center gap-2">
-          <ShieldCheck className="w-5 h-5 text-amber-800" />
-          جدول مقایسه دسترسی به دوره‌ها در پلن‌های مختلف
-        </h3>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-right">
-            <thead>
-              <tr className="border-b border-stone-200 text-stone-500">
-                <th className="py-2.5 font-semibold">ویژگی یا سطح دوره</th>
-                <th className="py-2.5 font-semibold text-center">رایگان</th>
-                <th className="py-2.5 font-semibold text-center">برنزی</th>
-                <th className="py-2.5 font-semibold text-center">نقره‌ای</th>
-                <th className="py-2.5 font-semibold text-center text-amber-900">طلایی</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-stone-100 text-stone-700">
-              <tr>
-                <td className="py-2.5">درس‌های پیش‌نمایش اولیه</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-              </tr>
-              <tr>
-                <td className="py-2.5">دوره‌های مقدماتی (جت بافت و گلیم‌بافی)</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-              </tr>
-              <tr>
-                <td className="py-2.5">دوره‌های تخصصی (گلیم ورنی، گلیم چاکدار و تابلوفرش)</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-              </tr>
-              <tr>
-                <td className="py-2.5">دوره‌های حرفه‌ای (جراحی و مرمت فرش و درآمد دلاری)</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-              </tr>
-              <tr>
-                <td className="py-2.5">ارسال بسته هدیه الیاف و پشم طبیعی به منزل</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-stone-300">-</td>
-                <td className="py-2.5 text-center text-emerald-600 font-bold">✓</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/*
+        v1.8.0 — جدول مقایسهٔ برنزی/نقره‌ای/طلایی حذف شد (خواستهٔ کارفرما؛ همان
+        تغییری که ۱.۴.۰ فقط برای اندروید انجام داده بود). پلن‌ها اکنون فقط در
+        «مدت» تفاوت دارند و همین بالاتر با نردبان مدت نمایش داده می‌شود؛ جدولی
+        که سه سطح را مقایسه می‌کرد با فروش پلن‌های مدت‌دار نمی‌خواند.
+      */}
     </div>
   );
 };

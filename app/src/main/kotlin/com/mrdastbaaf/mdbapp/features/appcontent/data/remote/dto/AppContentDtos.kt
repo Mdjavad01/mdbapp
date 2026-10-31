@@ -9,6 +9,27 @@ data class AppUiDto(
     val sections: List<SectionDto> = emptyList(),
     val menu: MenuDto? = null,
     val featuredCourseIds: List<Int> = emptyList(),
+    /**
+     * v1.7.3 — the brand palette, from the panel.
+     *
+     * Absent on any bridge older than 1.7.22, and that is not an error: the
+     * app falls back to its compiled anchors.
+     */
+    val theme: AppThemeDto? = null,
+)
+
+/**
+ * The four brand anchors, `#RRGGBB`.
+ *
+ * Kept as strings all the way through the data layer — parsing to a colour is
+ * the UI's job, so this file stays free of Compose types.
+ */
+@Serializable
+data class AppThemeDto(
+    val primary: String? = null,
+    val accent: String? = null,
+    val canvas: String? = null,
+    val success: String? = null,
 )
 
 @Serializable

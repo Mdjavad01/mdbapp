@@ -63,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
   const dashboard = dockItem('dashboard');
   return (
     <header
-      className="sticky top-0 z-40 border-b border-white/60 bg-gradient-to-b from-[#fdfbf7]/80 via-[#fdfbf7]/60 to-[#fdfbf7]/50 backdrop-blur-2xl backdrop-saturate-150 shadow-[0_8px_32px_-16px_rgba(120,53,15,0.35),inset_0_1px_0_0_rgba(255,255,255,0.65)]"
+      className="sticky top-0 z-40 border-b border-white/60 bg-header-veil backdrop-blur-2xl backdrop-saturate-150 shadow-[0_8px_32px_-16px_rgba(120,53,15,0.35),inset_0_1px_0_0_rgba(255,255,255,0.65)]"
     >
       <div className="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
         {/* Brand identity */}
@@ -103,6 +103,11 @@ export const Header: React.FC<HeaderProps> = ({
               {catalogue.label}
             </button>
           )}
+          {/* v1.8.0: فروشگاه — دسته‌محور و صفحه‌بندی‌شده (پیش‌تر فقط ریل «ویژه»
+              صفحهٔ نخست بود و محصول تازهٔ ووکامرس در سایت دیده نمی‌شد). */}
+          <button onClick={() => onNavigate('shop')} className={navLinkClass(activeView === 'shop')}>
+            فروشگاه
+          </button>
           {membership.enabled && (
             <button onClick={() => onNavigate('membership')} className={navLinkClass(activeView === 'membership')}>
               {membership.label}
@@ -191,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
               // BUG-67: icon-only on mobile (avatar) — needs an accessible name.
               aria-label={`مشاهده داشبورد ${currentUser.fullName}`}
             >
-              <div className="w-6 h-6 rounded-full bg-amber-800 text-white flex items-center justify-center text-[10px] font-bold">
+              <div className="w-6 h-6 rounded-full bg-[var(--brand-primary)] text-white flex items-center justify-center text-[10px] font-bold">
                 {currentUser.fullName.slice(0, 1)}
               </div>
               <span className="hidden sm:inline-block max-w-[100px] truncate">{currentUser.fullName}</span>
@@ -199,7 +204,7 @@ export const Header: React.FC<HeaderProps> = ({
           ) : (
             <button
               onClick={onOpenLogin}
-              className="flex items-center gap-1.5 bg-amber-800/90 hover:bg-amber-900 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold transition shadow-sm ring-1 ring-white/25"
+              className="flex items-center gap-1.5 bg-[var(--brand-primary)] hover:opacity-90 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold transition shadow-sm ring-1 ring-white/25"
               aria-label="ورود با شماره موبایل"
             >
               <LogIn className="w-3.5 h-3.5" />

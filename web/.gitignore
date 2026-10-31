@@ -1,6 +1,8 @@
 node_modules/
 build/
 dist/
+# vite-plugin-pwa writes this while `npm run dev` is running (dev service worker)
+dev-dist/
 build-artifacts/
 coverage/
 .DS_Store

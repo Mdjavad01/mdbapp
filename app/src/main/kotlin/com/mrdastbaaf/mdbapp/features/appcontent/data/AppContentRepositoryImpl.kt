@@ -9,6 +9,7 @@ import com.mrdastbaaf.mdbapp.features.appcontent.data.remote.dto.AppUiDto
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppMenuItem
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppPage
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppPageContent
+import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.AppTheme
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.Hero
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.HeroStat
 import com.mrdastbaaf.mdbapp.features.appcontent.domain.model.HomeConfig
@@ -137,6 +138,14 @@ class AppContentRepositoryImpl @Inject constructor(
                 )
             },
             shopEnabled = physical?.enabled != false,
+            theme = theme?.let { themeDto ->
+                AppTheme(
+                    primary = themeDto.primary?.trim()?.takeIf { it.isNotEmpty() },
+                    accent = themeDto.accent?.trim()?.takeIf { it.isNotEmpty() },
+                    canvas = themeDto.canvas?.trim()?.takeIf { it.isNotEmpty() },
+                    success = themeDto.success?.trim()?.takeIf { it.isNotEmpty() },
+                )
+            },
         )
     }
 

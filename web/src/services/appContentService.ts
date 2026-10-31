@@ -17,12 +17,25 @@
  * با sortOrder 7 به پیش‌فرض‌ها اضافه شد (کلید در types + SECTION_KEYS همگام).
  */
 
-import { AppUiConfig, AppUiInstructor, AppUiSectionKey } from '../types';
+import { AppUiConfig, AppUiInstructor, AppUiSectionKey, AppUiTheme } from '../types';
 import { apiFetch, isRealApiMode } from './apiClient';
 import { courseService } from './courseService';
 
+/**
+ * v1.8.0 — پالت پیش‌فرض، دقیقاً همان چهار رنگی که تا امروز در CSS هاردکد بود.
+ * سرور (افزونهٔ 1.7.22+) همان‌ها را در `theme` می‌فرستد و مقدار نامعتبر به
+ * همین‌ها برمی‌گردد، پس یک رنگ خراب در پنل هرگز سایت را بی‌رنگ نمی‌کند.
+ */
+const DEFAULT_THEME: AppUiTheme = {
+  primary: '#9A3412',
+  accent: '#D97706',
+  canvas: '#FDFBF7',
+  success: '#047857',
+};
+
 /** پیش‌فرض‌های سمت اپ — هم‌ارز get_defaults() افزونه؛ برای دمو/آفلاین/پاسخ ناقص */
 export const DEFAULT_APP_UI: AppUiConfig = {
+  theme: DEFAULT_THEME,
   // v1.5.7: مدرس سراسری — پیش‌فرض کد «استاد خاموشیان» (گزارش کارفرما؛ عکس از پیشخوان لود می‌شود)
   instructor: {
     name: 'استاد خاموشیان',
@@ -124,9 +137,17 @@ function num(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+/** `#RRGGBB` / `#RGB` — هر چیز دیگری پیش‌فرض را نگه می‌دارد (هم‌قاعدهٔ افزونه). */
+function hex(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed) ? trimmed.toUpperCase() : fallback;
+}
+
 /** پالایش تدافعی پاسخ /app-ui روی پیش‌فرض‌ها */
 export function normalizeAppUi(raw: unknown): AppUiConfig {
   const out: AppUiConfig = {
+    theme: { ...DEFAULT_THEME },
     instructor: { ...DEFAULT_APP_UI.instructor },
     hero: { ...DEFAULT_APP_UI.hero },
     sections: DEFAULT_APP_UI.sections.map((s) => ({ ...s })),
@@ -139,6 +160,19 @@ export function normalizeAppUi(raw: unknown): AppUiConfig {
 
   if (!raw || typeof raw !== 'object') return out;
   const data = raw as Record<string, unknown>;
+
+  // ─── theme (v1.8.0: پالت برند از پیشخوان) ───
+  // سرور قدیمی این بلاک را ندارد → پیش‌فرض کد؛ یعنی هیچ بیلدی به‌خاطر نبودِ
+  // این فیلد نمی‌شکند.
+  if (data.theme && typeof data.theme === 'object') {
+    const theme = data.theme as Record<string, unknown>;
+    out.theme = {
+      primary: hex(theme.primary, out.theme.primary),
+      accent: hex(theme.accent, out.theme.accent),
+      canvas: hex(theme.canvas, out.theme.canvas),
+      success: hex(theme.success, out.theme.success),
+    };
+  }
 
   // ─── instructor (v1.5.7: مدرس سراسری از پیشخوان) ───
   if (data.instructor && typeof data.instructor === 'object') {

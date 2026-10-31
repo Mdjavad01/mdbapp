@@ -14,7 +14,8 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | Code | What changed |
 |---|---|---|
-| **1.7.2** | 22 | HLS playback with a real quality menu: the renditions come from the manifest and are selected through the track selector, not by swapping URLs. MP4 keeps the old path |
+| **1.7.3** | 23 | the palette comes from the panel: `GET /app-ui` → `theme` feeds `MdbTheme(brand = …)` through a `BrandViewModel`, so a recolour is a save in WordPress, not a release. A bad hex falls back anchor by anchor |
+| 1.7.2 | 22 | HLS playback with a real quality menu: the renditions come from the manifest and are selected through the track selector, not by swapping URLs. MP4 keeps the old path |
 | 1.7.1 | 21 | every request now carries `X-MDB-Client: android/<version>`, so the bridge can record whether a sale came from the app or the site |
 | 1.7.0 | 20 | shop is a category menu → section page with breadcrumb, subcategory chips and paged products |
 | 1.6.0 | 19 | data layer for `/shop/categories` + `/shop/catalog` (1800 products, paginated) |
@@ -43,7 +44,8 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | What changed | Pairs with |
 |---|---|---|
-| **1.7.21** | playback reports `videoType` (hls/mp4) and an HLS lesson returns no separate qualities; the PHP stream proxy is bypassed for HLS; the lesson form explains where `master.m3u8` goes | app 1.7.2 · web 1.6.0 |
+| **1.7.23** | `GET /app-ui` returns a `theme` block (primary/accent/canvas/success) and the settings page finally has the four colour fields for it — a recolour is a save in WordPress, not two releases. An invalid hex keeps the previous value instead of repainting the app | app 1.7.3 · web 1.8.0 |
+| 1.7.21 | playback reports `videoType` (hls/mp4) and an HLS lesson returns no separate qualities; the PHP stream proxy is bypassed for HLS; the lesson form explains where `master.m3u8` goes | app 1.7.2 · web 1.6.0 |
 | 1.7.20 | `source` column on orders (app/web), detected from `X-MDB-Client` or the OkHttp agent; `_mrdastbaaf_source` on WooCommerce orders; new «سفارش‌ها» screen with filters and CSV export; `created_at` index | app 1.7.1 |
 | 1.7.19 | receipt status tabs sit in a card; fixed column widths so the table stops scrolling sideways | app 1.7.0 |
 | 1.7.18 | receipt page uses the full width; the category cache key includes the plugin version, so a release takes effect immediately | app 1.7.0 |
@@ -57,7 +59,11 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | What changed |
 |---|---|
-| **1.6.0** | the player uses hls.js for `videoType: hls` and builds its quality menu from the manifest; Safari keeps native playback and no menu. **First change to the web app in this repository** — it now diverges from upstream, see below |
+| **1.8.0** | the shop is a real catalogue: `#/shop` is a category menu → section page with breadcrumb, subcategory chips and 24 products per page from `GET /shop/categories` + `GET /shop/catalog` — so a new WooCommerce product shows up on the site without being hand-ticked. Membership lost the برنزی/نقرهای table and shows duration plans with a per-month price and a saving badge, like the app. The palette now comes from the panel as CSS variables |
+| 1.7.3 | network-stall retries and a visibility resume in the player |
+| 1.7.2 | the black screen was `canPlayType` lying about HLS — hls.js now runs whenever it is supported; `#/debug` player self-test added |
+| 1.7.0–1.7.1 | hls.js player with a quality menu built from the manifest, and the playback error overlay that names the real reason |
+| 1.6.0 | the player uses hls.js for `videoType: hls` and builds its quality menu from the manifest; Safari keeps native playback and no menu. **First change to the web app in this repository** — it now diverges from upstream, see below |
 | 1.5.7 | imported from `mrdb` at `0e310d4` — mobile login bottom-sheet, instructor avatar, receipt image upload |
 
 From 1.6.0 the web app is **ahead of upstream** (`mrdb` is still at 1.5.7), so

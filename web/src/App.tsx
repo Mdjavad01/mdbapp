@@ -21,7 +21,7 @@ import { detectZibalCallback, clearZibalCallbackParams } from './services/zibalC
 import { mutateOrder, orderStore } from './services/orderStore';
 import { ONLINE_REFETCH_EVENT } from './hooks/useOnlineRefetch';
 // v1.5.4: بررسی خودکار نسخه و محتوا — هر ۲ دقیقه چک می‌کند
-import { useVersionChecker } from './hooks/useVersionChecker';
+import { useVersionChecker, CONTENT_CHANGED_EVENT } from './hooks/useVersionChecker';
 import { PWA_VERSION } from './version';
 
 // Common Components
@@ -49,6 +49,8 @@ import { MembershipView } from './views/MembershipView';
 import { UserDashboardView } from './views/UserDashboardView';
 import { AdminDashboardView } from './views/AdminDashboardView';
 import { EditorialPageView } from './views/EditorialPageView';
+// v1.8.0: فروشگاه دسته‌محور — /shop/categories + /shop/catalog
+import { ShopView } from './views/ShopView';
 // v1.5.1: صفحهٔ عیب‌یابی #/debug — عمومی، بدون نیاز به لاگین
 import { DebugView } from './views/DebugView';
 
@@ -59,6 +61,8 @@ interface AppViewParams {
   slug?: string;
   /** v1.2.6: شناسهٔ صفحهٔ سایت (منوی اپ) */
   pageId?: string;
+  /** v1.8.0: دستهٔ باز فروشگاه (`#/shop?cat=34`) — 0/غایب = منوی فروشگاه */
+  shopCategory?: number;
 }
 
 // DEV-2: lightweight hash router (no new deps) — view ⇄ URL mapping.
@@ -66,7 +70,8 @@ interface AppViewParams {
 //   #/course/{courseId} → course_detail · #/membership → membership ·
 //   #/dashboard → dashboard · #/admin → admin ·
 //   #/page/{slug} → editorial page · #/editorial → editorial (about-us) ·
-//   #/app-page/{id} → صفحهٔ سایت از پیشخوان (v1.2.6).
+//   #/app-page/{id} → صفحهٔ سایت از پیشخوان (v1.2.6) ·
+//   #/shop[?cat={id}] → فروشگاه دسته‌محور (v1.8.0).
 // Unknown/invalid routes fall back to home. Modals (player/checkout/gateway)
 // are intentionally NOT routed — future work.
 const serializeRoute = (view: string, params: AppViewParams): string => {
@@ -92,6 +97,12 @@ const serializeRoute = (view: string, params: AppViewParams): string => {
       return params.pageId ? `#/app-page/${encodeURIComponent(params.pageId)}` : '#/';
     case 'debug':
       return '#/debug';
+    case 'shop': {
+      const cat = params.shopCategory && params.shopCategory > 0
+        ? `?cat=${encodeURIComponent(String(params.shopCategory))}`
+        : '';
+      return `#/shop${cat}`;
+    }
     default:
       return '#/';
   }
@@ -130,6 +141,16 @@ const parseRoute = (hash: string): { view: string; params: AppViewParams } => {
     case 'debug':
       // v1.5.1: صفحهٔ عیب‌یابی — عمومی، بدون گارد
       return { view: 'debug', params: {} };
+    case 'shop': {
+      // v1.8.0: فروشگاه — `#/shop` (منو) یا `#/shop?cat=34` (یک دسته).
+      // `#/shop/34` هم پذیرفته می‌شود تا لینک دستی هم بشکند نشود.
+      const rawCat = new URLSearchParams(query).get('cat') ?? segments[1] ?? '';
+      const shopCategory = Number.parseInt(rawCat, 10);
+      return {
+        view: 'shop',
+        params: Number.isFinite(shopCategory) && shopCategory > 0 ? { shopCategory } : {},
+      };
+    }
     default:
       // DEV-2: empty/unknown hash → home.
       return { view: 'home', params: {} };
@@ -589,13 +610,43 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    appContentService.getUi().then((ui) => {
-      if (!cancelled && ui) setAppUi(ui);
-    });
+    const load = () => {
+      appContentService.getUi().then((ui) => {
+        if (!cancelled && ui) setAppUi(ui);
+      });
+    };
+    load();
+    // v1.8.0: ذخیرهٔ رنگ برند در پیشخوان، هش محتوا را عوض می‌کند؛ کلاینتی که
+    // باز است باید پالت تازه را بدون بارگذاری مجدد بگیرد (useVersionChecker
+    // هر ۲ دقیقه چک می‌کند).
+    window.addEventListener(CONTENT_CHANGED_EVENT, load);
     return () => {
       cancelled = true;
+      window.removeEventListener(CONTENT_CHANGED_EVENT, load);
     };
   }, [currentUser?.id]);
+
+  // ---------------------------------------------------------------------------
+  // v1.8.0 — پالت برند از پیشخوان.
+  //
+  // چهار لنگر (primary/accent/canvas/success) به متغیرهای CSS روی :root ریخته
+  // می‌شوند و index.css و کلاس‌های `bg-[var(--brand-…)]` از همین‌ها می‌خوانند.
+  // بدون این، تغییر رنگ یعنی یک بیلد جدید؛ با این، یعنی یک ذخیره در پنل.
+  // در دمو/خطا appUi تهی است و مقادیر :root در index.css دست‌نخورده می‌مانند.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (typeof document === 'undefined' || !appUi?.theme) return;
+    const root = document.documentElement;
+    const { primary, accent, canvas, success } = appUi.theme;
+    root.style.setProperty('--brand-primary', primary);
+    root.style.setProperty('--brand-accent', accent);
+    root.style.setProperty('--brand-canvas', canvas);
+    root.style.setProperty('--brand-success', success);
+    // نوار وضعیت مرورگر موبایل هم با پالت هم‌گام می‌شود (index.html مقدار ثابت دارد).
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', primary);
+  }, [appUi?.theme]);
 
   // ---------------------------------------------------------------------------
   // v1.3.0 — «خطای اتصال» گاه‌به‌گاه: وقتی اتصال مرورگر برمی‌گردد (رویداد online)
@@ -643,7 +694,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#fdfbf7] text-stone-800 font-sans antialiased">
+    <div className="min-h-screen flex flex-col bg-[var(--brand-canvas)] text-stone-800 font-sans antialiased">
       {/* Toast Notification — BUG-44: polite live region + variant colors + dismiss */}
       {toast && (
         <div
@@ -763,6 +814,15 @@ export default function App() {
         {activeView === 'debug' && (
           <DebugView onNavigate={handleNavigate} />
         )}
+
+        {/* v1.8.0: فروشگاه دسته‌محور — منو ← دسته ← زیردسته، ۲۴ محصول در هر صفحه */}
+        {activeView === 'shop' && (
+          <ShopView
+            initialCategoryId={viewParams.shopCategory ?? 0}
+            onNavigate={handleNavigate}
+            onBuyProduct={(product) => setShopCheckoutProduct(product)}
+          />
+        )}
       </main>
 
       {/* Footer */}
@@ -804,12 +864,18 @@ export default function App() {
               >
                 تعرفه‌ها
               </button>
+              <button
+                onClick={() => handleNavigate('shop')}
+                className="hover:text-stone-200 transition"
+              >
+                فروشگاه
+              </button>
             </div>
           </div>
 
           <div className="pt-4 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] text-stone-500">
             <p>© تمام حقوق مادی و معنوی آموزش‌ها متعلق به مجموعه مستر دستباف است.</p>
-            <p>وب‌اپ نسخهٔ 1.5.0</p>
+            <p>وب‌اپ نسخهٔ {PWA_VERSION}</p>
           </div>
         </div>
       </footer>

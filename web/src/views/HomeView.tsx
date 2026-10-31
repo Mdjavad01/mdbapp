@@ -523,6 +523,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <span>{sec.title}</span>
                 </h2>
                 <p className="text-xs text-stone-500 mt-1">{sec.subtitle}</p>
+                {/* v1.8.0: ریل «ویژه» فقط چند محصول تیک‌خورده را نشان می‌دهد؛
+                    فروشگاه کامل (همهٔ دسته‌ها، ۲۴تایی صفحه‌بندی‌شده) پشت همین
+                    دکمه است — وگرنه محصول تازهٔ ووکامرس در سایت پیدا نمی‌شد. */}
+                <button
+                  type="button"
+                  onClick={() => onNavigate('shop')}
+                  className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200/80 px-3 py-1.5 rounded-full transition"
+                >
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  مشاهدهٔ همهٔ محصولات
+                </button>
               </div>
 
               {isShopLoading ? (

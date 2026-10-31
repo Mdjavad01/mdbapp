@@ -29,7 +29,10 @@
     <!-- Persian Typography v1.2.6: وزیرمتن از باندل لوکال (@font-face در index.css) لود می‌شود —
          هیچ درخواستی به fonts.googleapis.com نمی‌رود (کند/مسدود در ایران + FOUT) -->
   </head>
-  <body class="bg-[#FDFBF7] text-slate-800 antialiased selection:bg-amber-100 selection:text-amber-900 font-sans">
+  <!-- v1.8.0: canvas از پالت پنل می‌آید (GET /app-ui → theme). کلاس قبلی رنگ را
+       هاردکد می‌کرد و هر Utility از قاعدهٔ base جلو می‌زند، پس متغیر را همین‌جا
+       می‌خوانیم تا تغییر رنگ در پنل واقعاً دیده شود. -->
+  <body class="bg-[var(--brand-canvas)] text-slate-800 antialiased selection:bg-amber-100 selection:text-amber-900 font-sans">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

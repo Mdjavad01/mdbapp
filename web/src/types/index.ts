@@ -340,6 +340,44 @@ export interface ShopFeed {
   categories: ShopCategory[];
 }
 
+// ---------------------------------------------------------------------------
+// v1.8.0 — فروشگاه مقیاس‌پذیر (افزونهٔ 1.7.16+): GET /shop/categories و
+// GET /shop/catalog. مدل همان مدل اپ اندروید است: منو ← دسته ← زیردسته،
+// ۲۴ محصول در هر صفحه. /shop/products فقط برای ریل «محصولات ویژه» صفحهٔ نخست
+// می‌ماند (فهرست تیک‌خوردهٔ دستی، بدون صفحه‌بندی).
+// ---------------------------------------------------------------------------
+
+/** یک دستهٔ ووکامرس، بدون هیچ محصولی — ردیف GET /shop/categories */
+export interface ShopCategoryNode {
+  id: number;
+  slug: string;
+  name: string;
+  /** 0 = دستهٔ ریشه */
+  parent: number;
+  /** شمارش سرور (شامل زیرشاخه‌ها) — تنها چیزی که دستهٔ واقعی را از خالی جدا می‌کند */
+  count: number;
+}
+
+/** یک دسته با فرزندانش — درختِ ساخته‌شده در کلاینت از فهرست تختِ بالا */
+export interface ShopTreeNode {
+  category: ShopCategoryNode;
+  children: ShopTreeNode[];
+  count: number;
+  /** فقط برای گروه‌بندی فرزندان وجود دارد (خودش محصولی ندارد) */
+  isGroup: boolean;
+}
+
+/** یک صفحه از یک دسته — GET /shop/catalog?category=…&page=… */
+export interface ShopPage {
+  categoryId: number;
+  categoryName: string;
+  products: ShopProduct[];
+  page: number;
+  perPage: number;
+  total: number;
+  totalPages: number;
+}
+
 /**
  * v1.5.0 — اطلاعات ارسال برای «خرید درون‌اپ محصول فیزیکی» (POST
  * /payment/zibal/initiate {product_id, kind:'shop', ...} — افزونهٔ 1.6.0).
@@ -363,6 +401,20 @@ export interface AppUiInstructor {
   bio: string;
 }
 
+/**
+ * v1.8.0 — پالت برند از پیشخوان (GET /app-ui → theme — افزونهٔ 1.7.22).
+ *
+ * چهار لنگر، همه به شکل `#RRGGBB`. بقیهٔ رنگ‌ها در CSS از همین‌ها مشتق
+ * می‌شوند، پس تغییر رنگ یک ذخیره در پنل است، نه یک بیلد. مقدار نامعتبر در
+ * نرمال‌ساز به همین پیش‌فرض‌ها برمی‌گردد.
+ */
+export interface AppUiTheme {
+  primary: string;
+  accent: string;
+  canvas: string;
+  success: string;
+}
+
 export interface AppUiConfig {
   hero: AppUiHero;
   sections: AppUiSection[];
@@ -378,4 +430,6 @@ export interface AppUiConfig {
   featuredCourseIds: number[];
   /** v1.5.7 — مدرس سراسری از پیشخوان (پیش‌فرض کد: «استاد خاموشیان») */
   instructor: AppUiInstructor;
+  /** v1.8.0 — پالت برند از پیشخوان (پیش‌فرض: همان چهار رنگ فعلی سایت) */
+  theme: AppUiTheme;
 }

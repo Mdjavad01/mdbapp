@@ -43,6 +43,21 @@ data class HomeConfig(
     val dock: List<AppMenuItem> = emptyList(),
     /** The `physical_products` section switch — the app's only shop toggle. */
     val shopEnabled: Boolean = true,
+    /**
+     * v1.7.3 — the brand palette the panel states, as raw hex.
+     *
+     * Null when the bridge is older than 1.7.22 or sent nothing usable; the
+     * theme then keeps the anchors compiled into [com.mrdastbaaf.mdbapp.core.ui.theme.BrandPalette].
+     */
+    val theme: AppTheme? = null,
+)
+
+/** The panel's four brand anchors, unparsed. `null` per field = "use the default". */
+data class AppTheme(
+    val primary: String?,
+    val accent: String?,
+    val canvas: String?,
+    val success: String?,
 )
 
 data class AppMenuItem(
