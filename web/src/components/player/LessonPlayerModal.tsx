@@ -43,6 +43,18 @@ const QUALITY_LABELS_FA: Record<string, string> = {
 
 const qualityLabelFa = (label: string): string => QUALITY_LABELS_FA[label] ?? label;
 
+/**
+ * شناسهٔ کوتاه یک آدرس ویدیو برای پیام خطا — دو بخش آخر مسیر، بدون query.
+ * توکن یا امضا هرگز در پیام خطا نمی‌رود، ولی مسیر برای تشخیص کافی است.
+ */
+function mediaPath(url: string): string {
+  try {
+    return new URL(url).pathname.split('/').filter(Boolean).slice(-2).join('/');
+  } catch {
+    return 'invalid-url';
+  }
+}
+
 interface LessonPlayerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -163,9 +175,22 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   // مرورگر یک پلی‌لیست را پخش نمی‌کند و فقط «خطای اتصال» می‌دهد. پس اگر سرور
   // چیزی نگفت، از خود آدرس حدس می‌زنیم — همان کاری که اپ اندروید می‌کند.
   const urlLooksHls = /\.m3u8$/i.test(
-    (ticket?.videoUrl ?? '').split('?')[0].split('#')[0],
+    (ticket?.videoUrl ?? '').trim().split('?')[0].split('#')[0],
   );
-  const isHlsSource = ticket?.videoType === 'hls' || urlLooksHls;
+  // v1.6.6 — یک تلاش دوم، در جهت مخالف.
+  // تشخیص نوع استریم می‌تواند اشتباه باشد: آدرس پروکسی هیچ پسوندی ندارد، ممکن
+  // است درس هنوز mp4 باشد ولی فایل از هاست پاک شده باشد، یا برعکس. به‌جای
+  // نشان‌دادن خطا، پلیر یک‌بار مسیر دیگر را امتحان می‌کند.
+  const [forcedMode, setForcedMode] = useState<{ url: string; mode: 'hls' | 'direct' } | null>(null);
+  const forcedForThisUrl =
+    forcedMode && forcedMode.url === ticket?.videoUrl ? forcedMode.mode : null;
+  // دلیل شکست hls، برای اینکه اگر مسیر مستقیم هم شکست خورد گم نشود.
+  const hlsFailureRef = useRef<string | null>(null);
+
+  const isHlsSource =
+    forcedForThisUrl !== null
+      ? forcedForThisUrl === 'hls'
+      : ticket?.videoType === 'hls' || urlLooksHls;
   const hlsRef = useRef<Hls | null>(null);
   const [hlsLevels, setHlsLevels] = useState<Array<{ index: number; height: number }>>([]);
   const [hlsLevel, setHlsLevel] = useState(-1);
@@ -228,15 +253,23 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
         data.response?.code ?? '',
         data.response?.url ?? activeVideoSrc,
       );
+      const reason = [
+        data.type,
+        data.details,
+        data.response?.code ? `HTTP ${data.response.code}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      hlsFailureRef.current = reason;
+
+      // شاید فایل واقعاً mp4 است و hls.js بی‌دلیل انتخاب شده بود.
+      if (!forcedForThisUrl && ticket?.videoUrl) {
+        setForcedMode({ url: ticket.videoUrl, mode: 'direct' });
+        return;
+      }
+
       setPlaybackErrorDetail(
-        [
-          `v${PWA_VERSION}`,
-          data.type,
-          data.details,
-          data.response?.code ? `HTTP ${data.response.code}` : null,
-        ]
-          .filter(Boolean)
-          .join(' · '),
+        `v${PWA_VERSION} · ${reason} · ${mediaPath(ticket?.videoUrl ?? activeVideoSrc)}`,
       );
       setIsPlaybackError(true);
     });
@@ -820,7 +853,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
             {activeVideoSrc && (
               <video
                 ref={setVideoNode}
-                key={activeVideoSrc}
+                key={`${activeVideoSrc}|${isHlsSource ? 'hls' : 'src'}`}
                 src={isHlsSource ? undefined : activeVideoSrc}
                 className="absolute inset-0 z-10 h-full w-full bg-black object-contain"
                 // برای HLS نباید autoPlay باشد: المرا بدون src می‌ماند و بعضی
@@ -871,8 +904,19 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                   // v1.6.4: تا وقتی منبعی بارگذاری نشده، هر error بی‌معناست —
                   // برای HLS منبع را hls.js می‌سازد و خطاهایش را خودش گزارش می‌کند.
                   if (!e.currentTarget.currentSrc) return;
+
+                  // مسیر مستقیم شکست خورد — یک‌بار hls.js را امتحان کن. آدرس
+                  // پروکسی هیچ پسوندی ندارد و همین‌جا لو می‌رود.
+                  if (!isHlsSource && !forcedForThisUrl && ticket?.videoUrl) {
+                    setForcedMode({ url: ticket.videoUrl, mode: 'hls' });
+                    return;
+                  }
+
                   if (ticket?.videoUrl) {
-                    setPlaybackErrorDetail(`v${PWA_VERSION} · video.onError`);
+                    const hlsNote = hlsFailureRef.current ? ` · hls: ${hlsFailureRef.current}` : '';
+                    setPlaybackErrorDetail(
+                      `v${PWA_VERSION} · video.onError · ${mediaPath(ticket.videoUrl)}${hlsNote}`,
+                    );
                     setIsPlaybackError(true);
                   }
                 }}
