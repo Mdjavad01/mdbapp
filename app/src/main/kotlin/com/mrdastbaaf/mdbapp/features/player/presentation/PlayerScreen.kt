@@ -36,7 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -44,7 +43,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -54,7 +57,7 @@ import com.mrdastbaaf.mdbapp.core.security.SecureScreen
 import com.mrdastbaaf.mdbapp.core.ui.component.WatermarkOverlay
 import com.mrdastbaaf.mdbapp.core.ui.theme.Spacing
 import com.mrdastbaaf.mdbapp.core.util.ExternalLinks
-import com.mrdastbaaf.mdbapp.features.player.domain.model.PlaybackSession
+import com.mrdastbaaf.mdbapp.core.util.PersianFormat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -121,51 +124,85 @@ fun PlayerScreen(
                         },
                     )
 
-                    is PlayerUiState.Ready -> {
-                        // 0 is "auto" (the server's default URL); the rest index
-                        // into `qualities`. Remembering the last position means a
-                        // quality switch resumes where the user was, instead of
-                        // jumping back to the start of the lesson.
-                        var selectedIndex by remember(current.session.videoUrl) {
-                            mutableStateOf(0)
-                        }
-                        var resumeAt by remember(current.session.videoUrl) {
-                            mutableStateOf(current.startPositionMillis)
-                        }
-
-                        val qualities = current.session.qualities
-                        val selectedQuality = qualities.getOrNull(selectedIndex - 1)
-                        val activeUrl = selectedQuality?.url ?: current.session.videoUrl
-                        val activeLabel = selectedQuality?.label
-                            ?: stringResource(R.string.player_quality_auto)
-
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            VideoSurface(
-                                videoUrl = activeUrl,
-                                watermarkText = current.session.watermarkText,
-                                startPositionMillis = resumeAt,
-                                onProgress = { position, duration ->
-                                    resumeAt = position
-                                    viewModel.onPositionChanged(position, duration)
-                                },
-                                onStopped = viewModel::onStopped,
-                            )
-
-                            if (qualities.isNotEmpty()) {
-                                QualitySelector(
-                                    label = activeLabel,
-                                    qualities = qualities.map { it.label },
-                                    selectedIndex = selectedIndex,
-                                    onSelect = { selectedIndex = it },
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(Spacing.md),
-                                )
-                            }
-                        }
-                    }
+                    is PlayerUiState.Ready -> ReadyContent(
+                        state = current,
+                        viewModel = viewModel,
+                    )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Playback, and the two ways of changing quality.
+ *
+ * **HLS** — one `master.m3u8` for the whole lesson. The qualities are renditions
+ * *inside* that file, so swapping the URL is not a quality change; it would
+ * restart the stream and throw away adaptive switching. The menu therefore lists
+ * the video tracks the player discovered and pins one through
+ * [ExoPlayer]'s track selection, which switches mid-playback at the next
+ * segment boundary.
+ *
+ * **MP4** — the legacy shape: the server sends one URL per quality, and choosing
+ * one builds a new player at the current position. Kept because lessons that
+ * have not been converted yet still arrive that way.
+ */
+@Composable
+private fun ReadyContent(
+    state: PlayerUiState.Ready,
+    viewModel: PlayerViewModel,
+) {
+    val session = state.session
+
+    // 0 is "auto". For MP4 it indexes `qualities`; for HLS it indexes the
+    // tracks the player reported.
+    var selectedIndex by remember(session.videoUrl) { mutableStateOf(0) }
+    var resumeAt by remember(session.videoUrl) { mutableStateOf(state.startPositionMillis) }
+    var tracks by remember(session.videoUrl) { mutableStateOf<List<VideoTrack>>(emptyList()) }
+
+    val hlsLabels = tracks.map { it.label }
+    val labels = if (session.isHls) hlsLabels else session.qualities.map { it.label }
+
+    val pinned = if (session.isHls) tracks.getOrNull(selectedIndex - 1) else null
+    val activeUrl = if (session.isHls) {
+        session.videoUrl
+    } else {
+        session.qualities.getOrNull(selectedIndex - 1)?.url ?: session.videoUrl
+    }
+    val activeLabel = labels.getOrNull(selectedIndex - 1)
+        ?: stringResource(R.string.player_quality_auto)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        VideoSurface(
+            videoUrl = activeUrl,
+            // Explicit for HLS: an .m3u8 behind a proxy or a signed URL has no
+            // usable extension, and a player that guesses wrong treats a
+            // playlist as a video file and shows nothing.
+            mimeType = if (session.isHls) MimeTypes.APPLICATION_M3U8 else null,
+            pinnedTrack = pinned,
+            watermarkText = session.watermarkText,
+            startPositionMillis = resumeAt,
+            onTracksDiscovered = { discovered ->
+                if (session.isHls && discovered != tracks) tracks = discovered
+            },
+            onProgress = { position, duration ->
+                resumeAt = position
+                viewModel.onPositionChanged(position, duration)
+            },
+            onStopped = viewModel::onStopped,
+        )
+
+        if (labels.isNotEmpty()) {
+            QualitySelector(
+                label = activeLabel,
+                qualities = labels,
+                selectedIndex = selectedIndex,
+                onSelect = { selectedIndex = it },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(Spacing.md),
+            )
         }
     }
 }
@@ -178,24 +215,60 @@ fun PlayerScreen(
 @Composable
 private fun VideoSurface(
     videoUrl: String,
+    mimeType: String?,
+    pinnedTrack: VideoTrack?,
     watermarkText: String,
     startPositionMillis: Long,
+    onTracksDiscovered: (List<VideoTrack>) -> Unit,
     onProgress: (positionMillis: Long, durationMillis: Long) -> Unit,
     onStopped: (positionMillis: Long, durationMillis: Long) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Keyed on the URL: a new source (a different quality, or a re-issued
+    // Keyed on the URL: a new source (a different MP4 quality, or a re-issued
     // ticket) builds a new player rather than reusing one that holds the old
-    // media item.
+    // media item. An HLS quality change keeps the same URL, so the player — and
+    // the playback position — survive it.
     val exoPlayer = remember(videoUrl) {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(videoUrl))
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(videoUrl)
+                    .apply { if (mimeType != null) setMimeType(mimeType) }
+                    .build(),
+            )
             if (startPositionMillis > 0L) seekTo(startPositionMillis)
             prepare()
             playWhenReady = true
         }
+    }
+
+    // The menu can only list what the manifest actually contains, so the tracks
+    // come from the player, not from a hardcoded 480/720/1080.
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                onTracksDiscovered(tracks.videoRenditions())
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
+    // Applying the pin is what a quality change *is* for HLS. Null means auto:
+    // clearing the cap hands the decision back to the player's adaptation.
+    LaunchedEffect(exoPlayer, pinnedTrack) {
+        val parameters = exoPlayer.trackSelectionParameters.buildUpon()
+        if (pinnedTrack == null) {
+            parameters.setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+        } else {
+            parameters.setMaxVideoSize(
+                pinnedTrack.width.takeIf { it > 0 } ?: Int.MAX_VALUE,
+                pinnedTrack.height,
+            )
+        }
+        exoPlayer.trackSelectionParameters = parameters.build()
     }
 
     DisposableEffect(lifecycleOwner, exoPlayer) {
@@ -250,6 +323,44 @@ private fun VideoSurface(
     }
 }
 
+/**
+ * One video rendition the manifest offers.
+ *
+ * [label] is what the menu shows; [height] is what the pin is expressed in,
+ * because `setMaxVideoSize` speaks in pixels and not in names.
+ */
+private data class VideoTrack(
+    val label: String,
+    val width: Int,
+    val height: Int,
+)
+
+/**
+ * Video renditions of an HLS manifest, highest first — the order a viewer
+ * expects in a quality menu.
+ *
+ * A manifest with no `RESOLUTION` attribute yields an empty list, and then the
+ * menu is hidden rather than showing an "auto" that is the only choice.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun Tracks.videoRenditions(): List<VideoTrack> =
+    groups
+        .filter { it.type == C.TRACK_TYPE_VIDEO }
+        .flatMap { group ->
+            (0 until group.length).mapNotNull { index ->
+                group.getTrackFormat(index).height?.takeIf { it > 0 }?.let { height ->
+                    VideoTrack(
+                        // Persian digits on screen, ASCII on the wire.
+                        label = "${PersianFormat.toPersianDigits(height.toString())}p",
+                        width = group.getTrackFormat(index).width ?: 0,
+                        height = height,
+                    )
+                }
+            }
+        }
+        .distinctBy { it.height }
+        .sortedByDescending { it.height }
+
 @Composable
 private fun PlayerError(
     failure: Failure,
@@ -294,9 +405,9 @@ private fun PlayerError(
 /**
  * Quality menu.
  *
- * Lists only what the server actually returned — if a lesson has a single
- * uploaded rendition, the menu shows "auto" and that one, rather than offering
- * a 720p that does not exist.
+ * Lists only what the player actually found — for HLS the manifest's renditions,
+ * for MP4 the URLs the server sent. A lesson with one rendition shows "auto"
+ * and that one, rather than offering a 720p that does not exist.
  */
 @Composable
 private fun QualitySelector(

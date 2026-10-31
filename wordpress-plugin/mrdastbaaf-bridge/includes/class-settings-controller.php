@@ -596,8 +596,17 @@ class MrDastbaaf_Settings_Controller {
                         <tr>
                             <th scope="row"><label for="mrd-lesson-video">آدرس ویدیو (https)</label></th>
                             <td>
-                                <input type="url" id="mrd-lesson-video" class="large-text code" dir="ltr" placeholder="https://dll.mrdastbaaf.com/..." />
-                                <p class="description">فقط نشانی‌های <code>https://</code> پذیرفته می‌شود.</p>
+                                <input type="url" id="mrd-lesson-video" class="large-text code" dir="ltr" placeholder="https://dll.mrdastbaaf.com/FA/…/master.m3u8" />
+                                <p class="description">
+                                    فقط نشانی‌های <code>https://</code> پذیرفته می‌شود.
+                                    <br />
+                                    اگر فایل را به <strong>HLS</strong> تبدیل کرده‌اید، همان
+                                    <code>master.m3u8</code> را اینجا بگذارید: هر سه کیفیت داخل
+                                    همین یک فایل است و اپ و وب‌اپ منوی کیفیت را خودشان از منیفست
+                                    می‌سازند — دیگر لازم نیست سه فیلد پایین را پر کنید.
+                                    اگر هنوز <code>.mp4</code> است، همان را بگذارید و کیفیت‌ها را
+                                    جدا وارد کنید.
+                                </p>
                             </td>
                         </tr>
                         <tr>
@@ -611,7 +620,13 @@ class MrDastbaaf_Settings_Controller {
                             <th scope="row"><label for="mrd-lesson-q480">کیفیت 480p (URL)</label></th>
                             <td>
                                 <input type="url" id="mrd-lesson-q480" class="large-text code" dir="ltr" placeholder="https://dll.mrdastbaaf.com/..." />
-                                <p class="description">هر سه کیفیت اختیاری‌اند — هر نشانی پرشده باید https و از هاست مجاز باشد؛ خالی یعنی آن کیفیت موجود نیست.</p>
+                                <p class="description">
+                                    فقط برای ویدیوی <code>.mp4</code> لازم است. اگر بالای فرم
+                                    <code>master.m3u8</code> گذاشته‌اید، این سه فیلد را خالی بگذارید —
+                                    کیفیت‌ها داخل منیفست هستند و اینجا نادیده گرفته می‌شوند.
+                                    <br />
+                                    هر نشانی پرشده باید https و از هاست مجاز باشد؛ خالی یعنی آن کیفیت موجود نیست.
+                                </p>
                             </td>
                         </tr>
                         <tr>

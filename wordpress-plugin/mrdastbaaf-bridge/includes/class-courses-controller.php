@@ -494,6 +494,16 @@ class MrDastbaaf_Courses_Controller {
          */
         $video_url = apply_filters('mrdastbaaf_stream_video_url', (string) $lesson_row->video_url, $lesson_row, $user_id);
 
+        /**
+         * v1.7.21: نوع استریم — HLS یا فایل تکی.
+         *
+         * HLS یک فایل نیست، یک فهرست است: هر کیفیت یک rendition جدا داخل همان
+         * master.m3u8 است. پس کلاینت نباید کیفیت را با عوض‌کردن URL عوض کند؛
+         * باید تراک را داخل همین منیفست انتخاب کند. و چون URL پروکسی هیچ
+         * پسوندی ندارد، کلاینت نمی‌تواند از پسوند حدس بزند — سرور باید بگوید.
+         */
+        $video_type = self::is_hls_url($video_url) ? 'hls' : 'mp4';
+
         // ─── v1.4.0: کیفیت‌های استریم ───
         // مقدار ذخیره‌شدهٔ درس (qualities_json) دوباره از فیلتر https + لیست سفید
         // هاست عبور داده می‌شود و سپس از فیلتر مستندِ ۱.۳.۵ واقعاً عبور می‌کند؛
@@ -506,10 +516,23 @@ class MrDastbaaf_Courses_Controller {
         }
         $stored_qualities = array_values($stored_qualities);
 
+        if ('hls' === $video_type) {
+            // منیفست خودش فهرست کیفیت‌ها را دارد. فرستادن فهرست جداگانه فقط
+            // کلاینت را وسوسه می‌کند کیفیت را با عوض‌کردن URL عوض کند — که با
+            // HLS یعنی از دست دادن انتخاب خودکار و پرش وسط پخش.
+            $stored_qualities = array();
+        }
+
         // v1.7.0: استریم پروکسی — وقتی فعال باشد، URL واقعی CDN هرگز به کلاینت
         // نمی‌رسد. به جای آن، URL اندپوینت پروکسی برمی‌گردد که توکن کوتاه‌عمر دارد.
         // کلاینت فقط /wp-json/.../stream?token=... را در <video src> می‌بیند.
-        $proxy_mode = (bool) get_option('mrdastbaaf_stream_proxy_mode', false);
+        /**
+         * پروکسی فقط برای فایل تکی معنا دارد. منیفست HLS به segmentهای جدا
+         * اشاره می‌کند؛ پروکسی‌کردنش یعنی بازنویسی کل پلی‌لیست و پروکسی هر
+         * segment، که این افزونه انجام نمی‌دهد. پس برای HLS پروکسی کنار می‌رود
+         * تا URL شکسته تحویل داده نشود.
+         */
+        $proxy_mode = (bool) get_option('mrdastbaaf_stream_proxy_mode', false) && 'hls' !== $video_type;
 
         if ($proxy_mode) {
             // توکن کوتاه‌عمر برای استریم (۶۰ ثانیه — کافی برای شروع پخش)
@@ -545,6 +568,7 @@ class MrDastbaaf_Courses_Controller {
                 'watermarkText' => $this->build_watermark($user_id)['text'],
                 'expiresAt'    => gmdate('c', $issued_at + self::TICKET_TTL),
                 'qualities'    => $proxy_qualities,
+                'videoType'    => $video_type,
                 'proxyMode'    => true,
             ));
         }
@@ -555,8 +579,23 @@ class MrDastbaaf_Courses_Controller {
             'expiresAt' => gmdate('c', $issued_at + self::TICKET_TTL),
             // v1.4.0: [{label,url}, …] — ممکن است خالی باشد (فقط «خودکار»)
             'qualities' => $stored_qualities,
+            'videoType' => $video_type,
             'proxyMode' => false,
         ));
+    }
+
+    /**
+     * آیا این آدرس یک منیفست HLS است؟
+     *
+     * فقط مسیر بررسی می‌شود، نه query string: `master.m3u8?token=…` هم HLS است،
+     * و `file.mp4?x=.m3u8` نیست.
+     *
+     * @param string $url
+     * @return bool
+     */
+    private static function is_hls_url($url) {
+        $path = (string) parse_url((string) $url, PHP_URL_PATH);
+        return (bool) preg_match('/\.m3u8$/i', $path);
     }
 
     /**
