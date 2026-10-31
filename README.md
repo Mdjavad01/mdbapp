@@ -75,11 +75,21 @@ uploads the APK on every push to `main`.
 
 ```bash
 cd web
-npm ci
-npm run dev      # http://localhost:3000
-npm run build    # static output in web/dist
-npm test
+npm ci --legacy-peer-deps        # see the note below
+npm run dev                      # http://localhost:3000, demo data
+npm run lint                     # tsc --noEmit
+VITE_API_BASE_URL=https://mrdastbaaf.com/wp-json/mrdastbaaf/v1 npm run build
 ```
+
+`npm run build` **refuses to run** without `VITE_API_BASE_URL`, and refuses a
+non-https value. That guard is deliberate: a production bundle silently pointing
+at mock data is worse than a failed build. Put the value in `web/.env.production`
+if you build often.
+
+`--legacy-peer-deps` is needed because the lockfile pins `esbuild ^0.25` while
+`vite 8` wants `^0.27`. The team installs with **bun** (`web/bun.lock`), which
+does not enforce that peer range. The dependency itself works — the resolution
+is what npm objects to. Fixing it properly means bumping `esbuild` upstream.
 
 ### Plugin
 

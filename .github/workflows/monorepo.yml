@@ -1,0 +1,88 @@
+name: monorepo
+
+# Android has its own workflow (android.yml). This one covers the other two
+# halves of the repository, and only runs when they change — the PWA and the
+# plugin are edited far less often than the app.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'wordpress-plugin/**'
+      - '.github/workflows/monorepo.yml'
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'wordpress-plugin/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugin:
+    name: Plugin — syntax and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PHP version
+        run: php -v
+
+      # A parse error in the plugin takes the whole site down, including the
+      # parts that have nothing to do with the app. Cheapest possible guard.
+      - name: Lint every PHP file
+        run: |
+          set -e
+          find wordpress-plugin -name '*.php' -print0 \
+            | xargs -0 -n1 php -l > /dev/null
+          echo "all files parse"
+
+      # The plugin's tests run without WordPress: they stub what they need.
+      - name: Unit tests
+        working-directory: wordpress-plugin/mrdastbaaf-bridge
+        run: |
+          set -e
+          for f in tests/php/test-*.php; do
+            echo "── $f"
+            php "$f"
+          done
+
+  web:
+    name: Web — types and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # --legacy-peer-deps: the lockfile pins esbuild ^0.25 while vite 8 wants
+      # ^0.27. The team installs with bun, which does not enforce that peer
+      # range. Same note in the root README.
+      - name: Install
+        working-directory: web
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Type-check
+        working-directory: web
+        run: npm run lint
+
+      # The build refuses to run without an https API base — that guard is
+      # deliberate, so CI supplies the real one rather than a dummy.
+      - name: Build
+        working-directory: web
+        env:
+          VITE_API_BASE_URL: https://mrdastbaaf.com/wp-json/mrdastbaaf/v1
+        run: npm run build
+
+      - name: Upload the static bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwa-dist
+          path: web/dist
+          retention-days: 7
