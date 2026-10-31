@@ -234,8 +234,19 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
     // hls.js ورکر را از یک Blob می‌سازد و در PWA (که خودش Service Worker دارد)
     // همین مسیر شکننده است. تنها پیکربندی‌ای که واقعاً تست شد و پخش کرد، بدون
     // ورکر بود؛ پارس روی رشتهٔ اصلی کمی کندتر است ولی پخش کردن مهم‌تر است.
-    const hls = new Hls({ enableWorker: false });
+    const hls = new Hls({
+      enableWorker: false,
+      // v1.7.3: بعد از یک توقف طولانی (تب خواب، شبکهٔ قطع‌وشروع) اولین
+      // درخواست سگمنت به‌راحتی تایم‌اوت می‌شود. تلاش مجدد خودکار، همان چیزی است
+      // که این حالت را بدون دخالت کاربر جمع می‌کند.
+      manifestLoadingMaxRetry: 4,
+      levelLoadingMaxRetry: 4,
+      fragLoadingMaxRetry: 6,
+      fragLoadingRetryDelay: 1000,
+      fragLoadingMaxRetryTimeout: 20000,
+    });
     hlsRef.current = hls;
+    let networkRetries = 0;
     hls.loadSource(activeVideoSrc);
     hls.attachMedia(video);
 
@@ -281,6 +292,24 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
         .join(' · ');
       hlsFailureRef.current = reason;
 
+      /**
+       * v1.7.3 — خطای شبکه با «حالت اشتباه» فرق دارد.
+       *
+       * قبلاً هر خطای fatal باعث می‌شد پلیر به پخش مستقیم سوییچ کند. برای
+       * `fragLoadTimeOut` این غلط است: منبع درست بود، فقط شبکه خوابیده بود.
+       * نتیجه: صفحه سیاه روی یک m3u8 که مرورگر نمی‌تواند پخش کند.
+       *
+       * حالا خطای شبکه دو بار با startLoad جمع می‌شود؛ فقط اگر باز هم شکست
+       * بخورد، مسیر دیگر امتحان می‌شود.
+       */
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        networkRetries += 1;
+        if (networkRetries <= 2) {
+          hls.startLoad();
+          return;
+        }
+      }
+
       // شاید فایل واقعاً mp4 است و hls.js بی‌دلیل انتخاب شده بود.
       if (!forcedForThisUrl && ticket?.videoUrl) {
         setForcedMode({ url: ticket.videoUrl, mode: 'direct' });
@@ -298,6 +327,20 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
       hlsRef.current = null;
     };
   }, [activeVideoSrc, isHlsSource, videoEl]);
+
+  // v1.7.3: بازگشت از تب دیگر. بعد از چند دقیقه، اتصال سگمنت‌ها مرده است و
+  // hls.js تا وقتی درخواست تازه‌ای نفرستد خبر ندارد. یک startLoad همان‌جاست.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const hls = hlsRef.current;
+      const video = videoEl;
+      if (!hls || !video) return;
+      if (video.readyState < 3) hls.startLoad();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [videoEl]);
 
   const handleHlsLevelSelect = (value: string) => {
     const level = Number(value);
