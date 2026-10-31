@@ -31,6 +31,7 @@ import { courseService } from '../../services/courseService';
 import { authService } from '../../services/authService';
 import { acquireScrollLock } from '../../utils/scrollLock';
 import Hls from 'hls.js';
+import { PWA_VERSION } from '../../version';
 
 // v1.3.0: برچسب فارسی نسخه‌های کیفیت سرور — ارقام فارسی + پسوند لاتین p
 // (۱۰۸۰ با نشان Full HD). برچسب ناشناختهٔ سرور دست‌نخورده پاس می‌شود.
@@ -110,6 +111,9 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   const [videoHeight, setVideoHeight] = useState(0);
   // v1.3.0: خطای پخش واقعی <video> (شبکه/منبع) — اورلی حداقلی با تلاش مجدد (فقط Real)
   const [isPlaybackError, setIsPlaybackError] = useState(false);
+  // v1.6.2: دلیل فنی خطا، روی همان اورلی. «خطای اتصال» بدون دلیل، از روی عکس
+  // قابل تشخیص نیست و هر بار یک رفت‌وبرگشت می‌خواهد.
+  const [playbackErrorDetail, setPlaybackErrorDetail] = useState<string | null>(null);
   // v1.2.8: سوییچ کیفیت — جای پخش + وضعیت pause حفظ می‌شود
   // (resumeTimeRef در timeupdate به‌روز می‌شود؛ resumePausedRef وضعیت pause لحظهٔ سوییچ است)
   const resumePausedRef = useRef(false);
@@ -174,6 +178,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
     }
 
     if (!Hls.isSupported()) {
+      setPlaybackErrorDetail(`v${PWA_VERSION} · Hls.isSupported() = false`);
       setIsPlaybackError(true);
       return;
     }
@@ -210,6 +215,16 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
         data.details,
         data.response?.code ?? '',
         data.response?.url ?? activeVideoSrc,
+      );
+      setPlaybackErrorDetail(
+        [
+          `v${PWA_VERSION}`,
+          data.type,
+          data.details,
+          data.response?.code ? `HTTP ${data.response.code}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
       );
       setIsPlaybackError(true);
     });
@@ -373,6 +388,8 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   // (URL تازه معمولاً از سرور می‌آید و <video key={src}> دوباره mount می‌شود).
   const handlePlaybackRetry = async () => {
     setIsPlaybackError(false);
+    setPlaybackErrorDetail(null);
+    setPlaybackErrorDetail(null);
     await handleRenewTicket();
   };
 
@@ -523,6 +540,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
     setVideoHeight(0);
     // v1.3.0: خطای پخش و وضعیت pause درس قبلی هم نباید نشت کند.
     setIsPlaybackError(false);
+    setPlaybackErrorDetail(null);
     resumePausedRef.current = false;
     // BUG-60/61: also reset the ended panel, note freeze/error and the
     // once-per-lesson auto-complete guard.
@@ -834,7 +852,10 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                   // v1.3.0: خطای منبع/شبکه ویدیو در حالت Real — اورلی حداقلی با
                   // تلاش مجدد (درخواست تازهٔ بلیط/playback). انقضای بلیط مسیر خودش
                   // را دارد (BUG-62) و در دمو ویدیوی واقعی وجود ندارد.
-                  if (ticket?.videoUrl) setIsPlaybackError(true);
+                  if (ticket?.videoUrl) {
+                    setPlaybackErrorDetail(`v${PWA_VERSION} · video.onError`);
+                    setIsPlaybackError(true);
+                  }
                 }}
               />
             )}
@@ -881,6 +902,14 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                   <p className="text-xs text-stone-300 leading-relaxed">
                     پخش ویدیو با خطا مواجه شد؛ دوباره تلاش کنید.
                   </p>
+                  {playbackErrorDetail && (
+                    <p
+                      dir="ltr"
+                      className="mt-2 text-[10px] leading-relaxed font-mono text-stone-500 break-all"
+                    >
+                      {playbackErrorDetail}
+                    </p>
+                  )}
                   <button
                     onClick={() => void handlePlaybackRetry()}
                     disabled={isRenewing}
