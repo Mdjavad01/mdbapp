@@ -123,6 +123,11 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   const [videoHeight, setVideoHeight] = useState(0);
   // v1.3.0: خطای پخش واقعی <video> (شبکه/منبع) — اورلی حداقلی با تلاش مجدد (فقط Real)
   const [isPlaybackError, setIsPlaybackError] = useState(false);
+  // v1.7.0: سیاست autoplay مرورگر. play() از داخل یک callback (بعد از پارس
+  // منیفست) دیگر «ژست کاربر» حساب نمی‌شود و رد می‌شود — نتیجه: صفحه سیاه،
+  // بدون خطا، و منوی کیفیت خالی. آن‌وقت دکمهٔ پخش بزرگ نشان داده می‌شود و
+  // کلیک کاربر همان ژستی است که مرورگر می‌خواهد.
+  const [needsGesture, setNeedsGesture] = useState(false);
   // v1.6.2: دلیل فنی خطا، روی همان اورلی. «خطای اتصال» بدون دلیل، از روی عکس
   // قابل تشخیص نیست و هر بار یک رفت‌وبرگشت می‌خواهد.
   const [playbackErrorDetail, setPlaybackErrorDetail] = useState<string | null>(null);
@@ -235,9 +240,10 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
       );
       setHlsLevel(hls.currentLevel);
       // جای autoPlay که برای HLS برداشته شد.
-      void video.play().catch(() => {
-        /* سیاست autoplay مرورگر — کاربر خودش دکمهٔ پخش را می‌زند */
-      });
+      void video
+        .play()
+        .then(() => setNeedsGesture(false))
+        .catch(() => setNeedsGesture(true));
     });
 
     // تا وقتی autoLevelEnabled است یعنی خود پلیر تصمیم می‌گیرد؛ منو باید
@@ -894,6 +900,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                     resumePausedRef.current = false;
                   }
                 }}
+                onPlay={() => setNeedsGesture(false)}
                 onTimeUpdate={(e) => {
                   const t = e.currentTarget.currentTime;
                   resumeTimeRef.current = t;
@@ -949,7 +956,29 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
               />
             )}
 
-            {/* Simulated Live Frame Graphic (فقط دمو) */}
+            {/* v1.7.0: دکمهٔ پخش بزرگ — هم ژست کاربر را می‌دهد، هم همان چیزی
+                است که در طرح مرجع وسط تصویر نشسته. */}
+            {isRealPlayback && needsGesture && !isPlaybackError && (
+              <button
+                type="button"
+                onClick={() => {
+                  const v = videoRef.current;
+                  if (!v) return;
+                  void v
+                    .play()
+                    .then(() => setNeedsGesture(false))
+                    .catch(() => setNeedsGesture(true));
+                }}
+                aria-label="پخش"
+                className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 transition hover:bg-black/40"
+              >
+                <span className="flex size-16 items-center justify-center rounded-full bg-amber-600 shadow-xl ring-4 ring-white/20">
+                  <Play className="ml-1 size-7 fill-white text-white" />
+                </span>
+              </button>
+            )}
+
+            {/* Simulated Live Frame Graphic (فقط demo) */}
             {/* v1.3.0: ابزار شبیه‌ساز وضعیت شبکهٔ دمو (سه دکمهٔ عادی/بافرینگ/خطای اتصال)
                 و اورلی‌های ساختگی‌اش به‌طور کامل حذف شدند — ابزار داخلی توسعه بود و
                 نباید برای کاربر نهایی دیده می‌شد. خطای پخش واقعی با اورلی پایین‌تر
