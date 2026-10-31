@@ -25,6 +25,36 @@ branch pushes there and this one stops being used.
 
 ## Changelog
 
+### 1.7.20
+
+**You can finally tell an app sale from a website sale.**
+
+Every order used to look like a website order: `created_via` was hardcoded to
+`mrdastbaaf-webapp` and the WooCommerce note said «از وب‌اپ» even when the
+purchase came from the Android app. There was no source column and the app sent
+no identifying header, so the two channels were indistinguishable.
+
+- `wp_mrdastbaaf_orders` gains `source` (`app` | `web`), set at initiate time
+  for both Zibal and card-to-card.
+- The app sends `X-MDB-Client: android/<version>`. Builds older than that are
+  still classified correctly: the OkHttp user agent is the tell, so app orders
+  are tagged from the moment this version is installed, without an app update.
+  A browser — including the PWA — sends `Mozilla/5.0` and stays `web`.
+- WooCommerce orders now carry `_mrdastbaaf_source`, `created_via` is
+  `mdbapp-android` for app purchases, and the note and payment title name the
+  channel instead of always claiming the web app.
+- `mrdastbaaf_order_source` filter for a future client (iOS, desktop wrapper).
+
+**New screen: مستر دستباف → سفارش‌ها.** Until now online subscription sales had
+no screen at all — «بررسی فیش‌ها» only lists card-to-card rows — so individual
+plan purchases were invisible outside the database.
+
+The page lists every purchase (subscription, course, physical product) with its
+source, and filters by source, kind, status, gateway and free text, with a CSV
+export of the current filter. It reads the one existing table — nothing is
+copied — and pages on the server, with a new `created_at` index so it stays
+fast at a hundred thousand orders.
+
 ### 1.7.19
 
 **The status tabs sit in a card like everything else.** They were a bare

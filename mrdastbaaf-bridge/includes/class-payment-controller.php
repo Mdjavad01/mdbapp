@@ -178,6 +178,50 @@ class MrDastbaaf_Payment_Controller {
     }
 
     /**
+     * Where the purchase came from: 'app' or 'web'.
+     *
+     * Until now every order looked like a website purchase — created_via was
+     * hardcoded to 'mrdastbaaf-webapp' and the order note said «از وب‌اپ» even
+     * for the Android app — so the owner had no way to tell an app sale from a
+     * site sale.
+     *
+     * The app sends `X-MDB-Client: android/<version>`. On an app build older
+     * than that, the OkHttp user agent is the tell, which means app orders are
+     * classified correctly from the moment this plugin is installed, without
+     * waiting for an app release.
+     *
+     * @return string 'app' | 'web'
+     */
+    private function detect_source() {
+        $client = isset($_SERVER['HTTP_X_MDB_CLIENT'])
+            ? sanitize_text_field(wp_unslash($_SERVER['HTTP_X_MDB_CLIENT']))
+            : '';
+        $agent = isset($_SERVER['HTTP_USER_AGENT'])
+            ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT']))
+            : '';
+
+        $source = 'web';
+        if ('' !== $client) {
+            // An explicit header always wins; a browser never sends it.
+            $source = (0 === stripos($client, 'android')) ? 'app' : 'web';
+        } elseif (false !== stripos($agent, 'okhttp')) {
+            // Retrofit/OkHttp is the app. A browser sends Mozilla/5.0, and the
+            // PWA runs inside a browser, so it stays 'web'.
+            $source = 'app';
+        }
+
+        /**
+         * Lets a future client (iOS, a desktop wrapper) declare itself without
+         * editing this file.
+         *
+         * @param string $source 'app' | 'web'
+         * @param string $client raw X-MDB-Client header
+         * @param string $agent  raw user agent
+         */
+        return (string) apply_filters('mrdastbaaf_order_source', $source, $client, $agent);
+    }
+
+    /**
      * v1.5.0: اعتبارسنجی محصول دوره برای خرید تک‌دوره‌ای از وب‌اپ — چهار گارد:
      *  ۱) محصول موجود و منتشرشده؛
      *  ۲) عضو دستهٔ دوره‌ها (آپشن mrdastbaaf_course_category — دقیقاً همان گارد
@@ -449,6 +493,7 @@ class MrDastbaaf_Payment_Controller {
             'amount_toman' => $amount_toman,
             'gateway' => 'zibal',
             'status' => 'pending',
+            'source' => $this->detect_source(),
         ));
         if (is_wp_error($insert_check)) {
             return $insert_check;
@@ -864,8 +909,14 @@ class MrDastbaaf_Payment_Controller {
             return new WP_Error('course_order_failed', 'پرداخت تایید شد اما ایجاد سفارش دوره ممکن نشد؛ سفارش برای بررسی دستی باقی ماند.', array('status' => 409));
         }
 
+        $source = isset($order->source) ? (string) $order->source : 'web';
+        $source_label = ('app' === $source) ? 'اپلیکیشن اندروید' : 'وب‌اپ';
+
         try {
-            $wc_order = wc_create_order(array('customer_id' => (int) $order->user_id, 'created_via' => 'mrdastbaaf-webapp'));
+            $wc_order = wc_create_order(array(
+                'customer_id'  => (int) $order->user_id,
+                'created_via'  => ('app' === $source) ? 'mdbapp-android' : 'mrdastbaaf-webapp',
+            ));
             if (is_wp_error($wc_order)) {
                 throw new Exception($wc_order->get_error_message());
             }
@@ -874,10 +925,11 @@ class MrDastbaaf_Payment_Controller {
                 'first_name' => (string) $order->user_fullname,
                 'phone'      => (string) $order->user_phone,
             ), 'billing');
-            $wc_order->set_payment_method_title('درگاه زیبال (وب‌اپ مستر دستباف)');
+            $wc_order->set_payment_method_title('درگاه زیبال — ' . $source_label);
             $wc_order->update_meta_data('_mrdastbaaf_order_number', (string) $order->order_number);
             $wc_order->update_meta_data('_mrdastbaaf_zibal_track', (string) $order->zibal_track_id);
-            $wc_order->add_order_note('خرید تک‌دوره‌ای از وب‌اپ — کد پیگیری زیبال: ' . (string) $order->zibal_track_id);
+            $wc_order->update_meta_data('_mrdastbaaf_source', $source);
+            $wc_order->add_order_note('خرید تک‌دوره‌ای از ' . $source_label . ' — کد پیگیری زیبال: ' . (string) $order->zibal_track_id);
             $wc_order->update_status('processing');
             $wc_order->save();
         } catch (Exception $e) {
@@ -962,8 +1014,14 @@ class MrDastbaaf_Payment_Controller {
         $address = isset($shipping['address']) ? sanitize_textarea_field($shipping['address']) : '';
         $postal = isset($shipping['postal_code']) ? sanitize_text_field($shipping['postal_code']) : '';
 
+        $source = isset($order->source) ? (string) $order->source : 'web';
+        $source_label = ('app' === $source) ? 'اپلیکیشن اندروید' : 'وب‌اپ';
+
         try {
-            $wc_order = wc_create_order(array('customer_id' => (int) $order->user_id, 'created_via' => 'mrdastbaaf-webapp'));
+            $wc_order = wc_create_order(array(
+                'customer_id'  => (int) $order->user_id,
+                'created_via'  => ('app' === $source) ? 'mdbapp-android' : 'mrdastbaaf-webapp',
+            ));
             if (is_wp_error($wc_order)) {
                 throw new Exception($wc_order->get_error_message());
             }
@@ -992,13 +1050,14 @@ class MrDastbaaf_Payment_Controller {
                     'country'    => $base_country,
                 ), 'shipping');
             } else {
-                $wc_order->add_order_note('نشانی پستی در وب‌اپ ثبت نشده بود — هماهنگی ارسال با تماس تلفنی.');
+                $wc_order->add_order_note('نشانی پستی در ' . $source_label . ' ثبت نشده بود — هماهنگی ارسال با تماس تلفنی.');
             }
 
-            $wc_order->set_payment_method_title('درگاه زیبال (وب‌اپ مستر دستباف)');
+            $wc_order->set_payment_method_title('درگاه زیبال — ' . $source_label);
             $wc_order->update_meta_data('_mrdastbaaf_order_number', (string) $order->order_number);
             $wc_order->update_meta_data('_mrdastbaaf_zibal_track', (string) $order->zibal_track_id);
-            $wc_order->add_order_note('خرید محصول فیزیکی از وب‌اپ — کد پیگیری زیبال: ' . (string) $order->zibal_track_id);
+            $wc_order->update_meta_data('_mrdastbaaf_source', $source);
+            $wc_order->add_order_note('خرید محصول فیزیکی از ' . $source_label . ' — کد پیگیری زیبال: ' . (string) $order->zibal_track_id);
             $wc_order->update_status('processing');
             $wc_order->save();
         } catch (Exception $e) {
@@ -1131,6 +1190,7 @@ class MrDastbaaf_Payment_Controller {
             'amount_toman' => $plan->price_toman,
             'gateway' => 'card_to_card',
             'status' => 'pending', // هیچ‌گاه مستقیماً فعال نمی‌شود!
+            'source' => $this->detect_source(),
         ));
         if (is_wp_error($insert_check)) {
             return $insert_check;

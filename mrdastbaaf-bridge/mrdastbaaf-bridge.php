@@ -3,7 +3,7 @@
  * Plugin Name: Mr. Dastbaaf PWA Bridge (پل ارتباطی مستر دستباف)
  * Plugin URI: https://mrdastbaaf.com
  * Description: افزونه اختصاصی ایجاد اندپوینت‌های REST API ایمن برای ارتباط وب‌اپلیکیشن PWA مستر دستباف با وردپرس، اوتینو، نیاس کورس و درگاه زیبال.
- * Version: 1.7.19
+ * Version: 1.7.20
  * Author: تیم فنی مستر دستباف
  * Author URI: https://mrdastbaaf.com
  * Text Domain: mrdastbaaf-bridge
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
 
-define('MRDASTBAAF_BRIDGE_VERSION', '1.7.19');
+define('MRDASTBAAF_BRIDGE_VERSION', '1.7.20');
 
 /**
  * v1.2.0: نسخهٔ افزونه و ثابت بالا باید همیشه همگام باشند (باگ قبلی همگام‌نبودن تکرار نشود).
@@ -130,7 +130,7 @@ define('MRDASTBAAF_BRIDGE_VERSION', '1.7.19');
  *   (courses: منبع billing_phone حساب هم اضافه شد) و woo-bridge (resolve کاربر
  *   سفارش) به‌کار رفت؛ فال‌بک LIKE روی هستهٔ ۱۰ رقمی فرم‌های «کثیف» را می‌پوشاند.
  */
-define('MRDASTBAAF_DB_VERSION', '1.5.1');
+define('MRDASTBAAF_DB_VERSION', '1.6.0');
 define('MRDASTBAAF_BRIDGE_PATH', plugin_dir_path(__FILE__));
 define('MRDASTBAAF_BRIDGE_URL', plugin_dir_url(__FILE__));
 define('MRDASTBAAF_API_NAMESPACE', 'mrdastbaaf/v1');
@@ -175,6 +175,7 @@ require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-shop-controller.php';
 // می‌ماند تا وب‌اپ نشکند. هوک‌های ابطال کش باید همین‌جا (بارگذاری پلاگین) ثبت
 // شوند، نه در rest_api_init — ذخیرهٔ محصول در پیشخوان یک POST معمولی است.
 require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-shop-catalog-controller.php';
+require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-orders-admin.php';
 MrDastbaaf_Shop_Catalog_Controller::register_cache_hooks();
 // v1.3.3: صفحات وب‌اپ (منوی اپ + سطح دسترسی از پیشخوان)
 require_once MRDASTBAAF_BRIDGE_PATH . 'includes/class-app-pages-controller.php';
@@ -268,6 +269,10 @@ class MrDastbaaf_Bridge_Plugin {
         // تایید/رد فیش با هستهٔ مشترک REST)
         $admin_pages_controller = new MrDastbaaf_Admin_Pages_Controller();
         $admin_pages_controller->register();
+
+        // v1.7.20: صفحهٔ «سفارش‌ها» — منبع هر خرید (اپ/وب) + خروجی CSV
+        $orders_admin = new MrDastbaaf_Orders_Admin();
+        $orders_admin->register();
 
         // v1.3.0: پوستهٔ سبک پیشخوان — فقط روی چهار صفحهٔ همین افزونه بارگذاری می‌شود
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
@@ -548,6 +553,7 @@ class MrDastbaaf_Bridge_Plugin {
             MrDastbaaf_Admin_Pages_Controller::APP_UI_SLUG,    // mrdastbaaf-app-ui (v1.3.4)
             MrDastbaaf_Admin_Pages_Controller::WOO_MAP_SLUG,   // mrdastbaaf-woo-map (v1.3.4)
             MrDastbaaf_Admin_Pages_Controller::PHYSICAL_SLUG,  // mrdastbaaf-physical (v1.4.0)
+            MrDastbaaf_Orders_Admin::SLUG,                     // mrdastbaaf-orders (v1.7.20)
         );
         if (in_array($page, $allowed, true)) {
             wp_enqueue_style(

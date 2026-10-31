@@ -82,11 +82,14 @@ class MrDastbaaf_Database {
             verified_at datetime NULL,
             updated_at datetime NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            source varchar(16) DEFAULT 'web' NOT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY order_number_idx (order_number),
             KEY status_gateway_idx (status, gateway),
             KEY  zibal_track_id (zibal_track_id),
-            KEY  user_id (user_id)
+            KEY  user_id (user_id),
+            KEY created_at_idx (created_at),
+            KEY source_created_idx (source, created_at)
         ) $charset_collate;";
         dbDelta($sql_orders);
 
