@@ -12,5 +12,5 @@
  *    (define) تا در رانتایم مرورگر بدون محاسبه باشند.
  */
 
-export const PWA_VERSION = '1.7.1';
+export const PWA_VERSION = '1.7.2';
 export const PWA_BUILD_TIME = new Date().toISOString();

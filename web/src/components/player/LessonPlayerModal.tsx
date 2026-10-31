@@ -207,15 +207,24 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
       return;
     }
 
-    // سافاری و آیفون HLS را بومی پخش می‌کنند؛ آنجا hls.js فقط تداخل می‌سازد و
-    // انتخاب کیفیت در اختیار سیستم است — پس منو نمایش داده نمی‌شود.
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = activeVideoSrc;
-      setHlsLevels([]);
-      return;
-    }
-
+    /**
+     * v1.7.2 — ترتیب درست: اول hls.js، بعد پخش بومی.
+     *
+     * ریشهٔ «صفحهٔ سیاه» همین دو خط بود. کروم برای
+     * `application/vnd.apple.mpegurl` مقدار `"maybe"` برمی‌گرداند — نه `""` —
+     * ولی در عمل یک پلی‌لیست را در `<video src>` پخش نمی‌کند. کد قبلی به همین
+     * `canPlayType` اعتماد می‌کرد، آدرس m3u8 را مستقیم روی المان می‌گذاشت و
+     * برمی‌گشت؛ نتیجه: نه فریمی، نه منوی کیفیت، نه خطایی.
+     *
+     * پخش بومی فقط جایی درست است که hls.js اصلاً نتواند اجرا شود (iOS قدیمی
+     * بدون MSE). هر جای دیگری hls.js انتخاب اول است.
+     */
     if (!Hls.isSupported()) {
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = activeVideoSrc;
+        setHlsLevels([]);
+        return;
+      }
       setPlaybackErrorDetail(`v${PWA_VERSION} · Hls.isSupported() = false`);
       setIsPlaybackError(true);
       return;
