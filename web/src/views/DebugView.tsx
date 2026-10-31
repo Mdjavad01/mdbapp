@@ -32,6 +32,7 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import { PWA_VERSION, PWA_BUILD_TIME } from '../version';
+import { PlayerSelfTest } from '../components/player/PlayerSelfTest';
 import { API_BASE, isRealApiMode, getStoredAuthToken, clearStoredAuthToken } from '../services/apiClient';
 
 interface SWStatus {
@@ -331,6 +332,8 @@ export const DebugView: React.FC<{ onNavigate: (view: string) => void }> = ({ on
           )}
         </button>
       </Section>
+
+      <PlayerSelfTest />
 
       {/* Footer */}
       <div className="mt-6 flex items-center gap-2 text-[10px] text-stone-400">
