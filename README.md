@@ -180,6 +180,7 @@ place.
 ├── docs/
 │   ├── API_REVIEW_AND_PLAN.md   the API contract, reviewed endpoint by endpoint
 │   ├── SCALING.md               what breaks at 10k users, and in what order to fix it
+│   ├── VIDEO_PROTECTION.md      what stops a download, what only deters one
 │   ├── MIGRATION.md             where the history lives
 │   └── legacy-patches/          obsolete patches, kept for the features they describe
 ├── tools/                    sync + release scripts
