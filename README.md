@@ -49,9 +49,9 @@ decides locally is a bug waiting for a server change.
 
 | Component | Version | Notes |
 |---|---|---|
-| Plugin | **1.7.20** | order source (app/web), orders screen, shop catalogue endpoints |
-| Android app | **1.7.1** | versionCode 21 |
-| Web app | **1.5.7** | unchanged since the team's last release |
+| Plugin | **1.7.21** | HLS playback type, order source (app/web), orders screen, shop catalogue endpoints |
+| Android app | **1.7.2** | versionCode 22 — HLS with a quality menu from the manifest |
+| Web app | **1.6.0** | hls.js player; **ahead of upstream**, see `CHANGELOG.md` |
 
 The app is built against the plugin above; the endpoints it uses are listed in
 [`docs/API_REVIEW_AND_PLAN.md`](docs/API_REVIEW_AND_PLAN.md).

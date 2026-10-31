@@ -35,6 +35,8 @@ interface ApiPlaybackShape {
   expiresAt?: unknown;
   /** v1.2.8: نسخه‌های کیفیت اختیاری سرور [{label,url}] — خالی/غایب = پخش خودکار */
   qualities?: unknown;
+  /** v1.6.0: `"hls"` یا `"mp4"` — افزونه از ۱.۷.۲۱ می‌فرستد */
+  videoType?: unknown;
 }
 
 function ticketString(value: unknown, fallback = ''): string {
@@ -135,6 +137,12 @@ export const videoSecurityService = {
         videoUrl,
         // v1.2.8: فقط فهرست معتبر سرور عبور می‌کند — خالی = پلیر نمایش «خودکار» می‌دهد
         qualities: ticketQualities(playback.qualities),
+        // v1.6.0: hls یا mp4 — پلیر باید بداند کیفیت را از منیفست بگیرد یا از
+        // فهرست بالا. مقدار ناشناخته یعنی «نمی‌دانیم»، و پلیر مثل قبل رفتار می‌کند.
+        videoType:
+          playback.videoType === 'hls' || playback.videoType === 'mp4'
+            ? playback.videoType
+            : undefined,
       };
     }
 

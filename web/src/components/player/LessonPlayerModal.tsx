@@ -30,6 +30,7 @@ import { videoSecurityService } from '../../services/videoSecurityService';
 import { courseService } from '../../services/courseService';
 import { authService } from '../../services/authService';
 import { acquireScrollLock } from '../../utils/scrollLock';
+import Hls from 'hls.js';
 
 // v1.3.0: برچسب فارسی نسخه‌های کیفیت سرور — ارقام فارسی + پسوند لاتین p
 // (۱۰۸۰ با نشان Full HD). برچسب ناشناختهٔ سرور دست‌نخورده پاس می‌شود.
@@ -140,6 +141,74 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoCompletedRef = useRef<string | null>(null);
+
+  // ── v1.6.0: HLS ───────────────────────────────────────────────────────────
+  // یک master.m3u8 که هر سه کیفیت داخلش است. کیفیت را با عوض‌کردن src عوض
+  // نمی‌کنیم؛ همان پخش را نگه می‌داریم و تراک را داخل منیفست انتخاب می‌کنیم —
+  // وگرنه هر تغییر کیفیت یعنی از دست دادن انتخاب خودکار و پرش در پخش.
+  const isHlsSource = ticket?.videoType === 'hls';
+  const hlsRef = useRef<Hls | null>(null);
+  const [hlsLevels, setHlsLevels] = useState<Array<{ index: number; height: number }>>([]);
+  const [hlsLevel, setHlsLevel] = useState(-1);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!isHlsSource || !activeVideoSrc || !video) {
+      setHlsLevels([]);
+      return;
+    }
+
+    // سافاری و آیفون HLS را بومی پخش می‌کنند؛ آنجا hls.js فقط تداخل می‌سازد و
+    // انتخاب کیفیت در اختیار سیستم است — پس منو نمایش داده نمی‌شود.
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = activeVideoSrc;
+      setHlsLevels([]);
+      return;
+    }
+
+    if (!Hls.isSupported()) {
+      setIsPlaybackError(true);
+      return;
+    }
+
+    const hls = new Hls({ enableWorker: true });
+    hlsRef.current = hls;
+    hls.loadSource(activeVideoSrc);
+    hls.attachMedia(video);
+
+    // منو فقط چیزی را نشان می‌دهد که منیفست واقعاً دارد.
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      setHlsLevels(
+        hls.levels
+          .map((level, index) => ({ index, height: level.height || 0 }))
+          .filter((level) => level.height > 0)
+          .sort((a, b) => b.height - a.height),
+      );
+      setHlsLevel(hls.currentLevel);
+    });
+
+    // تا وقتی autoLevelEnabled است یعنی خود پلیر تصمیم می‌گیرد؛ منو باید
+    // «خودکار» نشان بدهد، نه سطحی که همین لحظه انتخاب شده.
+    hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+      setHlsLevel(hls.autoLevelEnabled ? -1 : data.level);
+    });
+
+    hls.on(Hls.Events.ERROR, (_, data) => {
+      if (data.fatal) setIsPlaybackError(true);
+    });
+
+    return () => {
+      hls.destroy();
+      hlsRef.current = null;
+    };
+  }, [activeVideoSrc, isHlsSource]);
+
+  const handleHlsLevelSelect = (value: string) => {
+    const level = Number(value);
+    setHlsLevel(level);
+    if (hlsRef.current) hlsRef.current.currentLevel = level; // ‎-1 یعنی خودکار
+  };
+
 
   const showLocalToast = (message: string) => {
     // BUG-59: lightweight in-player toast for the fallback persistence paths.
@@ -705,7 +774,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
               <video
                 ref={videoRef}
                 key={activeVideoSrc}
-                src={activeVideoSrc}
+                src={isHlsSource ? undefined : activeVideoSrc}
                 className="absolute inset-0 z-10 h-full w-full bg-black object-contain"
                 autoPlay
                 playsInline
@@ -970,7 +1039,22 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                        → انتخاب‌گر واقعی با حفظ جای پخش/وضعیت pause و برچسب فارسی + ✓ گزینهٔ فعال.
                     ۲) در غیر این صورت (نسخه‌های خالی/غایب یا دمو) نمایش صادقانهٔ «خودکار» —
                        انتخاب‌گر ساختگی حذف شد؛ رزولوشن فقط وقتی از فایل واقعی خوانده شده نشان داده می‌شود. */}
-                {hasQualitySelector ? (
+                {isHlsSource && hlsLevels.length > 1 ? (
+                  <select
+                    value={hlsLevel}
+                    onChange={(e) => handleHlsLevelSelect(e.target.value)}
+                    aria-label="انتخاب کیفیت پخش"
+                    className="bg-stone-800 text-stone-300 text-[11px] rounded px-1.5 py-1 border border-stone-700 focus:outline-none"
+                  >
+                    <option value={-1}>{hlsLevel === -1 ? 'خودکار ✓' : 'خودکار'}</option>
+                    {hlsLevels.map((level) => (
+                      <option key={level.index} value={level.index}>
+                        {qualityLabelFa(`${level.height}p`)}
+                        {level.index === hlsLevel ? ' ✓' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : hasQualitySelector ? (
                   <select
                     value={activeVideoSrc}
                     onChange={(e) => handleQualitySelect(e.target.value)}

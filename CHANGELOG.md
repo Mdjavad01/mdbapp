@@ -14,7 +14,8 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | Code | What changed |
 |---|---|---|
-| **1.7.1** | 21 | every request now carries `X-MDB-Client: android/<version>`, so the bridge can record whether a sale came from the app or the site |
+| **1.7.2** | 22 | HLS playback with a real quality menu: the renditions come from the manifest and are selected through the track selector, not by swapping URLs. MP4 keeps the old path |
+| 1.7.1 | 21 | every request now carries `X-MDB-Client: android/<version>`, so the bridge can record whether a sale came from the app or the site |
 | 1.7.0 | 20 | shop is a category menu → section page with breadcrumb, subcategory chips and paged products |
 | 1.6.0 | 19 | data layer for `/shop/categories` + `/shop/catalog` (1800 products, paginated) |
 | 1.5.0 | 18 | bottom bar follows the panel's `dock` switches; `/app-ui` fetched once behind a mutex; 20 MB disk cache for the three public endpoints |
@@ -42,7 +43,8 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | What changed | Pairs with |
 |---|---|---|
-| **1.7.20** | `source` column on orders (app/web), detected from `X-MDB-Client` or the OkHttp agent; `_mrdastbaaf_source` on WooCommerce orders; new «سفارش‌ها» screen with filters and CSV export; `created_at` index | app 1.7.1 |
+| **1.7.21** | playback reports `videoType` (hls/mp4) and an HLS lesson returns no separate qualities; the PHP stream proxy is bypassed for HLS; the lesson form explains where `master.m3u8` goes | app 1.7.2 · web 1.6.0 |
+| 1.7.20 | `source` column on orders (app/web), detected from `X-MDB-Client` or the OkHttp agent; `_mrdastbaaf_source` on WooCommerce orders; new «سفارش‌ها» screen with filters and CSV export; `created_at` index | app 1.7.1 |
 | 1.7.19 | receipt status tabs sit in a card; fixed column widths so the table stops scrolling sideways | app 1.7.0 |
 | 1.7.18 | receipt page uses the full width; the category cache key includes the plugin version, so a release takes effect immediately | app 1.7.0 |
 | 1.7.17 | the course category is excluded from the shop tree | app 1.7.0 |
@@ -55,7 +57,10 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | What changed |
 |---|---|
-| **1.5.7** | imported unchanged from `mrdb` at `0e310d4` — mobile login bottom-sheet, instructor avatar, receipt image upload |
+| **1.6.0** | the player uses hls.js for `videoType: hls` and builds its quality menu from the manifest; Safari keeps native playback and no menu. **First change to the web app in this repository** — it now diverges from upstream, see below |
+| 1.5.7 | imported from `mrdb` at `0e310d4` — mobile login bottom-sheet, instructor avatar, receipt image upload |
 
-The web app has not been modified in this repository. Its changelog continues in
+From 1.6.0 the web app is **ahead of upstream** (`mrdb` is still at 1.5.7), so
+`tools/sync-from-team.sh` skips it instead of overwriting. Those changes have to
+go upstream before the two can be reconciled. The rest of the history is in
 [`web/CHANGELOG.md`](web/CHANGELOG.md).
