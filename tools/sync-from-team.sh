@@ -15,9 +15,9 @@
 # because two copies drifting apart is exactly how the plugin ended up three
 # versions behind the app.
 #
-# Because of that, --apply refuses when the plugin or the web app here is a
-# *newer* version than upstream: that means real work lives only in this
-# repository, and copying would delete it.
+# Because of that, a part whose version here is *newer* than upstream is skipped
+# rather than overwritten — that means real work lives only in this repository.
+# The other part still syncs. --force overrides the skip.
 
 set -euo pipefail
 
@@ -111,40 +111,62 @@ read_version() {
 local_plugin="$(read_version "$root/$plugin_main")"
 up_plugin="$(read_version "$tmp/team/$plugin_main")"
 
+# A part that is *ahead* of upstream is skipped, not treated as a fatal error:
+# the other part may still be behind and worth syncing. Deleting newer work
+# silently is the thing to avoid, and skipping is how to avoid it.
+sync_plugin=1
+sync_web=1
+
 if [ -n "$local_plugin" ] && [ -n "$up_plugin" ] && version_gt "$local_plugin" "$up_plugin"; then
-    if [ "$FORCE" -ne 1 ]; then
-        echo "refusing to sync: the plugin here is $local_plugin but upstream is $up_plugin." >&2
-        echo >&2
-        echo "Copying upstream would delete $local_plugin and every change in it." >&2
-        echo "Those changes belong upstream — push them there, then sync." >&2
-        echo "If you really mean to throw them away, re-run with --force." >&2
-        exit 1
+    if [ "$FORCE" -eq 1 ]; then
+        echo "warning: --force given; discarding plugin $local_plugin for upstream $up_plugin." >&2
+    else
+        sync_plugin=0
+        echo "skipping the plugin: this repository has $local_plugin, upstream has $up_plugin." >&2
+        echo "  Those $local_plugin changes exist only here. Push them upstream, or pass --force to discard." >&2
     fi
-    echo "warning: --force given; discarding plugin $local_plugin for upstream $up_plugin." >&2
 fi
 
 web_here="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$root/web/package.json" 2>/dev/null | head -n 1)"
 web_up="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$tmp/team/package.json" 2>/dev/null | head -n 1)"
 
 if [ -n "$web_here" ] && [ -n "$web_up" ] && version_gt "$web_here" "$web_up"; then
-    if [ "$FORCE" -ne 1 ]; then
-        echo "refusing to sync: the web app here is $web_here but upstream is $web_up." >&2
-        echo "Push those changes upstream first, or re-run with --force." >&2
-        exit 1
+    if [ "$FORCE" -eq 1 ]; then
+        echo "warning: --force given; discarding web app $web_here for upstream $web_up." >&2
+    else
+        sync_web=0
+        echo "skipping the web app: this repository has $web_here, upstream has $web_up." >&2
+        echo "  Push those changes upstream, or pass --force to discard." >&2
     fi
+fi
+
+if [ "$sync_plugin" -eq 0 ] && [ "$sync_web" -eq 0 ]; then
+    echo >&2
+    echo "nothing to sync: both parts are ahead of upstream." >&2
+    exit 1
 fi
 
 # ── apply ───────────────────────────────────────────────────────────────────
 echo "applying…"
 
-wipe "$root/web"
-mkdir -p "$root/web"
-cp -a "$tmp/team/." "$root/web/"
-wipe "$root/web/.git"
-wipe "$root/web/wordpress-plugin"
+if [ "$sync_web" -eq 1 ]; then
+    wipe "$root/web"
+    mkdir -p "$root/web"
+    cp -a "$tmp/team/." "$root/web/"
+    wipe "$root/web/.git"
+    wipe "$root/web/wordpress-plugin"
+    echo "web: updated"
+else
+    echo "web: left alone"
+fi
 
-wipe "$root/wordpress-plugin/mrdastbaaf-bridge"
-cp -a "$tmp/team/wordpress-plugin/mrdastbaaf-bridge" "$root/wordpress-plugin/"
+if [ "$sync_plugin" -eq 1 ]; then
+    wipe "$root/wordpress-plugin/mrdastbaaf-bridge"
+    cp -a "$tmp/team/wordpress-plugin/mrdastbaaf-bridge" "$root/wordpress-plugin/"
+    echo "plugin: updated"
+else
+    echo "plugin: left alone"
+fi
 
 echo "done. working tree:"
 git -C "$root" status --short | head -n 40

@@ -1,0 +1,21 @@
+# Who reviews what.
+#
+# A single owner for now: the repository has one maintainer. When the team joins,
+# replace the handles below — CODEOWNERS only accepts real users or teams that
+# already have access to this repository, so an invented handle silently does
+# nothing.
+#
+#   app/                 → the Android maintainer
+#   web/                 → whoever owns the PWA
+#   wordpress-plugin/    → whoever owns the site/backend
+
+*                       @Mdjavad01
+
+/app/                   @Mdjavad01
+/web/                   @Mdjavad01
+/wordpress-plugin/      @Mdjavad01
+
+# The contract: a change here can break both clients at once.
+/wordpress-plugin/mrdastbaaf-bridge/includes/class-payment-controller.php   @Mdjavad01
+/wordpress-plugin/mrdastbaaf-bridge/includes/class-database.php             @Mdjavad01
+/app/src/main/kotlin/com/mrdastbaaf/mdbapp/core/constants/ApiPaths.kt       @Mdjavad01

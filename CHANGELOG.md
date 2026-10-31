@@ -1,0 +1,61 @@
+# Changelog
+
+Three products, three version numbers. They move independently — an app release
+does not imply a plugin release — but the "Pairs with" column says what was
+tested together.
+
+Release assets: [GitHub Releases](https://github.com/Mdjavad01/mdbapp/releases).
+Plugin history before 1.7.16, and web history before the import, are in
+[`web/CHANGELOG.md`](web/CHANGELOG.md).
+
+---
+
+## Android app
+
+| Version | Code | What changed |
+|---|---|---|
+| **1.7.1** | 21 | every request now carries `X-MDB-Client: android/<version>`, so the bridge can record whether a sale came from the app or the site |
+| 1.7.0 | 20 | shop is a category menu → section page with breadcrumb, subcategory chips and paged products |
+| 1.6.0 | 19 | data layer for `/shop/categories` + `/shop/catalog` (1800 products, paginated) |
+| 1.5.0 | 18 | bottom bar follows the panel's `dock` switches; `/app-ui` fetched once behind a mutex; 20 MB disk cache for the three public endpoints |
+| 1.4.0 | 17 | membership plans became a duration ladder (1/3/6/12 months) with a computed per-month price and saving badge; tier names gone from the UI |
+| 1.3.0 | 16 | shop opened as menu → submenu instead of one long scroll |
+| 1.2.0 | 15 | the site's palette (terracotta/saffron/cream) derived from four anchors, so a recolour is four numbers |
+| 1.1.3 | 14 | in-app plans screen; SMS autofill; haptics on a wrong code; calmer, centred login field |
+| 1.1.2 | 13 | the OTP field no longer locks after a wrong code; digit boxes fill left to right |
+| 1.1.1 | 12 | course detail and checkout restyled — hero with price chip, lesson cards, gradient app bar |
+| 1.1.0 | 11 | shop cards rebuilt to match the catalogue |
+| 1.0.9 | 10 | home hero with a drawn kilim texture; deeper sections and guide list |
+| 1.0.8 | 9 | catalogue: segmented filter and richer course cards |
+| 1.0.7 | 8 | account: gradient profile hero, staggered sections, plan and order cards |
+| 1.0.6 | 7 | login and OTP rebuilt: gradient header, shared primary action, six digit boxes over one hidden field |
+| 1.0.5 | 6 | release signing from `keystore.properties`; tiled, drifting watermark on the player |
+| 1.0.4 | 5 | subscriptions purchasable inside the app, same gateway as the shop |
+| 1.0.3 | 4 | fixed the shop crash on duplicate list keys; rebuilt the hero layout; brand-gradient app bar on every tab |
+| 1.0.2 | 3 | home tab driven by `/app-ui` and `/app-pages` |
+| 1.0.1 | 2 | shop tab, shipping form, in-app Zibal payment; versioned APK filename |
+| 1.0.0 | 1 | scaffold, auth, catalogue, course detail, player |
+
+---
+
+## WordPress plugin (`mrdastbaaf-bridge`)
+
+| Version | What changed | Pairs with |
+|---|---|---|
+| **1.7.20** | `source` column on orders (app/web), detected from `X-MDB-Client` or the OkHttp agent; `_mrdastbaaf_source` on WooCommerce orders; new «سفارش‌ها» screen with filters and CSV export; `created_at` index | app 1.7.1 |
+| 1.7.19 | receipt status tabs sit in a card; fixed column widths so the table stops scrolling sideways | app 1.7.0 |
+| 1.7.18 | receipt page uses the full width; the category cache key includes the plugin version, so a release takes effect immediately | app 1.7.0 |
+| 1.7.17 | the course category is excluded from the shop tree | app 1.7.0 |
+| 1.7.16 | `GET /shop/categories` (tree, `parent`, `count`, 10-minute transient) and `GET /shop/catalog` (24 products per page) — the shop for 1800 products | app 1.7.0 |
+| 1.7.15 | *imported from the team repository* — shop products, plans, manual receipts, playback | app 1.0.0 |
+
+---
+
+## Web app (PWA)
+
+| Version | What changed |
+|---|---|
+| **1.5.7** | imported unchanged from `mrdb` at `0e310d4` — mobile login bottom-sheet, instructor avatar, receipt image upload |
+
+The web app has not been modified in this repository. Its changelog continues in
+[`web/CHANGELOG.md`](web/CHANGELOG.md).

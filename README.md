@@ -131,8 +131,9 @@ locally, never in CI — the key is deliberately not in the repository.
 ## Keeping in sync with the team repository
 
 `web/` and the plugin originate from
-[`soldiermr98-commits/mrdb`](https://github.com/soldiermr98-commits/mrdb), which
-the team still owns. That repository remains the upstream for the PWA.
+[`soldiermr98-commits/mrdb`](https://github.com/soldiermr98-commits/mrdb). That
+repository holds the history before 2026-10-31 —
+[`docs/MIGRATION.md`](docs/MIGRATION.md) records exactly what came from where.
 
 ```bash
 tools/sync-from-team.sh          # fetch upstream and report what changed
@@ -140,9 +141,23 @@ tools/sync-from-team.sh --apply  # copy it into web/ and wordpress-plugin/
 ```
 
 The sync is a **snapshot**, not a merge: upstream wins for those two folders. Any
-change we make there has to go upstream first, or the next sync drops it. That
-rule exists because the alternative — two copies drifting apart — is what made
-the plugin version mismatch in the first place.
+change we make there has to go upstream first, or the next sync drops it.
+
+A part whose version here is *newer* than upstream is **skipped, not
+overwritten** — today that is the plugin, which is five versions ahead. The other
+part still syncs. `--force` overrides the skip.
+
+Once the team moves here, the script has no job left: delete it and work in one
+place.
+
+## Working on this repository
+
+| Read | Why |
+|---|---|
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | branches, review, the checks each part needs, and the traps that have already cost time |
+| [`CHANGELOG.md`](CHANGELOG.md) | what shipped in the app, the plugin and the web app, version by version |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | where the history lives and what the old repository is for now |
+| [`docs/API_REVIEW_AND_PLAN.md`](docs/API_REVIEW_AND_PLAN.md) | the API contract, reviewed endpoint by endpoint |
 
 ## Layout
 
@@ -155,14 +170,20 @@ the plugin version mismatch in the first place.
 ├── docs/
 │   ├── API_REVIEW_AND_PLAN.md   the API contract, reviewed endpoint by endpoint
 │   ├── SCALING.md               what breaks at 10k users, and in what order to fix it
+│   ├── MIGRATION.md             where the history lives
 │   └── legacy-patches/          obsolete patches, kept for the features they describe
 ├── tools/                    sync + release scripts
-├── .github/workflows/        Android CI
+├── .github/workflows/        Android CI + monorepo CI
+├── CONTRIBUTING.md, CHANGELOG.md
 ├── app/build.gradle.kts, settings.gradle.kts, gradlew…   (Gradle root)
 └── keystore.properties.example
 ```
 
-## Contributing
+## House rules
+
+The workflow — branches, review, checks, releases — is in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). These are the product rules that apply on
+top of it:
 
 - **Persian (fa) only, full RTL.** ASCII digits on the wire, Persian digits on
   screen.
