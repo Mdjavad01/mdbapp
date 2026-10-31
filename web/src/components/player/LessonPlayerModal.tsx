@@ -146,7 +146,14 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
   // یک master.m3u8 که هر سه کیفیت داخلش است. کیفیت را با عوض‌کردن src عوض
   // نمی‌کنیم؛ همان پخش را نگه می‌داریم و تراک را داخل منیفست انتخاب می‌کنیم —
   // وگرنه هر تغییر کیفیت یعنی از دست دادن انتخاب خودکار و پرش در پخش.
-  const isHlsSource = ticket?.videoType === 'hls';
+  // سرور از افزونهٔ ۱.۷.۲۱ نوع استریم را می‌گوید. ولی اگر نسخهٔ قدیمی‌تری نصب
+  // باشد این فیلد اصلاً نمی‌آید و نباید فایل .m3u8 را مثل mp4 در <video> گذاشت:
+  // مرورگر یک پلی‌لیست را پخش نمی‌کند و فقط «خطای اتصال» می‌دهد. پس اگر سرور
+  // چیزی نگفت، از خود آدرس حدس می‌زنیم — همان کاری که اپ اندروید می‌کند.
+  const urlLooksHls = /\.m3u8$/i.test(
+    (ticket?.videoUrl ?? '').split('?')[0].split('#')[0],
+  );
+  const isHlsSource = ticket?.videoType === 'hls' || urlLooksHls;
   const hlsRef = useRef<Hls | null>(null);
   const [hlsLevels, setHlsLevels] = useState<Array<{ index: number; height: number }>>([]);
   const [hlsLevel, setHlsLevel] = useState(-1);
@@ -194,7 +201,17 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) setIsPlaybackError(true);
+      if (!data.fatal) return;
+      // سه علت رایج: CORS روی هاست ویدیو، ۴۰۳ از هاست، یا منیفست نامعتبر.
+      // بدون این خط، «خطای اتصال» هیچ سرنخی به کسی نمی‌دهد.
+      console.warn(
+        '[hls] fatal',
+        data.type,
+        data.details,
+        data.response?.code ?? '',
+        data.response?.url ?? activeVideoSrc,
+      );
+      setIsPlaybackError(true);
     });
 
     return () => {
@@ -1054,7 +1071,7 @@ export const LessonPlayerModal: React.FC<LessonPlayerModalProps> = ({
                       </option>
                     ))}
                   </select>
-                ) : hasQualitySelector ? (
+                ) : !isHlsSource && hasQualitySelector ? (
                   <select
                     value={activeVideoSrc}
                     onChange={(e) => handleQualitySelect(e.target.value)}
