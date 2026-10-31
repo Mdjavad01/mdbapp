@@ -74,12 +74,22 @@ uploads the APK on every push to `main`.
 ### Web
 
 ```bash
+tools/build-web.sh               # installs if needed, builds, checks dist/, prints the upload steps
+```
+
+Or by hand:
+
+```bash
 cd web
 npm ci --legacy-peer-deps        # see the note below
 npm run dev                      # http://localhost:3000, demo data
 npm run lint                     # tsc --noEmit
 VITE_API_BASE_URL=https://mrdastbaaf.com/wp-json/mrdastbaaf/v1 npm run build
 ```
+
+The output in `web/dist` is what goes on **app.mrdastbaaf.com**, and the release
+is not finished until the panel's «نسخهٔ مستقر PWA» matches `web/src/version.ts`
+— that field is what tells installed clients an update exists.
 
 `npm run build` **refuses to run** without `VITE_API_BASE_URL`, and refuses a
 non-https value. That guard is deliberate: a production bundle silently pointing
