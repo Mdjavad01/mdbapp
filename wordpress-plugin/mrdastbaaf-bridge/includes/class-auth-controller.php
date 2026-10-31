@@ -1,0 +1,985 @@
+<?php
+/**
+ * کنترلر احراز هویت پیامکی و سشن‌های کاربری
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class MrDastbaaf_Auth_Controller {
+
+    public function register_routes() {
+        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/request-otp', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_request_otp'),
+            'permission_callback' => '__return_true',
+        ));
+
+        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/verify-otp', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_verify_otp'),
+            'permission_callback' => '__return_true',
+        ));
+
+        // v1.7.8: اندپوینت دیسپچ ارسال پیامک — از درخواست loopbackِ غیربلاک‌کنندهٔ
+        // trigger_dispatch() فراخوانی می‌شود (فرایند PHP کاملاً جداست) تا ارسال
+        // ملی‌پیامک/هوک ثالث هرگز در فرایند پاسخ request-otp اجرا نشود.
+        // عمومی اما کم‌اثر: فقط ورودی‌های در انتظارِ باکس خروجی (که خود سرور نوشته)
+        // را پردازش می‌کند؛ قفل ۳۰ ثانیه‌ای از اجرای موازی جلوگیری می‌کند.
+        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/otp-dispatch', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_otp_dispatch'),
+            'permission_callback' => '__return_true',
+        ));
+
+        // v1.7.10: اندپوینت تشخیصی عمومی — وضعیت زندهٔ زنجیرهٔ OTP را بدون دسترسی
+        // پیشخوان گزارش می‌دهد: تایمینگ خواندن/نوشتن DB، وضعیت باکس خروجی/قفل
+        // دیسپچ، لاگ آخرین پیامک، مقدار «مؤثر» فیلتر http_request_timeout (+ نام
+        // افزونه‌های مداخله‌گر) و تست اتصال خروجی به سرور ملی‌پیامک. عمومی اما
+        // کم‌حجم: بدون هیچ رمزی، با سقف نرخ ۱ در ۱۰ ثانیه per-IP.
+        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/health', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_health'),
+            'permission_callback' => '__return_true',
+        ));
+
+        // v1.2.0: permission_callback مشترک — اول maybe_authenticate_bearer سپس چک لاگین؛
+        // فیلتر determine_current_user در برخی نصب‌ها دیر فایر می‌شود (یافتهٔ ۰-۲).
+        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/me', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_me'),
+            'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
+        ));
+
+        // v1.2.0: خروج PWA — ابطال توکن Bearer جاری (متیاداتا حذف می‌شود)
+        register_rest_route(MRDASTBAAF_API_NAMESPACE, '/auth/logout', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_logout'),
+            'permission_callback' => array('MrDastbaaf_Auth_Controller', 'permission_logged_in'),
+        ));
+    }
+
+    /**
+     * v1.2.0: permission مشترک اندپوینت‌های نیازمند ورود — قبل از چک is_user_logged_in
+     * احراز Bearer صریحاً اجرا می‌شود تا در نصب‌هایی که فیلتر determine_current_user
+     * دیر فایر می‌شود (افزونه‌ای قبل از REST_REQUEST کاربر را منجمد کرده)، توکن
+     * PWA نادیده گرفته نشود.
+     *
+     * @return bool
+     */
+    public static function permission_logged_in() {
+        self::maybe_authenticate_bearer();
+        return is_user_logged_in();
+    }
+
+    /**
+     * v1.2.0: permission مشترک اندپوینت‌های ادمین — معادل check_admin_permission
+     * با احراز صریح Bearer (برای فراخوانی از کنترلرهای دیگر).
+     *
+     * @return bool
+     */
+    public static function permission_admin() {
+        self::maybe_authenticate_bearer();
+        return current_user_can('manage_options');
+    }
+
+    /**
+     * ارسال پیامک کد تایید به شماره موبایل هنرجو
+     */
+    public function handle_request_otp(WP_REST_Request $request) {
+        $phone = sanitize_text_field($request->get_param('phone'));
+        $phone = preg_replace('/^(\+98|0098)/', '0', trim($phone));
+
+        if (!preg_match('/^09[0-9]{9}$/', $phone)) {
+            return new WP_Error('invalid_phone', 'شماره موبایل وارد شده معتبر نیست.', array('status' => 400));
+        }
+
+        /**
+         * v1.7.11 — فیکس معماری نهایی تایم‌اوت OTP (پروب زندهٔ ۱۶ اکتبر روی 1.7.10):
+         * request-otp معتبر ۴۱.۲s/۴۲.۴s معلق می‌ماند (HTTP 200 با ۰ بایت) در حالی که:
+         *  - ردیف لاگِ «قبل از تریگر» ۱.۷.۱۰ هرگز نوشته نشد + باکس خروجی خالی ماند؛
+         *  - تکرار همان شماره 429 در ۱.۵s گرفت (خواندن‌ها سبک‌اند)؛
+         *  - شمارهٔ «تازه» هم معلق ماند (ردیف‌های per-phone مقصر نیستند)؛
+         *  - پروب نوشتن «ردیف تازه» در /auth/health فقط ۹۰-۱۷۷ms طول می‌کشد.
+         * نتیجه: تعلیق روی به‌روزرسانی «ردیف‌های اشتراکی» ثابت wp_options است
+         * (شمارندهٔ سراسری، سهمیهٔ IP، transient باکس، فلگ autoload، لاگ) که هر
+         * درخواستی به همان چند ردیف می‌نویسد؛ فرایندهای کشته‌شده/زامبی روی آن‌ها
+         * صف قفل می‌سازند و LiteSpeed فرایند معلق ~۴۱-۴۶ ثانیه‌ای را می‌کشد.
+         *
+         * اکنون مسیر پاسخ «صفر نوشتن اشتراکی» دارد:
+         *  - سهمیه‌های ضد-سوءاستفاده = COUNT ایندکس‌شده روی جدول درخواست‌ها
+         *    (فقط خواندن؛ نرخ ۲ دقیقه، ۵/ساعت، ۱۵/روز per-phone و ۱۰/ساعت per-IP)؛
+         *  - تنها نوشتن = INSERT ردیف تازه (AUTO_INCREMENT — صفر رقابت ردیفی)؛
+         *  - شمارندهٔ سراسری ساعتی (از v1.2.0 فقط لاگ‌رون بود) حذف شد؛
+         *  - ارسال در فرایند جدا (معماری ۱.۷.۸) از جدول می‌خواند.
+         */
+
+        // سهمیهٔ ۱: قفل ۲ دقیقه‌ای بین دو کد برای یک شماره (نرخ فوری)
+        if (MrDastbaaf_Sms_Service::count_recent_requests('phone', $phone, 2 * MINUTE_IN_SECONDS) >= 1) {
+            return new WP_Error('rate_limited', 'لطفاً ۲ دقیقه صبر کرده و مجدداً تلاش فرمایید.', array('status' => 429));
+        }
+
+        // سهمیهٔ ۲ و ۳: سقف ۵ در ساعت و ۱۵ در روز برای هر شماره (ABUSE FIX v1.2.0)
+        if (MrDastbaaf_Sms_Service::count_recent_requests('phone', $phone, HOUR_IN_SECONDS) >= 5) {
+            return new WP_Error('rate_limited', 'تعداد کدهای ارسالی به این شماره در یک ساعت بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.', array('status' => 429));
+        }
+        if (MrDastbaaf_Sms_Service::count_recent_requests('phone', $phone, DAY_IN_SECONDS) >= 15) {
+            return new WP_Error('rate_limited', 'تعداد کدهای ارسالی به این شماره در یک روز بیش از حد مجاز است؛ فردا دوباره تلاش کنید.', array('status' => 429));
+        }
+
+        // سهمیهٔ ۴: سقف ۱۰ درخواست در ساعت بر اساس IP واقعی (ABUSE FIX BUG-29)
+        $ip = self::get_client_ip();
+        if ('' !== $ip && MrDastbaaf_Sms_Service::count_recent_requests('ip_md5', md5($ip), HOUR_IN_SECONDS) >= 10) {
+            return new WP_Error('rate_limited', 'تعداد درخواست‌ها بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.', array('status' => 429));
+        }
+
+        // v1.7.13: جست‌وجوی شماره→کاربر برای پرچم isRegistered — زنجیرهٔ کامل
+        // (کش/user_login سپس فال‌بک سبک چندفرمی). قبلاً فقط find_user_by_phone_fast
+        // بود و حساب‌هایی که login‌شان شماره نبود (ساخت ووکامرسی) یا billing_phone‌شان
+        // فرم دیگری داشت، «عضو نیست» classify می‌شدند — گزارش کارفرما: پیام
+        // «این شماره عضو مستر دستباف نیست» برای شمارهٔ دارای دورهٔ خریداری‌شده.
+        // فال‌بک متا فقط در کش سرد اجرا می‌شود (کوئری سبک ایندکس‌شده + کش ۱۲س/۱۰د)
+        // و با معماری «صفر نوشتن اشتراکی» ۱.۷.۱۱ تضادی ندارد (کش‌ها per-phone هستند).
+        $existing_user = self::find_user_by_phone_full($phone);
+        $role_guard = self::guard_student_role($existing_user);
+        if (is_wp_error($role_guard)) {
+            return $role_guard;
+        }
+
+        // تولید کد ۶ رقمی (v1.2.0 — یافتهٔ ۲-۱۱: کد ۵ رقمی فضای جست‌وجوی کوچک‌تری داشت)
+        $otp_code = wp_rand(100000, 999999);
+
+        // v1.7.11: تنها نوشتنِ مسیر پاسخ — INSERT ردیف تازه در جدول درخواست‌ها
+        // (کدِ خام برای دیسپچ ارسال + هش bcrypt برای verify). اگر این INSERT هم
+        // به هر دلیل شکست بخورد، پاسخ ۵۰۰ ساختارمند برمی‌گردد (نه تایم‌اوت خام).
+        global $wpdb;
+        $request_id = MrDastbaaf_Sms_Service::enqueue_request(
+            $phone,
+            (string) $otp_code,
+            wp_hash_password((string) $otp_code),
+            ('' !== $ip ? md5($ip) : '')
+        );
+        if (false === $request_id) {
+            error_log('MrDastbaaf: OTP request INSERT failed — ' . $wpdb->last_error);
+            return new WP_Error('otp_storage_failed', 'ثبت درخواست کد تایید ممکن نشد؛ لطفاً چند لحظه بعد دوباره تلاش کنید.', array('status' => 500));
+        }
+
+        $response = array(
+            'success' => true,
+            'message' => 'کد تایید پیامکی ارسال گردید. اگر تا ۲ دقیقه پیامکی دریافت نشد، دوباره تلاش کنید.',
+            'expires_in_seconds' => MrDastbaaf_Sms_Service::CODE_TTL_SECONDS,
+            // v1.4.0: «قبلاً ثبت‌نام کرده» — اگر برای این شماره حساب هنرجوی موجودی
+            // باشد true است تا کلاینت برچسب «ورود» را به‌جای «ثبت‌نام» نشان دهد
+            // (camelCase مانند smsWarning؛ گارد نقش‌ها بالاتر خطای ۴۰۳ می‌دهد).
+            'isRegistered' => !empty($existing_user),
+        );
+
+        if (MrDastbaaf_Sms_Service::is_ready() || has_action('mrdastbaaf_send_otp_sms')) {
+            // v1.7.11: ردیف لاگ پیشخوان از این مسیر حذف شد (نوشتن اشتراکی ممنوع) —
+            // دیسپچ نتیجهٔ هر ارسال را با زمان‌سنجی کامل ثبت می‌کند. تریگر loopback
+            // غیربلاک‌کنندهٔ سقف‌دار ۲ ثانیه (گارد ۱.۷.۱۰) فرایند جدای ارسال را می‌سازد
+            // و شکستش با کرون sweep ۵دقیقه‌ای جبران می‌شود.
+            MrDastbaaf_Sms_Service::trigger_dispatch(true);
+        } else {
+            // سرویس تنظیم نشده و افزونهٔ ثالثی هم روی هوک نیست — هشدار فوری بدون هیچ تماس شبکه‌ای
+            $response['smsWarning'] = 'سرویس پیامک هنوز تنظیم نشده است؛ کد تایید شما در سامانه معتبر است اما پیامکی ارسال نشد.';
+        }
+
+        return rest_ensure_response($response);
+    }
+
+    /**
+     * v1.7.8: اجرای دیسپچ ارسال OTP در فرایند PHP جدا (loopback/کرون).
+     * پاسخ فقط خلاصهٔ آماری است؛ خودِ ارسال در همین فرایندِ بدونِ منتظر انجام می‌شود.
+     */
+    public function handle_otp_dispatch() {
+        return rest_ensure_response(MrDastbaaf_Sms_Service::handle_dispatch());
+    }
+
+    /**
+     * v1.7.10: اندپوینت تشخیصی سلامت زنجیرهٔ OTP — GET /auth/health
+     *
+     * هدف: عیب‌یابی از بیرون، بدون دسترسی پیشخوان و بدون حدس زدن. هر مؤلفهٔ
+     * مشکوکِ زنجیره با عدد/وضعیت صریح گزارش می‌شود:
+     *  - db_read_ms / db_write_ms: کندی دیتابیس/قفل جدول آپشن‌ها (ریشهٔ احتمالی
+     *    تعلیق‌های ~۵۰ ثانیه‌ای — innodb_lock_wait_timeout پیش‌فرض ۵۰s است)
+     *  - outbox/dispatch_lock: صف ارسال‌های گم‌شده و دیسپچ‌های گیرکرده
+     *  - sms_last_log: متن کامل «آخرین وضعیت ارسال پیامک» (همان که در پیشخوان دیده می‌شود)
+     *  - http_request_timeout.effective: اگر افزونه‌ای سقف ۲ ثانیهٔ تریگر را بالا
+     *    برده باشد، اینجا عدد واقعی + نام کالبک‌ها دیده می‌شود
+     *  - melipayamak_outbound: تست TCP خام (۳ ثانیه سقف) به سرور ملی‌پیامک —
+     *    فایروال خروجی هاست را بدون حدس نشان می‌دهد
+     *
+     * امنیت: هیچ رمز/توکنی در پاسخ نیست؛ شماره‌ها در لاگ ماسک‌شده‌اند؛ سقف نرخ
+     * ۱ درخواست در ۱۰ ثانیه per-IP؛ LiteSpeed nocache (namespace-wide) اعمال است.
+     *
+     * @return WP_REST_Response|WP_Error
+     */
+    public function handle_health() {
+        $ip = self::get_client_ip();
+        $rl_key = 'mrdastbaaf_health_rl_' . md5($ip !== '' ? $ip : 'anon');
+        if (get_transient($rl_key)) {
+            return new WP_Error('rate_limited', 'برای سلامت‌سنجی هر ۱۰ ثانیه یک‌بار مجاز است.', array('status' => 429));
+        }
+        set_transient($rl_key, 1, 10);
+
+        $t_all = microtime(true);
+
+        // ۱) تایمینگ خواندن DB (transient ناموجود = خالص‌ترین خواندن)
+        $t = microtime(true);
+        get_transient('mrdastbaaf_health_probe_missing');
+        $db_read_ms = round((microtime(true) - $t) * 1000, 1);
+
+        // ۲) تایمینگ نوشتن+حذف DB (قفل جدول آپشن‌ها را آشکار می‌کند)
+        $t = microtime(true);
+        set_transient('mrdastbaaf_health_probe', 1, 60);
+        delete_transient('mrdastbaaf_health_probe');
+        $db_write_ms = round((microtime(true) - $t) * 1000, 1);
+
+        // ۳) محیط فیلتر http_request_timeout — مقدار مؤثر + کالبک‌های ثبت‌شده
+        $effective_timeout = apply_filters('http_request_timeout', 2, home_url('/'));
+        $timeout_callbacks = array();
+        if (isset($GLOBALS['wp_filter']['http_request_timeout'])) {
+            foreach ($GLOBALS['wp_filter']['http_request_timeout']->callbacks as $prio => $cbs) {
+                foreach ($cbs as $cb) {
+                    $fn = isset($cb['function']) ? $cb['function'] : null;
+                    if (is_string($fn)) {
+                        $label = $fn;
+                    } elseif (is_array($fn) && count($fn) === 2) {
+                        $label = (is_object($fn[0]) ? get_class($fn[0]) : (string) $fn[0]) . '::' . (string) $fn[1];
+                    } elseif (is_object($fn) && $fn instanceof Closure) {
+                        $label = 'Closure';
+                    } else {
+                        $label = 'unknown';
+                    }
+                    $timeout_callbacks[] = $label . '@' . (string) $prio;
+                }
+            }
+        }
+
+        // ۴) تست اتصال خروجی به سرور ملی‌پیامک (TCP خام، بدون ارسال داده، سقف ۳ ثانیه)
+        $t = microtime(true);
+        $mel_conn = @fsockopen('tls://rest.payamak-panel.com', 443, $mel_errno, $mel_err, 3);
+        $mel_ms = round((microtime(true) - $t) * 1000);
+        if ($mel_conn) {
+            fclose($mel_conn);
+            $melipayamak_outbound = array('ok' => true, 'ms' => $mel_ms);
+        } else {
+            $melipayamak_outbound = array('ok' => false, 'errno' => (int) $mel_errno, 'error' => (string) $mel_err, 'ms' => $mel_ms);
+        }
+
+        // ۵) وضعیت صف OTP (جدول درخواست‌ها — اسکیما ۱.۵.۰) / قفل دیسپچ / لاگ پیامک
+        $otp_stats = MrDastbaaf_Sms_Service::otp_table_stats();
+
+        $payload = array(
+            'plugin_version'   => defined('MRDASTBAAF_BRIDGE_VERSION') ? MRDASTBAAF_BRIDGE_VERSION : 'unknown',
+            'server_time'      => current_time('mysql'),
+            'db_read_ms'       => $db_read_ms,
+            'db_write_ms'      => $db_write_ms,
+            'object_cache'     => wp_using_ext_object_cache() ? 'external' : 'db-transients',
+            'otp_requests'     => $otp_stats,
+            'dispatch_lock'    => (bool) get_transient(MrDastbaaf_Sms_Service::DISPATCH_LOCK_TRANSIENT),
+            'sms'              => array(
+                'provider' => (string) get_option('mrdastbaaf_sms_provider', 'none'),
+                'ready'    => MrDastbaaf_Sms_Service::is_ready(),
+            ),
+            'sms_last_log'     => (string) get_option('mrdastbaaf_sms_last_log', ''),
+            'http_request_timeout' => array(
+                'requested' => 2,
+                'effective' => $effective_timeout,
+                'callbacks' => $timeout_callbacks,
+            ),
+            'melipayamak_outbound' => $melipayamak_outbound,
+            'total_ms'         => round((microtime(true) - $t_all) * 1000, 1),
+        );
+
+        return rest_ensure_response($payload);
+    }
+
+    /**
+     * اعتبارسنجی کد تایید و ورود هنرجو
+     *
+     * v1.2.0 (یافتهٔ ۱-۵): ورود صرفاً Bearer است — wp_set_current_user/wp_set_auth_cookie
+     * حذف شدند (کوکی وردپرس برای اپ PWA لازم نیست و سشن سرور اضافه‌ای می‌ساخت).
+     */
+    public function handle_verify_otp(WP_REST_Request $request) {
+        $phone = sanitize_text_field($request->get_param('phone'));
+        $otp_code = sanitize_text_field($request->get_param('otp_code'));
+
+        $phone = preg_replace('/^(\+98|0098)/', '0', trim($phone));
+        $storage_key = 'mrdastbaaf_otp_val_' . md5($phone); // فقط برای کدهای در جریان پیش از ارتقای ۱.۷.۱۱
+
+        // SECURITY FIX (BUG-02): brute-force protection.
+        // The old endpoint had NO attempt limit: a 6-digit code (900,000 combinations)
+        // valid for 120 seconds could still be brute-forced by hammering this endpoint.
+        // We now allow at most 5 verification attempts per issued code and burn
+        // the code (forcing a new SMS request) as soon as the budget is exhausted.
+        $attempts_key = 'mrdastbaaf_otp_attempts_' . md5($phone);
+        $attempts = $this->get_otp_attempts($attempts_key); // BUG-28: خواندن از منبع مشترک شمارنده
+        if ($attempts >= 5) {
+            delete_transient($storage_key); // کد سوخته می‌شود؛ ورود فقط با کد جدید ممکن است
+            return new WP_Error('otp_locked', 'تعداد تلاش‌های نامعتبر بیش از حد مجاز بود. لطفاً کد تایید جدید درخواست کنید.', array('status' => 429));
+        }
+
+        /**
+         * v1.7.11: منبع کد = جدول درخواست‌های OTP (آخرین ردیف «قابل استفاده» این
+         * شماره: pending/sending/sent — کد تا ۱۲۰ ثانیه بعد از ارسال هم معتبر است؛
+         * همان معناشناسی transient قدیمی). فال‌بک: transient قدیمی فقط برای کدهایی
+         * که پیش از ارتقا صادر شده بودند. وضعیت used/expired/failed پذیرفته
+         * نمی‌شود — کد یک‌بارمصرف می‌ماند.
+         */
+        $hashed_code = null;
+        $otp_row_id = 0;
+        $otp_row = MrDastbaaf_Sms_Service::get_latest_verifiable_request($phone);
+        if (is_array($otp_row)) {
+            $otp_age = max(0, time() - (int) strtotime($otp_row['created_at']));
+            if ($otp_age <= MrDastbaaf_Sms_Service::CODE_TTL_SECONDS) {
+                $hashed_code = (string) $otp_row['code_hash'];
+                $otp_row_id = (int) $otp_row['id'];
+            } else {
+                // کد منقضی — بستن ردیف (نوشتن per-row بی‌رقابت) تا دیسپچ ارسالش نکند
+                MrDastbaaf_Sms_Service::mark_request_status($otp_row['id'], 'expired');
+            }
+        }
+        if (null === $hashed_code) {
+            $legacy_hash = get_transient($storage_key);
+            if (is_string($legacy_hash) && '' !== $legacy_hash) {
+                $hashed_code = $legacy_hash;
+            }
+        }
+
+        if (!$hashed_code || !wp_check_password($otp_code, $hashed_code)) {
+            // SECURITY FIX (BUG-28): افزایش «اتمی» شمارنده — الگوی قبلی check-then-set
+            // با درخواست‌های هم‌زمان دور زده می‌شد و بودجه ۵ تلاشی نقض می‌گشت.
+            $attempts = $this->incr_otp_attempts($attempts_key);
+            $remaining = 5 - $attempts;
+            // v1.2.0 (یافتهٔ ۱-۶): وضعیت 400 به‌جای 401 — فرانت هر 401 را «جلسه منقضی»
+            // تفسیر می‌کند و پیام «تلاش باقی‌مانده» را می‌بلعید؛ کد OTP نامعتبر خطای
+            // درخواست است نه سشن.
+            return new WP_Error('invalid_otp', 'کد تایید وارد شده نامعتبر یا منقضی شده است.' . ($remaining > 0 ? ' تلاش باقی‌مانده: ' . $remaining : ''), array('status' => 400));
+        }
+
+        // کد مصرف شد؛ ردیف جدول بسته + بودجه تلاش‌ها نیز پاک می‌شود
+        if ($otp_row_id > 0) {
+            MrDastbaaf_Sms_Service::mark_request_status($otp_row_id, 'used');
+        }
+        delete_transient($storage_key);
+        delete_transient($attempts_key);
+        wp_cache_delete($attempts_key, 'mrdastbaaf_otp'); // BUG-28: پاک‌سازی شمارنده در آبجکت‌کش
+
+        // v1.4.0: نام و نام‌خانوادگی اختیاری — فیلدهای ورودی پاکسازی می‌شوند
+        // (فقط حروف فارسی/فاصله/نیم‌فاصله می‌مانند؛ حداکثر ۶۰ کاراکتر). ورودی
+        // اختیاری است: نام‌های نامعتبر بی‌صدا دور ریخته می‌شوند و هرگز جریان
+        // ورود کاربران فعلی را نمی‌شکنند.
+        $first_name = $this->sanitize_person_name($request->get_param('first_name'));
+        $last_name = $this->sanitize_person_name($request->get_param('last_name'));
+        $display_name = trim($first_name . ' ' . $last_name);
+
+        // جستجوی کاربر: user_login (شماره) سپس فال‌بک billing_phone (یافتهٔ ۲-۱۵:
+        // حساب‌های ساخته‌شده خارج از مسیر OTP ممکن است login شان شماره نباشد)
+        // v1.7.9: اول جست‌وجوی سریع (user_login + کش)؛ فال‌بک متا فقط در کش سرد
+        // و با کوئری سبک get_var (LIMIT 1) به‌جای WP_User_Query سنگین.
+        $t_find = microtime(true);
+        $user = self::find_user_by_phone_fast($phone);
+        if (!$user) {
+            $user = self::find_user_by_phone_full($phone);
+        }
+        $find_elapsed = round(microtime(true) - $t_find, 2);
+        if ($find_elapsed > 3) {
+            MrDastbaaf_Sms_Service::write_admin_log(
+                'هشدار — جست‌وجوی شماره در verify-otp کند بود (' . $find_elapsed . 's)؛ ریشهٔ احتمالی: متای billing_phone بدون ایندکس/کندی دیتابیس هاست.'
+            );
+        }
+
+        if (!$user) {
+            // v1.2.0: ساخت کاربر با wp_insert_user و نقش صریح «subscriber» — نقش
+            // قبلی از تنظیمات پیش‌فرض سایت می‌آمد (get_option default_role) و اگر
+            // ادمین نقش پیش‌فرض را تغییر داده بود، هنرجوی تازه با نقش ممتاز ساخته می‌شد.
+            // v1.4.0: نام واقعی (در صورت ارسال) جای برچسب پیش‌فرض «هنرجو NNNN» می‌نشیند.
+            $new_user_id = wp_insert_user(array(
+                'user_login'   => $phone,
+                'user_pass'    => wp_generate_password(24, true),
+                'user_email'   => $phone . '@mrdastbaaf.local',
+                'display_name' => ('' !== $display_name) ? $display_name : 'هنرجو ' . substr($phone, -4),
+                'first_name'   => $first_name,
+                'last_name'    => $last_name,
+                'role'         => 'subscriber',
+            ));
+            if (is_wp_error($new_user_id)) {
+                // BUG-31: خطای wp_insert_user (معمولاً username/email تکراری) با
+                // 409 و پیام فارسی برگردانده می‌شود؛ کد خطای اصلی در لاگ سرور.
+                error_log('MrDastbaaf: wp_insert_user failed — code: ' . $new_user_id->get_error_code() . ' | message: ' . $new_user_id->get_error_message());
+                return new WP_Error('registration_conflict', 'ساخت حساب کاربری با این شماره موبایل ممکن نشد؛ احتمالاً حسابی با این شماره وجود دارد. لطفاً دوباره تلاش کنید.', array('status' => 409));
+            }
+            update_user_meta($new_user_id, 'billing_phone', $phone);
+            // v1.4.0: متیاهای صورتحساب ووکامرس — تطبیق سفارش‌های مهمانِ آینده با
+            // نام واقعی در فاکتور؛ فقط مقادیر غیرخالی نوشته می‌شوند.
+            if ('' !== $first_name) {
+                update_user_meta($new_user_id, 'billing_first_name', $first_name);
+            }
+            if ('' !== $last_name) {
+                update_user_meta($new_user_id, 'billing_last_name', $last_name);
+            }
+            $user = get_user_by('ID', $new_user_id);
+            // v1.7.9: کش مثبت شماره→کاربر — ورودهای بعدی هرگز به فال‌بک متا نمی‌رسند
+            if ($user) {
+                set_transient('mrdastbaaf_phone_uid_' . md5($phone), (int) $new_user_id, 12 * HOUR_IN_SECONDS);
+            }
+        }
+
+        if (!$user) {
+            // گارد دفاعی: پس از ساخت/یافتن، رکورد کاربر باید موجود باشد
+            return new WP_Error('invalid_user', 'حساب کاربری شما یافت نشد؛ لطفاً دوباره وارد شوید.', array('status' => 401));
+        }
+
+        // v1.2.0: گارد نقش‌های ممتاز — حساب‌های مدیریتی/فروشگاهی از ورود اپ هنرجو
+        // (OTP) خارج هستند تا با انبوه‌سازی شماره‌ها، توکن ممتاز فیش نشود.
+        $role_guard = self::guard_student_role($user);
+        if (is_wp_error($role_guard)) {
+            return $role_guard;
+        }
+
+        // v1.4.0: نام برای کاربرِ موجود — display_name هرگز بی‌دلیل عوض نمی‌شود؛
+        // فقط متیاهای صورتحساب ووکامرس (فاکتور) به‌روز می‌شوند. استثنا («خوددرمانی»):
+        // اگر نام فعلی همان برچسب پیش‌فرض «هنرجو NNNN» باشد و نام تازه رسیده باشد،
+        // نام واقعی جایگزین می‌شود تا کاربرِ ساخته‌شده با نسخهٔ قدیمی هم نام بگیرد.
+        if ('' !== $first_name || '' !== $last_name) {
+            if ('' !== $first_name) {
+                update_user_meta($user->ID, 'billing_first_name', $first_name);
+            }
+            if ('' !== $last_name) {
+                update_user_meta($user->ID, 'billing_last_name', $last_name);
+            }
+            if ('' !== $display_name && preg_match('/^هنرجو \d{4}$/u', (string) $user->display_name)) {
+                $user_update = array(
+                    'ID'           => $user->ID,
+                    'display_name' => $display_name,
+                );
+                if ('' !== $first_name) {
+                    $user_update['first_name'] = $first_name;
+                }
+                if ('' !== $last_name) {
+                    $user_update['last_name'] = $last_name;
+                }
+                wp_update_user($user_update);
+                $user = get_user_by('ID', $user->ID); // تازه‌سازی برای پاسخ
+            }
+        }
+
+        // v1.2.0 (یافتهٔ ۲-۱۲): توکن سخت‌شده — فرمت «{user_id}.{secret}»؛ سرور فقط
+        // hash('sha256', secret) را در usermeta نگه می‌دارد (نشت DB ≠ استفاده مجدد
+        // از توکن) و مقایسه با hash_equals زمان-ثابت انجام می‌شود. هر ورود regenerate
+        // می‌شود و ۳۰ روز اعتبار دارد. شکل پاسخ verify-otp تغییر نکرده است.
+        $secret = wp_generate_password(32, false, false);
+        $api_token = $user->ID . '.' . $secret;
+        update_user_meta($user->ID, 'mrdastbaaf_api_token', hash('sha256', $secret));
+        update_user_meta($user->ID, 'mrdastbaaf_api_token_issued', time());
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'token' => $api_token,
+            'user' => $this->format_user_profile($user),
+        ));
+    }
+
+    /**
+     * v1.2.0: خروج PWA — ابطال توکن Bearer با حذف هر دو متیای توکن.
+     * (کوکی سشن وردپرس مسیر جداگانه‌ای است و در این اندپوینت دست نمی‌خورد.)
+     */
+    public function handle_logout() {
+        $user_id = self::maybe_authenticate_bearer();
+        if ($user_id <= 0) {
+            return new WP_Error('unauthorized', 'برای خروج ابتدا وارد حساب کاربری خود شوید.', array('status' => 401));
+        }
+
+        delete_user_meta($user_id, 'mrdastbaaf_api_token');
+        delete_user_meta($user_id, 'mrdastbaaf_api_token_issued');
+
+        // v1.2.0: ردپای ممیزی خروج
+        MrDastbaaf_Admin_Controller::write_audit('auth_logout', 'user', (string) $user_id, 'خروج از اپ هنرجو و ابطال توکن Bearer');
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'با موفقیت از حساب کاربری خارج شدید.',
+        ));
+    }
+
+    /**
+     * v1.4.0: پاکسازی نام اختیاری هنرجو — تگ‌ها حذف، فقط حروف فارسی/فاصله/نیم‌فاصله
+     * (ZWNJ) باقی می‌مانند؛ فاصله‌های تکراری جمع و سقف ۶۰ کاراکتر اعمال می‌شود.
+     * ورودی اختیاری است — رشتهٔ خالی یعنی «نام ارسال نشده/معتبر نیست».
+     *
+     * @param mixed $raw مقدار خام پارامتر
+     * @return string نام پاکسازی‌شده یا رشتهٔ خالی
+     */
+    private function sanitize_person_name($raw) {
+        if (null === $raw) {
+            return '';
+        }
+        $name = wp_strip_all_tags((string) $raw);
+        // فقط محدودهٔ حروف فارسی/عربی + نیم‌فاصله + فاصله‌ها مجاز می‌مانند
+        $name = preg_replace('/[^\x{0600}-\x{06FF}\x{200C}\s]+/u', '', (string) $name);
+        $name = preg_replace('/\s+/u', ' ', (string) $name);
+        $name = trim((string) $name);
+        if ('' === $name) {
+            return '';
+        }
+        return mb_substr($name, 0, 60);
+    }
+
+    /**
+     * v1.7.9: جست‌وجوی سریع شماره → کاربر — فقط مسیرهای «پاسخ» (request-otp).
+     *  ۱) user_login = شماره (ایندکس یکتا، سریع همیشه) — حساب‌های ساخته‌شده از PWA؛
+     *  ۲) کش transient شماره→ID (مثبت: ۱۲ ساعت) — حاصل فال‌بک قبلی/ساخت حساب.
+     * هرگز WP_User_Query/فال‌بک متا را اجرا نمی‌کند — ریشهٔ تعلیق ۴۵-۶۰ ثانیه‌ای
+     * حادثهٔ تایم‌اوت همین بود.
+     *
+     * @param string $phone شمارهٔ نرمال‌شده (09xxxxxxxxx)
+     * @return WP_User|false
+     */
+    public static function find_user_by_phone_fast($phone) {
+        $user = get_user_by('login', $phone);
+        if ($user) {
+            return $user;
+        }
+        $cached_id = (int) get_transient('mrdastbaaf_phone_uid_' . md5($phone));
+        if ($cached_id > 0) {
+            $cached_user = get_user_by('ID', $cached_id);
+            if ($cached_user) {
+                return $cached_user;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * v1.7.13: همهٔ فرم‌های ممکن یک شمارهٔ موبایل ایران — هستهٔ مشترک تطبیق
+     * شماره در لوکاپ کاربر (auth) و سفارش‌های مهمان (courses/woo-bridge).
+     *
+     * گزارش کارفرما (۱.۷.۱۲): شماره‌ای که عضو بود و دوره خریده بود در request-otp
+     * «عضو نیست» شناخته می‌شد — حسابش خارج از مسیر OTP ساخته شده بود و شماره‌اش
+     * نه user_login بود و نه billing_phone آن دقیقاً به شکل 09xxxxxxxxx ذخیره شده بود.
+     *
+     * خروجی برای هر ورودی شناسایی‌شده، ۵ فرم است:
+     *  09xxxxxxxxx ، 9xxxxxxxxx ، 989xxxxxxxxx ، +989xxxxxxxxx ، 00989xxxxxxxxx
+     * ارقام فارسی/عربی تبدیل می‌شوند؛ فاصله/خط‌تیره/پرانتز حذف می‌شود؛ ورودی
+     * ناشناخته (ثابت/سیمکارت غیرایرانی) عیناً (+ فرم +دار) برمی‌گردد.
+     *
+     * @param string $raw شمارهٔ خام با هر فرمتی
+     * @return string[] فرم‌های یکتا برای تطبیق
+     */
+    public static function phone_variants($raw) {
+        $raw = trim((string) $raw);
+        if ('' === $raw) {
+            return array();
+        }
+
+        // ارقام فارسی/عربی → ASCII (کاربر/ادمین ممکن است با کیبورد فارسی وارد کرده باشد)
+        $raw = str_replace(
+            array('۰','۱','۲','۳','۴','۵','۶','۷','۸','۹','٠','١','٢','٣','٤','٥','٦','٧','٨','٩'),
+            array('0','1','2','3','4','5','6','7','8','9','0','1','2','3','4','5','6','7','8','9'),
+            $raw
+        );
+
+        $has_plus = (0 === strpos($raw, '+'));
+        $digits = preg_replace('/\D+/', '', $raw);
+        if (null === $digits || '' === $digits) {
+            return array();
+        }
+
+        $variants = array();
+        if (preg_match('/^(?:0|98|0098)?(9\d{9})$/', $digits, $m)) {
+            $core = $m[1]; // 9xxxxxxxxx — هستهٔ ۱۰ رقمی بدون صفر/پیشوند
+            $variants[] = '0' . $core;
+            $variants[] = $core;
+            $variants[] = '98' . $core;
+            $variants[] = '+98' . $core;
+            $variants[] = '0098' . $core;
+        } else {
+            // فرم ناشناخته — عیناً (و در صورت وجود +، فرم +دارش)
+            $variants[] = $digits;
+            if ($has_plus) {
+                $variants[] = '+' . $digits;
+            }
+        }
+
+        return array_values(array_unique(array_filter($variants)));
+    }
+
+    /**
+     * v1.7.9: جست‌وجوی کامل شماره → کاربر — کش سرد در request-otp/verify-otp و
+     * پس‌زمینه (دیسپچ، بعد از ارسال). به‌جای WP_User_query سنگین (JOIN + DISTINCT
+     * + ORDER BY روی متای بدون ایندکس — ریشهٔ تعلیق ۴۵-۶۰ ثانیه‌ای)، کوئری‌های
+     * سبک (لوکاپ ایندکس‌شدهٔ user_login و get_var روی ردیف‌های billing_phone)
+     * اجرا می‌شود و نتیجه (مثبت/منفی) کش می‌شود.
+     *
+     * v1.7.13: تطبیق «چندفرمی» — به‌ترتیب:
+     *  ۱) user_login در همهٔ فرم‌های phone_variants (لوکاپ ایندکس‌شده، بی‌هزینه)؛
+     *  ۲) یک کوئری سبک billing_phone با IN (همهٔ فرم‌ها) به‌جای تطبیق تک‌فرمی؛
+     *  ۳) فال‌بک LIKE روی هستهٔ ۱۰ رقمی برای فرم‌های «کثیف» (فاصله/خط‌تیره) —
+     *     فقط روی ردیف‌های meta_key='billing_phone' (زیرمجموعهٔ کوچک و ایندکس‌شده).
+     *
+     * کش منفی فقط ۱۰ دقیقه است تا حساب ووکامرسی تازه‌ساخت‌شده با همان شماره
+     * حداکثر ۱۰ دقیقه بعد در مسیر OTP قابل یافتن باشد.
+     *
+     * @param string $phone شمارهٔ نرمال‌شده (09xxxxxxxxx)
+     * @return WP_User|false
+     */
+    public static function find_user_by_phone_full($phone) {
+        $fast = self::find_user_by_phone_fast($phone);
+        if ($fast) {
+            return $fast;
+        }
+
+        global $wpdb;
+        $t_meta = microtime(true);
+        $user = false;
+
+        $variants = self::phone_variants($phone);
+        if (empty($variants)) {
+            $variants = array((string) $phone);
+        }
+
+        // ۱) user_login در همهٔ فرم‌ها — حساب‌هایی که login‌شان شماره است اما
+        // با فرم دیگری ذخیره شده (912.../98912.../+98912...)
+        foreach ($variants as $variant) {
+            $by_login = get_user_by('login', $variant);
+            if ($by_login) {
+                $user = $by_login;
+                break;
+            }
+        }
+
+        // ۲) billing_phone با IN همهٔ فرم‌ها — یک کوئری سبک (روی ایندکس meta_key)
+        if (!$user) {
+            $placeholders = implode(',', array_fill(0, count($variants), '%s'));
+            $uid = (int) $wpdb->get_var(call_user_func_array(
+                array($wpdb, 'prepare'),
+                array_merge(array(
+                    "SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key = 'billing_phone' AND meta_value IN ({$placeholders}) LIMIT 1"
+                ), $variants)
+            ));
+            if ($uid > 0) {
+                $user = get_user_by('ID', $uid);
+            }
+        }
+
+        // ۳) فال‌بک LIKE — فرم‌های کثیف مثل «0912 345 6789» یا «(0912) 3456789»
+        if (!$user) {
+            $core_digits = preg_replace('/\D+/', '', (string) $phone);
+            if (preg_match('/^(?:0|98|0098)?(9\d{9})$/', (string) $core_digits, $m)) {
+                $uid = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key = 'billing_phone' AND meta_value LIKE %s LIMIT 1",
+                    '%' . $wpdb->esc_like($m[1]) . '%'
+                ));
+                if ($uid > 0) {
+                    $user = get_user_by('ID', $uid);
+                }
+            }
+        }
+
+        $meta_elapsed = round(microtime(true) - $t_meta, 2);
+
+        // v1.7.9: تشخیص پایدار — اگر حتی کوئری سبک کند بود، ریشه (ایندکس/دیتابیس هاست)
+        // از پیشخوان قابل مشاهده است و راه‌حل نهایی (ایندکس دستی یا جدول نگاشت) تصمیم‌گیری می‌شود.
+        if ($meta_elapsed > 3) {
+            MrDastbaaf_Sms_Service::write_admin_log(
+                'هشدار — فال‌بک متای billing_phone کند بود (' . $meta_elapsed . 's)؛ ریشهٔ احتمالی: نبود ایندکس روی متا یا کندی دیتابیس هاست.'
+            );
+        }
+
+        if ($user instanceof WP_User) {
+            set_transient('mrdastbaaf_phone_uid_' . md5($phone), (int) $user->ID, 12 * HOUR_IN_SECONDS);
+            return $user;
+        }
+
+        // کش منفی کوتاه — شمارهٔ واقعاً جدید دوباره اسکن نمی‌شود
+        set_transient('mrdastbaaf_phone_uid_' . md5($phone), 0, 10 * MINUTE_IN_SECONDS);
+        return false;
+    }
+
+    /**
+     * v1.2.0: گارد نقش‌های ممتاز — ورود OTP فقط برای هنرجویان (subscriber/customer)
+     * مجاز است؛ سایر نقش‌ها (ادمین، ادیتور، شاپ‌منیجر و ...) با 403 رد می‌شوند.
+     *
+     * @param WP_User|false $user
+     * @return true|WP_Error true در صورت مجاز بودن
+     */
+    private static function guard_student_role($user) {
+        if (!$user) {
+            return true;
+        }
+        $roles = is_array($user->roles) ? $user->roles : array();
+        $privileged = array_diff($roles, array('subscriber', 'customer'));
+        if (!empty($privileged)) {
+            return new WP_Error('role_not_allowed', 'ورود با این شماره به اپ هنرجو مجاز نیست؛ لطفاً با پشتیبانی تماس بگیرید.', array('status' => 403));
+        }
+        return true;
+    }
+
+    public function handle_get_me() {
+        // v1.1.0: پشتیبانی Bearer — در کنار کوکی، توکن هدر Authorization نیز بررسی می‌شود
+        self::maybe_authenticate_bearer();
+
+        $user_id = get_current_user_id();
+        $user = get_user_by('ID', $user_id);
+        // BUG-30: کوکی احراز هویت معتبر اما رکورد کاربر حذف‌شده → قبلاً fatal (500)
+        // روی $user->user_login رخ می‌داد؛ اکنون 401 تمیز برگردانده می‌شود.
+        if (!$user) {
+            return new WP_Error('invalid_user', 'حساب کاربری شما یافت نشد؛ لطفاً دوباره وارد شوید.', array('status' => 401));
+        }
+        return rest_ensure_response($this->format_user_profile($user));
+    }
+
+    /**
+     * (منسوخ در v1.2.0) جایگزین: permission_logged_in() — این متد برای سازگاری
+     * فراخوانی‌های ثالث که ممکن است مستقیماً صدا بزنند حفظ شده است.
+     */
+    public function check_user_logged_in() {
+        return is_user_logged_in();
+    }
+
+    /**
+     * v1.1.0: استخراج توکن opaque از هدر «Authorization: Bearer …»
+     * (برای سازگاری با آپاچی‌های بدون گذر هدر، REDIRECT_HTTP_AUTHORIZATION هم چک می‌شود)
+     * v1.2.0: فرمت توکن «{user_id}.{secret}» — نقطه در کاراکترهای مجاز regex هست
+     * و تغییر نیکرده است.
+     *
+     * @return string توکن یا رشتهٔ خالی
+     */
+    public static function get_bearer_token() {
+        $header = '';
+        if (isset($_SERVER['HTTP_AUTHORIZATION'])) {
+            $header = sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_AUTHORIZATION']));
+        } elseif (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+            $header = sanitize_text_field(wp_unslash((string) $_SERVER['REDIRECT_HTTP_AUTHORIZATION']));
+        }
+        if ('' === $header) {
+            return '';
+        }
+        if (!preg_match('/^Bearer\s+([A-Za-z0-9._\-]+)$/i', $header, $matches)) {
+            return '';
+        }
+        return $matches[1];
+    }
+
+    /**
+     * v1.2.0 (یافتهٔ ۲-۱۲): بازیابی کاربر از توکن — توکن به شکل «{user_id}.{secret}»
+     * است؛ شناسهٔ کاربر مستقیماً پارس می‌شود (بدون get_users پرمخاطب روی meta_value)
+     * و secret با hash_equals زمان-ثابت با هش sha256 ذخیره‌شده مقایسه می‌شود.
+     * توکن منقضی (۳۰ روز) = نامعتبر (fail-closed).
+     *
+     * @param string $token توکن دریافتی از هدر
+     * @return WP_User|null
+     */
+    private static function get_user_by_api_token($token) {
+        if ('' === $token) {
+            return null;
+        }
+        $parts = explode('.', $token, 2);
+        if (count($parts) !== 2) {
+            return null;
+        }
+        $user_id = absint($parts[0]);
+        $secret = (string) $parts[1];
+        if ($user_id <= 0 || '' === $secret) {
+            return null;
+        }
+        $user = get_user_by('ID', $user_id);
+        if (!$user) {
+            return null;
+        }
+        $stored_hash = (string) get_user_meta($user->ID, 'mrdastbaaf_api_token', true);
+        if ('' === $stored_hash || !hash_equals($stored_hash, hash('sha256', $secret))) {
+            return null;
+        }
+        $issued = (int) get_user_meta($user->ID, 'mrdastbaaf_api_token_issued', true);
+        if ($issued <= 0 || (time() - $issued) > (30 * DAY_IN_SECONDS)) {
+            return null; // توکن منقضی است
+        }
+        return $user;
+    }
+
+    /**
+     * v1.1.0: هوک determine_current_user — اگر کوکی کاربر را تعیین نکرده باشد،
+     * هدر Bearer بررسی و کاربر از usermeta بازیابی می‌شود. فقط در درخواست‌های REST
+     * فعال است تا روی فرانت‌اند/پنل اثر جانبی نداشته باشد.
+     *
+     * v1.2.0 (یافتهٔ ۰-۲): محدودسازی namespace — Bearer تنها وقتی بررسی می‌شود که
+     * درخواست متعلق به namespace افزونه (…/wp-json/mrdastbaaf/v1 یا ?rest_route=/mrdastbaaf/v1…)
+     * باشد؛ در سایر مسیرهای REST سایت (وب‌سرویس‌های ثالث) توکن ما اصلاً نگاه نمی‌شود.
+     *
+     * @param int|false $user_id شناسهٔ کاربر تعیین‌شده توسط فیلترهای قبلی
+     * @return int|false
+     */
+    public static function determine_current_user_from_bearer($user_id) {
+        if ((int) $user_id > 0) {
+            return $user_id; // احراز قبلی (کوکی/اپلیکیشن‌پسورد) اولویت دارد
+        }
+        if (!defined('REST_REQUEST') || !REST_REQUEST) {
+            return $user_id;
+        }
+
+        // v1.2.0: گارد namespace — فقط روی اندپوینت‌های خودمان فعال شو
+        $is_our_namespace = false;
+        if (isset($_SERVER['REQUEST_URI']) && strpos((string) $_SERVER['REQUEST_URI'], '/' . rest_get_url_prefix() . '/mrdastbaaf/v1') !== false) {
+            $is_our_namespace = true;
+        } elseif (isset($_GET['rest_route']) && strpos((string) $_GET['rest_route'], '/mrdastbaaf/v1') === 0) {
+            $is_our_namespace = true;
+        }
+        if (!$is_our_namespace) {
+            return $user_id;
+        }
+
+        $user = self::get_user_by_api_token(self::get_bearer_token());
+        if ($user) {
+            return (int) $user->ID;
+        }
+        return $user_id;
+    }
+
+    /**
+     * v1.1.0: گارد درون‌هندلری — اگر فیلتر determine_current_user زودتر اجرا نشده
+     * باشد (فراخوانی مستقیم هندلرها خارج از چرخهٔ REST)، هدر Bearer اینجا بررسی و
+     * کاربر جاری ست می‌شود. در حالت عادی بی‌اثر است.
+     *
+     * @return int شناسهٔ کاربر جاری (۰ برای مهمان)
+     */
+    public static function maybe_authenticate_bearer() {
+        if ((int) get_current_user_id() > 0) {
+            return (int) get_current_user_id();
+        }
+        $user = self::get_user_by_api_token(self::get_bearer_token());
+        if ($user) {
+            wp_set_current_user((int) $user->ID);
+        }
+        return (int) get_current_user_id();
+    }
+
+    /**
+     * v1.2.0 (یافتهٔ ۲-۱۱): IP واقعی کلاینت — پشت reverse-proxy همه درخواست‌ها
+     * REMOTE_ADDR مشترک دارند و سقف per-IP بی‌اثر می‌شود. اگر ادمین در تنظیمات
+     * هدر اعتمادشده (مثلاً X-Forwarded-For) ست کرده باشد، اولین IP فهرست (کلاینت
+     * اصلی) خوانده می‌شود؛ در غیر این صورت REMOTE_ADDR. خروجی با filter_var
+     * اعتبارسنجی می‌شود (هدر قابل جعل است — فقط برای rate-limit استفاده می‌شود،
+     * نه تصمیم امنیتی دیگری).
+     *
+     * @return string IP معتبر یا رشتهٔ خالی
+     */
+    public static function get_client_ip() {
+        $raw = '';
+        $header = trim((string) get_option('mrdastbaaf_trusted_proxy_header', ''));
+        if ('' !== $header) {
+            $value = '';
+            if (isset($_SERVER[$header])) {
+                $value = (string) $_SERVER[$header];
+            } else {
+                // نام هدر HTTP استاندارد (مثل X-Forwarded-For) در PHP با پیشوند
+                // HTTP_ و زیرخط ذخیره می‌شود؛ هر دو شکل پشتیبانی می‌شوند.
+                $http_key = 'HTTP_' . strtoupper(str_replace('-', '_', $header));
+                if (isset($_SERVER[$http_key])) {
+                    $value = (string) $_SERVER[$http_key];
+                }
+            }
+            if ('' !== $value) {
+                $chain = explode(',', $value);
+                $raw = trim($chain[0]); // اولین IP = کلاینت اصلی
+            }
+        }
+        if ('' === $raw && isset($_SERVER['REMOTE_ADDR'])) {
+            $raw = (string) $_SERVER['REMOTE_ADDR'];
+        }
+        $ip = sanitize_text_field(wp_unslash($raw));
+        if ('' === $ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+            return '';
+        }
+        return $ip;
+    }
+
+    /**
+     * BUG-28: خواندن شمارنده تلاش‌های OTP از منبع مشترک
+     */
+    private function get_otp_attempts($key) {
+        if (wp_using_ext_object_cache()) {
+            $cached = wp_cache_get($key, 'mrdastbaaf_otp');
+            return (false === $cached) ? 0 : (int) $cached;
+        }
+        // fallback (BUG-28): بدون آبجکت‌کش خارجی از transient استفاده می‌شود
+        return (int) get_transient($key);
+    }
+
+    /**
+     * BUG-28: افزایش شمارنده تلاش‌های OTP.
+     *
+     * با آبجکت‌کش خارجی (Redis/Memcached) افزایش با wp_cache_incr اتمی است و
+     * درخواست‌های هم‌زمان نمی‌توانند بودجه ۵ تلاشی را دور بزنند.
+     * FALLBACK (سندشده): در نبود آبجکت‌کش خارجی، همان منطق transient قبلی
+     * (get_transient + set_transient؛ check-then-set) اجرا می‌شود — این ضعف
+     * تنها در نصب‌های بدون Redis/Memcached و در رقابت میلی‌ثانیه‌ای باقی می‌ماند.
+     */
+    private function incr_otp_attempts($key) {
+        if (wp_using_ext_object_cache()) {
+            $incremented = wp_cache_incr($key, 1, 'mrdastbaaf_otp');
+            if (false === $incremented) {
+                // کلید هنوز وجود نداشت — مقداردهی اولیه با TTL بودجه ۵ دقیقه‌ای
+                wp_cache_set($key, 1, 'mrdastbaaf_otp', 300);
+                return 1;
+            }
+            return (int) $incremented;
+        }
+
+        $attempts = (int) get_transient($key);
+        $attempts++;
+        set_transient($key, $attempts, 300); // بودجه تلاش: ۵ دقیقه
+        return $attempts;
+    }
+
+    private function format_user_profile($user) {
+        global $wpdb;
+        $table_memberships = $wpdb->prefix . 'mrdastbaaf_user_memberships';
+
+        $phone = $user->user_login;
+        $masked_phone = substr($phone, 0, 4) . '***' . substr($phone, -4);
+
+        // استعلام آخرین اشتراک فعال
+        $now = current_time('mysql');
+        $membership = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_memberships 
+             WHERE user_id = %d AND status = 'active' AND expires_at > %s 
+             ORDER BY expires_at DESC LIMIT 1",
+            $user->ID, $now
+        ));
+
+        $membership_data = null;
+        if ($membership) {
+            // TIMEZONE FIX (فاز ۳): تاریخ‌ها با current_time ذخیره می‌شوند؛ مقایسه باید
+            // با مرجع زمان محلی باشد نه time() واقعی (UTC) — وگرنه روزهای باقی‌مانده drift می‌کند.
+            $diff_seconds = strtotime($membership->expires_at) - current_time('timestamp');
+            $days_remaining = max(0, ceil($diff_seconds / (60 * 60 * 24)));
+
+            $membership_data = array(
+                'tier' => $membership->tier,
+                'planId' => $membership->plan_id,
+                'planName' => 'اشتراک ' . $membership->tier,
+                'status' => 'active',
+                'startedAt' => $membership->started_at,
+                'expiresAt' => $membership->expires_at,
+                'formattedExpireDateJalali' => date_i18n('Y/m/d', strtotime($membership->expires_at)),
+                'daysRemaining' => $days_remaining,
+            );
+        }
+
+        $roles = (array) $user->roles;
+        $role = in_array('administrator', $roles, true) ? 'admin' : 'student';
+
+        return array(
+            'id' => (string) $user->ID,
+            'phoneNumber' => $phone,
+            'maskedPhone' => $masked_phone,
+            'fullName' => $user->display_name,
+            'role' => $role,
+            'membership' => $membership_data,
+        );
+    }
+}

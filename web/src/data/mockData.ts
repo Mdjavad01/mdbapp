@@ -1,0 +1,787 @@
+/**
+ * @file data/mockData.ts
+ * @description Comprehensive Persian mock data for Mr. Dastbaaf handicraft platform
+ */
+
+import { Course, EditorialPage, HomepageSectionConfig, MembershipPlan, PaymentOrder, UserProfile } from '../types';
+import { formatJalali } from '../utils/format';
+
+/**
+ * LOW-SEVERITY FIX: demo membership dates are now RELATIVE to Date.now()
+ * (started 22 days ago, expires in 8 days) so the demo student never shows an
+ * expired subscription no matter when the prototype is opened. The old static
+ * 2026-09-20 → 2026-10-20 window rotted as real time moved on.
+ */
+const DEMO_MEMBERSHIP_STARTED_AT = new Date(Date.now() - 22 * 24 * 60 * 60 * 1000).toISOString();
+const DEMO_MEMBERSHIP_EXPIRES_AT = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString();
+
+export const INITIAL_USERS: UserProfile[] = [
+  {
+    id: 'user-std-1',
+    phoneNumber: '09123456789',
+    maskedPhone: '۰۹۱۲***۶۷۸۹',
+    fullName: 'سارا احمدی',
+    avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80',
+    role: 'student',
+    membership: {
+      tier: 'bronze',
+      planId: 'plan-bronze-1m',
+      planName: 'اشتراک برنزی ماهانه',
+      status: 'active',
+      startedAt: DEMO_MEMBERSHIP_STARTED_AT,
+      expiresAt: DEMO_MEMBERSHIP_EXPIRES_AT,
+      // LOW-SEVERITY FIX: derived live from the relative expiry (Persian digits,
+      // matching seed-data style) instead of a hardcoded string.
+      formattedExpireDateJalali: formatJalali(DEMO_MEMBERSHIP_EXPIRES_AT),
+      daysRemaining: 8,
+    },
+    completedLessonIds: ['lsn-carpet-1', 'lsn-carpet-2'],
+    bookmarkedLessonIds: ['lsn-carpet-3', 'lsn-kilim-1'],
+    createdAt: '2026-08-15T12:00:00Z',
+  },
+  {
+    // LOW-SEVERITY FIX: second demo student — owner of the pending receipt
+    // ord-103. Previously ord-103 referenced a user that existed nowhere, so
+    // approving it silently dropped the grant; with this seed the BUG-46
+    // registry-grant path is exercised end-to-end.
+    id: 'user-std-2',
+    phoneNumber: '09121234567',
+    maskedPhone: '۰۹۱۲***۴۵۶۷',
+    fullName: 'نرگس کریمی',
+    role: 'student',
+    completedLessonIds: [],
+    bookmarkedLessonIds: [],
+    createdAt: '2026-09-01T09:00:00Z',
+  },
+  {
+    id: 'user-adm-1',
+    phoneNumber: '09998887766',
+    maskedPhone: '۰۹۹۹***۷۷۶۶',
+    fullName: 'محمدرضا خاموشیان (مدیر ارشد)',
+    avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+    role: 'admin',
+    completedLessonIds: [],
+    bookmarkedLessonIds: [],
+    createdAt: '2026-01-01T08:00:00Z',
+  },
+];
+
+export const INITIAL_MEMBERSHIP_PLANS: MembershipPlan[] = [
+  {
+    id: 'plan-free',
+    tier: 'free',
+    title: 'اشتراک رایگان',
+    description: 'آشنایی با مبانی صنایع دستی و دسترسی به ویدیوهای پیش‌نمایش دوره‌ها',
+    priceToman: 0,
+    duration: '1_month',
+    durationLabel: 'همیشگی',
+    features: [
+      'مشاهده درس‌های پیش‌نمایش رایگان تمام دوره‌ها',
+      'دسترسی به مقالات و دانشنامه بافندگی',
+      'حضور در تالار گفتگو و پرسش و پاسخ عمومی',
+      'عدم نیاز به پرداخت وجه'
+    ],
+    isActive: true,
+    colorScheme: 'stone',
+  },
+  {
+    id: 'plan-bronze-1m',
+    tier: 'bronze',
+    title: 'اشتراک برنزی',
+    description: 'مناسب برای علاقه‌مندان تازه‌کار و یادگیری تکنیک‌های پایه دستبافته‌ها',
+    priceToman: 99000,
+    originalPriceToman: 130000,
+    duration: '1_month',
+    durationLabel: '۱ ماهه',
+    features: [
+      'دسترسی کامل به تمام دوره‌های سطح مقدماتی',
+      'امکان دانلود فایل‌های PDF نقشه‌های ساده',
+      'مشاهده آنلاین با کیفیت استاندارد HD',
+      'پشتیبانی هفتگی در بخش دیدگاه‌های دوره‌ها'
+    ],
+    isPopular: false,
+    isActive: true,
+    colorScheme: 'amber',
+  },
+  {
+    id: 'plan-silver-3m',
+    tier: 'silver',
+    title: 'اشتراک نقره‌ای (ویژه هنرجویان)',
+    description: 'محبوب‌ترین پلن برای ارتقای مهارت در دوره‌های متوسط و کاربردی',
+    priceToman: 249000,
+    originalPriceToman: 320000,
+    duration: '3_months',
+    durationLabel: '۳ ماهه',
+    features: [
+      'دسترسی کامل به دوره‌های مقدماتی و متوسط',
+      'دسترسی به دوره‌های تخصصی گلیم‌بافی',
+      'دریافت نقشه‌های شطرنجی و راهنمای چله‌کشی',
+      'تماشای درس‌ها با کیفیت Full HD',
+      'امکان ذخیره یادداشت روی تایم‌لاین ویدیوها',
+      'تخفیف ۲۰٪ در خرید ابزار و کارگاه‌های حضوری'
+    ],
+    isPopular: true,
+    isActive: true,
+    colorScheme: 'amber',
+  },
+  {
+    id: 'plan-gold-12m',
+    tier: 'gold',
+    title: 'اشتراک طلایی (جامع سالانه)',
+    description: 'کامل‌ترین سطح دسترسی برای تبدیل شدن به استادکار و راه‌اندازی کارگاه خانگی',
+    priceToman: 690000,
+    originalPriceToman: 980000,
+    duration: '12_months',
+    durationLabel: '۱ ساله',
+    features: [
+      'دسترسی نامحدود به تمامی دوره‌ها (مقدماتی، متوسط و پیشرفته)',
+      'شامل دوره تخصصی رنگرزی گیاهی و طراحی نقشه',
+      'جلسات ماهانه وبینار زنده و رفع اشکال با اساتید',
+      'گواهی پایان دوره اختصاصی مستر دستباف',
+      'ارسال بسته نمونه تار و پود و رنگ‌های سنتی به درب منزل',
+      'اولویت پاسخگویی مستقیم در پیام‌رسان'
+    ],
+    isPopular: false,
+    isActive: true,
+    colorScheme: 'yellow',
+  },
+];
+
+export const INITIAL_COURSES: Course[] = [
+  {
+    id: 'course-carpet-tabriz',
+    title: 'دوره جامع قالی‌بافی سنتی و چله‌کشی تبریز',
+    slug: 'carpet-weaving-tabriz',
+    shortDescription: 'آموزش گام‌به‌گام دار قالی، چله‌کشی، گره ترکی، پودکشی ضخیم و نازک، و خواندن نقشه‌های اصیل.',
+    fullDescription: 'قالی‌بافی یکی از کهن‌ترین و گرانبهاترین هنرهای ایرانی است. در این دوره آموزشی با تدریس اساتید مجرب، از صفر مطلق با انواع دار قالی (عمودی و افقی)، ابزار کار شامل دفتین، قلاب، قیچی و شانه‌کش آشنا شده و گره ترکی را با ظرافت استادکاران تبریزی می‌آموزید. این دوره شما را از یک علاقه‌مند معمولی به بافنده‌ای مسلط بر دار قالی تبدیل می‌کند.',
+    category: 'قالی‌بافی و گلیم',
+    level: 'مقدماتی',
+    instructorName: 'استاد احمد رستگار',
+    instructorBio: 'بیش از ۳۰ سال سابقه بافت و احیای نقشه‌های فرش شاه‌عباسی و تدریس در هنرستان‌های هنرهای زیبای تبریز.',
+    instructorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=600&q=80',
+    coverImageUrl: 'https://images.unsplash.com/photo-1582533561751-ef6f6ab93a2e?auto=format&fit=crop&w=1200&q=80',
+    totalDurationHours: 14.5,
+    totalLessonsCount: 8,
+    requiredTier: 'bronze',
+    priceToman: 350000,
+    featured: true,
+    learningOutcomes: [
+      'شناخت انواع دارهای قالی و آماده‌سازی دار استاندارد',
+      'چله‌کشی اصولی به روش ترکی با کشش یکنواخت تارها',
+      'تسلط کامل بر گره ترکی و تکنیک‌های قیچی‌کاری و پرداخت',
+      'نحوه پودگذاری زیر و رو (پود ضخیم و نازک)',
+      'تشخیص و رفع عیوب متداول بافت مانند سره و بالازدگی'
+    ],
+    prerequisites: ['علاقه به هنرهای دستی سنتی', 'تهیه دار کوچک آموزشی و ابزار اولیه (معرفی در درس اول)'],
+    sections: [
+      {
+        id: 'sec-carpet-1',
+        courseId: 'course-carpet-tabriz',
+        title: 'فصل اول: آشنایی با ابزار و مقدمات',
+        order: 1,
+        lessons: [
+          {
+            id: 'lsn-carpet-1',
+            courseId: 'course-carpet-tabriz',
+            sectionId: 'sec-carpet-1',
+            title: 'معرفی ابزار قالی‌بافی: دفتین، قلاب، قیچی و نخ چله',
+            durationMinutes: 18,
+            order: 1,
+            isFreePreview: true,
+            requiredTier: 'free',
+            description: 'در این درس ویدیویی با ابزارهای ضروری و نحوه تهیه یک دار آموزشی رومیزی آشنا می‌شوید.',
+            videoTokenId: 'tok-mock-c1-l1',
+          },
+          {
+            id: 'lsn-carpet-2',
+            courseId: 'course-carpet-tabriz',
+            sectionId: 'sec-carpet-1',
+            title: 'آموزش گام‌به‌گام چله‌کشی ترکی روی دار رومیزی',
+            durationMinutes: 32,
+            order: 2,
+            isFreePreview: true,
+            requiredTier: 'free',
+            description: 'چله‌کشی ستون فقرات فرش است. نحوه تقسیم‌بندی و انداختن تارهای چله با حفظ تعادل کشش آموزش داده می‌شود.',
+            videoTokenId: 'tok-mock-c1-l2',
+          },
+        ],
+      },
+      {
+        id: 'sec-carpet-2',
+        courseId: 'course-carpet-tabriz',
+        title: 'فصل دوم: زنجیره‌بافی، سوف‌بافی و شروع گره‌ها',
+        order: 2,
+        lessons: [
+          {
+            id: 'lsn-carpet-3',
+            courseId: 'course-carpet-tabriz',
+            sectionId: 'sec-carpet-2',
+            title: 'زنجیره‌بافی و گلیم‌بافی ابتدای دار',
+            durationMinutes: 24,
+            order: 3,
+            isFreePreview: false,
+            requiredTier: 'bronze',
+            description: 'ایجاد لایه نگهدارنده پایین قالی قبل از ورود به بافت رج‌های اصلی با کرباس‌بافی منظم.',
+            videoTokenId: 'tok-mock-c1-l3',
+          },
+          {
+            id: 'lsn-carpet-4',
+            courseId: 'course-carpet-tabriz',
+            sectionId: 'sec-carpet-2',
+            title: 'تکنیک گره ترکی با قلاب و پودکشی ضخیم و نازک',
+            durationMinutes: 40,
+            order: 4,
+            isFreePreview: false,
+            requiredTier: 'bronze',
+            description: 'آموزش سرعت عمل در گره‌زنی و هدایت پودهای رنگی در لابه‌لای تارها.',
+            videoTokenId: 'tok-mock-c1-l4',
+          },
+        ],
+      },
+      {
+        id: 'sec-carpet-3',
+        courseId: 'course-carpet-tabriz',
+        title: 'فصل سوم: نقشه‌خوانی و پرداخت',
+        order: 3,
+        lessons: [
+          {
+            id: 'lsn-carpet-5',
+            courseId: 'course-carpet-tabriz',
+            sectionId: 'sec-carpet-3',
+            title: 'اصول خواندن نقشه‌های سنتی شطرنجی و کدبندی رنگ‌ها',
+            durationMinutes: 35,
+            order: 5,
+            isFreePreview: false,
+            requiredTier: 'bronze',
+            description: 'چگونه از روی نقشه شطرنجی بدون خطا رج به رج پیش برویم و قرینه‌سازی کنیم.',
+            videoTokenId: 'tok-mock-c1-l5',
+          },
+          {
+            id: 'lsn-carpet-6',
+            courseId: 'course-carpet-tabriz',
+            sectionId: 'sec-carpet-3',
+            title: 'قیچی‌کاری، پرداخت رج‌ها و جلوگیری از بالازدگی فرش',
+            durationMinutes: 28,
+            order: 6,
+            isFreePreview: false,
+            requiredTier: 'bronze',
+            description: 'روش صحیح کوبیدن دفتین و کنترل ارتفاع رج‌ها برای رسیدن به ابعاد دقیق.',
+            videoTokenId: 'tok-mock-c1-l6',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'course-kilim-qashqai', // v1.4.0: id/slug عمداً ثابت مانده (سازگاری لینک‌ها/پیشرفت)
+    title: 'دوره آموزش بافت گلیم ورنی و شیرکی',
+    slug: 'kilim-weaving-qashqai',
+    shortDescription: 'یادگیری بافت گلیم ورنی و نخ شیرکی؛ تکنیک چاک‌دار، پودپیچی محکم، بافت نگاره‌های هندسی و ریشه‌بافی ایلی.',
+    fullDescription: 'گلیم ورنی دستبافته‌ای پشمی، بدون پرز و دو رو است که با تکنیک چاک‌دار و پودپیچی محکم بافته می‌شود. در این دوره، کار با نخ شیرکی، ایجاد نگاره‌های هندسی و حیوانی اصیل ایلی، هارمونی رنگ‌های گرم گیاهی و اتمام و ریشه‌بافی کار به شیوه کارگاهی آموزش داده می‌شود.',
+    category: 'قالی‌بافی و گلیم',
+    level: 'متوسط',
+    instructorName: 'بانو مهین مغانی',
+    instructorBio: 'پژوهشگر دستبافته‌های ایلیاتی مغان و آذربایجان و دارنده نشان ملی مرغوبیت صنایع دستی ایران.',
+    instructorAvatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=200&q=80',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1606744837616-56c9a5c6a6eb?auto=format&fit=crop&w=600&q=80',
+    coverImageUrl: 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=1200&q=80',
+    totalDurationHours: 11.0,
+    totalLessonsCount: 6,
+    requiredTier: 'silver',
+    priceToman: 420000,
+    featured: true,
+    learningOutcomes: [
+      'آموزش گلیم‌بافی ساده (متعارض) و تکنیک چاک‌دار مخصوص ورنی',
+      'کار با نخ شیرکی و پیاده‌سازی نگاره‌های هندسی و حیوانی اصیل',
+      'تکنیک دورگیری نقوش با پودهای رنگی مکمل',
+      'مهار لبه‌های کناره و جلوگیری از جمع‌شدگی بافت'
+    ],
+    prerequisites: ['آشنایی مقدماتی با دار و چله'],
+    sections: [
+      {
+        id: 'sec-kilim-1',
+        courseId: 'course-kilim-qashqai',
+        title: 'فصل اول: ساختار گلیم و بافت پایه',
+        order: 1,
+        lessons: [
+          {
+            id: 'lsn-kilim-1',
+            courseId: 'course-kilim-qashqai',
+            sectionId: 'sec-kilim-1',
+            title: 'تفاوت‌های گلیم چاک‌دار و پودپیچ با قالی',
+            durationMinutes: 20,
+            order: 1,
+            isFreePreview: true,
+            requiredTier: 'free',
+            description: 'مروری بر ساختار تار و پود گلیم و خصوصیات نخ‌های پشمی مردافکن عشایری.',
+            videoTokenId: 'tok-mock-c2-l1',
+          },
+          {
+            id: 'lsn-kilim-2',
+            courseId: 'course-kilim-qashqai',
+            sectionId: 'sec-kilim-1',
+            title: 'بافت حاشیه ساده و تغییر جهت پودها در خطوط مستقیم',
+            durationMinutes: 30,
+            order: 2,
+            isFreePreview: false,
+            requiredTier: 'silver',
+            description: 'نحوه عبور دادن پودهای رنگی و بازگشت تارها بدون ایجاد درز ناخواسته.',
+            videoTokenId: 'tok-mock-c2-l2',
+          },
+        ],
+      },
+      {
+        id: 'sec-kilim-2',
+        courseId: 'course-kilim-qashqai',
+        title: 'فصل دوم: نقوش هندسی و نگاره‌های ورنی',
+        order: 2,
+        lessons: [
+          {
+            id: 'lsn-kilim-3',
+            courseId: 'course-kilim-qashqai',
+            sectionId: 'sec-kilim-2',
+            title: 'بافت ترنج لوزی و نقش بز کوهی نمادین',
+            durationMinutes: 45,
+            order: 3,
+            isFreePreview: false,
+            requiredTier: 'silver',
+            description: 'اجرای نگاره کهن بز کوهی و حاشیه‌های دندانه‌موشی با پودهای دوتایی.',
+            videoTokenId: 'tok-mock-c2-l3',
+          },
+          {
+            id: 'lsn-kilim-4',
+            courseId: 'course-kilim-qashqai',
+            sectionId: 'sec-kilim-2',
+            title: 'اتمام گلیم، گیس‌بافی ریشه‌ها و پرداخت نهایی',
+            durationMinutes: 25,
+            order: 4,
+            isFreePreview: false,
+            requiredTier: 'silver',
+            description: 'پایان‌بندی محکم و زیبا برای جلوگیری از شکافته شدن پودها در شستشو.',
+            videoTokenId: 'tok-mock-c2-l4',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'course-pateh-kerman', // v1.4.0: id/slug عمداً ثابت مانده (سازگاری لینک‌ها/پیشرفت)
+    title: 'دوره آموزش جراحی و مرمت فرش (مقدماتی)',
+    slug: 'pateh-embroidery-kerman',
+    shortDescription: 'آموزش ارزیابی آسیب‌های فرش، رفوگری رفت‌وبرگشت برای ترمیم پارگی و سوختگی، رنگ‌بندی و پرداخت نهایی دستبافته.',
+    fullDescription: 'جراحی و مرمت فرش، هنر بازگرداندن جان به دستبافته‌های کهنه است. در این دوره مقدماتی، شناخت انواع آسیب (پارگی، سوختگی، فرسودگی ریشه)، اجرای بافت رفت‌وبرگشت هم‌ارتفاع با پرزهای اطراف، رنگ‌بندی و رنگ‌ترمیم نخ‌ها و پرداخت نهایی کار به شیوه کارگاهی آموزش داده می‌شود.',
+    category: 'قالی‌بافی و گلیم',
+    level: 'مقدماتی',
+    instructorName: 'فاطمه السادات حسینی',
+    instructorBio: 'استادکار رفوگری و مرمت فرش با بیش از دو دهه تجربه ترمیم دستبافته‌های عتیقه و مدرس کارگاه‌های میراث فرهنگی.',
+    instructorAvatar: 'https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&w=200&q=80',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=600&q=80',
+    coverImageUrl: 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?auto=format&fit=crop&w=1200&q=80',
+    totalDurationHours: 9.0,
+    totalLessonsCount: 5,
+    requiredTier: 'silver',
+    priceToman: 290000,
+    featured: false,
+    learningOutcomes: [
+      'ارزیابی آسیب‌های فرش و انتخاب روش ترمیم مناسب (رفوگری یا ریشه‌بافی)',
+      'اجرای بافت رفت‌وبرگشت برای ترمیم پارگی و جای سوختگی',
+      'رنگ‌بندی و رنگ‌ترمیم پرزها با نخ‌های پشمی هم‌فام',
+      'پرداخت نهایی و شستشوی ایمن کار ترمیم‌شده'
+    ],
+    prerequisites: ['قیچی رفوگری، سوزن قلاویز و نخ پشمی هم‌رنگ زمینه'],
+    sections: [
+      {
+        id: 'sec-pateh-1',
+        courseId: 'course-pateh-kerman',
+        title: 'فصل اول: شناخت آسیب‌ها و آماده‌سازی ترمیم',
+        order: 1,
+        lessons: [
+          {
+            id: 'lsn-pateh-1',
+            courseId: 'course-pateh-kerman',
+            sectionId: 'sec-pateh-1',
+            title: 'ارزیابی آسیب‌های فرش و آماده‌سازی زمینه ترمیم',
+            durationMinutes: 15,
+            order: 1,
+            isFreePreview: true,
+            requiredTier: 'free',
+            description: 'نحوه تشخیص نوع پارگی و انتخاب نخ هم‌رنگ با رنگ‌بندی فرش.',
+            videoTokenId: 'tok-mock-c3-l1',
+          },
+          {
+            id: 'lsn-pateh-2',
+            courseId: 'course-pateh-kerman',
+            sectionId: 'sec-pateh-1',
+            title: 'اجرای بافت رفت‌وبرگشت روی جای پارگی',
+            durationMinutes: 28,
+            order: 2,
+            isFreePreview: false,
+            requiredTier: 'silver',
+            description: 'نحوه بافت یکنواخت هم‌ارتفاع با پرزهای اطراف بدون موج‌دادن زمینه.',
+            videoTokenId: 'tok-mock-c3-l2',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'course-macrame-modern',
+    title: 'تکنیک‌های مدرن مکرمه‌بافی و دکوراتیو منسوجات',
+    slug: 'modern-macrame-art',
+    shortDescription: 'آموزش گره‌های پایه و پیشرفته مربعی، مارپیچ، گره قفلی، بافت آویز دیواری و منسوجات کاربردی خانه.',
+    fullDescription: 'مکرمه‌بافی هنری مدرن با ریشه‌های کهن گره‌زنی است. این دوره مخصوص کسانی است که می‌خواهند بدون نیاز به دارهای سنگین، تنها با چند قرقره نخ پنبه‌ای و چوب، اکسسوری‌های مینیمال دکوراسیون، رانر و شلف‌های معلق خیره‌کننده خلق کنند.',
+    category: 'مکرمه و منسوجات',
+    level: 'مقدماتی',
+    instructorName: 'نیلوفر پارسا',
+    instructorBio: 'طراح داخلی و کارآفرین صنایع دستی معاصر با فروشگاه‌های فعال دکوراتیو در تهران.',
+    instructorAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1584992236310-6edddc08acff?auto=format&fit=crop&w=600&q=80',
+    coverImageUrl: 'https://images.unsplash.com/photo-1513519245088-0e12902e5a38?auto=format&fit=crop&w=1200&q=80',
+    totalDurationHours: 8.0,
+    totalLessonsCount: 6,
+    requiredTier: 'bronze',
+    priceToman: 260000,
+    featured: true,
+    learningOutcomes: [
+      'محاسبه دقیق متراژ نخ پنبه برای انواع پروژه‌ها',
+      'تسلط بر گره مربع (Square Knot) و گره مارپیچ (Spiral Knot)',
+      'تکنیک‌های اضافه کردن نخ و بافت الگوهای برگ و فستون',
+      'تمیزکاری ریشه‌ها و تثبیت الیاف با چسب مخصوص'
+    ],
+    prerequisites: ['نخ مکرومه تابیده یا کتان ۳ الی ۵ میلی‌متر'],
+    sections: [
+      {
+        id: 'sec-mac-1',
+        courseId: 'course-macrame-modern',
+        title: 'فصل اول: گره‌های بنیادین',
+        order: 1,
+        lessons: [
+          {
+            id: 'lsn-mac-1',
+            courseId: 'course-macrame-modern',
+            sectionId: 'sec-mac-1',
+            title: 'گره سرانداختن (Larks Head) و گره مربع',
+            durationMinutes: 16,
+            order: 1,
+            isFreePreview: true,
+            requiredTier: 'free',
+            description: 'پایه و شالوده بیش از ۸۰ درصد پروژه‌های مکرمه مدرن.',
+            videoTokenId: 'tok-mock-c4-l1',
+          },
+          {
+            id: 'lsn-mac-2',
+            courseId: 'course-macrame-modern',
+            sectionId: 'sec-mac-1',
+            title: 'بافت برگ و فرم‌دهی ریشه‌ها',
+            durationMinutes: 22,
+            order: 2,
+            isFreePreview: false,
+            requiredTier: 'bronze',
+            description: 'روش برس‌کشیدن و پایدارسازی ریشه‌های آویز دیواری.',
+            videoTokenId: 'tok-mock-c4-l2',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'course-natural-dyeing',
+    title: 'رازهای رنگرزی سنتی و گیاهی پشم و ابریشم',
+    slug: 'natural-dyeing-wool-silk',
+    shortDescription: 'روش‌های اصیل استخراج رنگ از روناس، پوست گردو، انار، نیل و اسپرک به همراه دندانه‌دادن با زاج سفید.',
+    fullDescription: 'رنگ‌های گیاهی دلیل اصلی ماندگاری چند صد ساله و جلای زنده فرش‌ها و گلیم‌های عتیقه ایرانی هستند. در این دوره جامع، فرمول‌های دقیق آزمایشگاهی و سنتی تثبیت رنگ‌ها بر روی کلاف‌های پشم و ابریشم را می‌آموزید تا الیاف بدون رنگ‌دهی یا کدر شدن آماده بافت شوند.',
+    category: 'رنگرزی طبیعی',
+    level: 'پیشرفته',
+    instructorName: 'مهندس کاظم پورابراهیمی',
+    instructorBio: 'متخصص شیمی نساجی سنتی و پژوهشگر رنگدانه‌های بومی فلات مرکزی ایران.',
+    instructorAvatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=200&q=80',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1528459801416-a9e53bbf4e17?auto=format&fit=crop&w=600&q=80',
+    coverImageUrl: 'https://images.unsplash.com/photo-1541701494587-cb58502866ab?auto=format&fit=crop&w=1200&q=80',
+    totalDurationHours: 12.0,
+    totalLessonsCount: 7,
+    requiredTier: 'gold',
+    priceToman: 480000,
+    featured: false,
+    learningOutcomes: [
+      'شستشو و چربی‌زدایی اصولی کلاف‌های پشم دست‌ریس',
+      'دندانه‌دادن با زاج سفید و زاج سبز برای دستیابی به فام‌های مختلف',
+      'جوشاندن روناس برای به دست آوردن رنگ دوغی و لاکی درخشان',
+      'ایجاد طیف‌های قهوه‌ای، بژ و خاکی با پوست گردو و بلوط',
+      'آزمون‌های مقاومت نوری و شستشویی مطابق استانداردهای صنایع دستی'
+    ],
+    prerequisites: ['گذراندن دوره مقدماتی بافندگی یا علاقه جدی به کارگاه رنگرزی'],
+    sections: [
+      {
+        id: 'sec-dye-1',
+        courseId: 'course-natural-dyeing',
+        title: 'فصل اول: آماده‌سازی الیاف و دندانه‌ها',
+        order: 1,
+        lessons: [
+          {
+            id: 'lsn-dye-1',
+            courseId: 'course-natural-dyeing',
+            sectionId: 'sec-dye-1',
+            title: 'چربی‌زدایی و شستشوی کلاف با شوینده ملایم',
+            durationMinutes: 20,
+            order: 1,
+            isFreePreview: true,
+            requiredTier: 'free',
+            description: 'نحوه آماده کردن پشم بدون نمدی شدن رشته‌ها.',
+            videoTokenId: 'tok-mock-c5-l1',
+          },
+          {
+            id: 'lsn-dye-2',
+            courseId: 'course-natural-dyeing',
+            sectionId: 'sec-dye-1',
+            title: 'دندانه‌دادن با زاج سفید در دمای ۷۰ درجه',
+            durationMinutes: 34,
+            order: 2,
+            isFreePreview: false,
+            requiredTier: 'gold',
+            description: 'ایجاد پیوند شیمیایی قوی میان مولکول‌های رنگ و فیبر پشم.',
+            videoTokenId: 'tok-mock-c5-l2',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'course-jajim-nomad',
+    title: 'بافت جاجیم و منسوجات دستباف عشایری',
+    slug: 'jajim-weaving-nomadic',
+    shortDescription: 'آموزش دستگاه جاجیم‌بافی افقی، ترکیب پودنما، نقشه‌خوانی راه‌راه و سوزنی، و حاشیه‌بافی.',
+    fullDescription: 'جاجیم دستبافته‌ای ضخیم، بادوام و چشم‌نواز است که به عنوان روانداز، زیرانداز و بقچه در میان عشایر شاهسون مغان و کردستان رواج دارد. در این دوره تکنیک‌های برپایی دار زمینی و کنترل کشش تارهای فشرده را فرا خواهید گرفت.',
+    category: 'قالی‌بافی و گلیم',
+    level: 'متوسط',
+    instructorName: 'بانو گلنار اردبیلی',
+    instructorBio: 'استادکار دستبافته‌های ایلیاتی دشت مغان و مدرس کارگاه‌های تخصصی میراث فرهنگی.',
+    instructorAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&w=600&q=80',
+    coverImageUrl: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
+    totalDurationHours: 10.0,
+    totalLessonsCount: 5,
+    requiredTier: 'silver',
+    priceToman: 340000,
+    featured: false,
+    learningOutcomes: [
+      'چله‌کشی متراکم و رنگارنگ مخصوص جاجیم',
+      'تکنیک جابجایی تارهای رو و زیر با هاف',
+      'کوبیدن پود مخفی با کرکیت آهنی',
+      'دوخت قطعات جاجیم به یکدیگر برای ایجاد منسوجات بزرگ'
+    ],
+    prerequisites: ['آشنایی مقدماتی با دار بافندگی'],
+    sections: [
+      {
+        id: 'sec-jaj-1',
+        courseId: 'course-jajim-nomad',
+        title: 'فصل اول: برپایی دار جاجیم',
+        order: 1,
+        lessons: [
+          {
+            id: 'lsn-jaj-1',
+            courseId: 'course-jajim-nomad',
+            sectionId: 'sec-jaj-1',
+            title: 'چله‌دوانی و محاسبه ترتیب کلاف‌های رنگی',
+            durationMinutes: 22,
+            order: 1,
+            isFreePreview: true,
+            requiredTier: 'free',
+            description: 'چیدمان نوارهای رنگی و نمادشناسی رنگ در جاجیم شاهسون.',
+            videoTokenId: 'tok-mock-c6-l1',
+          },
+        ],
+      },
+    ],
+  },
+];
+
+export const INITIAL_ORDERS: PaymentOrder[] = [
+  {
+    id: 'ord-101',
+    orderNumber: 'MD-84910',
+    userId: 'user-std-1',
+    userPhone: '09123456789',
+    userFullName: 'سارا احمدی',
+    itemType: 'membership',
+    itemId: 'plan-bronze-1m',
+    // LOW-SEVERITY FIX: derived from the ACTUAL plan title («اشتراک برنزی»)
+    // instead of the invented «اشتراک برنزی ۱ ماهه».
+    itemTitle: 'اشتراک برنزی',
+    amountToman: 99000,
+    gateway: 'zibal',
+    status: 'completed',
+    createdAt: '2026-09-20T10:00:00Z',
+    createdAtJalali: '۱۴۰۵/۰۶/۲۹ ساعت ۱۰:۳۰',
+    verifiedAt: '2026-09-20T10:03:00Z',
+    zibalTrackId: 'TRK-ZIBAL-982144',
+    zibalRefNumber: '10048291054',
+  },
+  {
+    id: 'ord-102',
+    orderNumber: 'MD-84911',
+    userId: 'user-std-1',
+    userPhone: '09123456789',
+    userFullName: 'سارا احمدی',
+    itemType: 'membership',
+    itemId: 'plan-silver-3m',
+    itemTitle: 'تمدید اشتراک نقره‌ای ۳ ماهه',
+    amountToman: 249000,
+    gateway: 'card_to_card',
+    status: 'pending',
+    createdAt: '2026-10-12T09:15:00Z',
+    createdAtJalali: '۱۴۰۵/۰۷/۲۰ ساعت ۰۹:۱۵',
+    manualTransferDetails: {
+      trackingCode: '98410294',
+      sourceCardLastFour: '4589',
+      depositDateJalali: '۱۴۰۵/۰۷/۲۰',
+      receiptImageName: 'fish-mellat-4589.jpg',
+      senderNotes: 'واریز از طریق آپ به کارت بانک ملت مستر دستباف',
+    },
+  },
+  {
+    id: 'ord-103',
+    orderNumber: 'MD-84912',
+    userId: 'user-std-2',
+    // LOW-SEVERITY FIX: aligned with the seeded user-std-2 phone so the ledger
+    // row and the registry entry describe the same person.
+    userPhone: '09121234567',
+    userFullName: 'نرگس کریمی',
+    itemType: 'membership',
+    itemId: 'plan-gold-12m',
+    itemTitle: 'اشتراک طلایی جامع ۱ ساله',
+    amountToman: 690000,
+    gateway: 'card_to_card',
+    status: 'pending',
+    createdAt: '2026-10-11T14:40:00Z',
+    createdAtJalali: '۱۴۰۵/۰۷/۱۹ ساعت ۱۴:۴۰',
+    manualTransferDetails: {
+      trackingCode: '55781204',
+      sourceCardLastFour: '8912',
+      depositDateJalali: '۱۴۰۵/۰۷/۱۹',
+      receiptImageName: 'transfer-paya-8912.png',
+      senderNotes: 'حواله پایا بانک ملی به شماره شبا مستر دستباف جهت اشتراک طلایی',
+    },
+  },
+];
+
+export const INITIAL_HOMEPAGE_SECTIONS: HomepageSectionConfig[] = [
+  {
+    id: 'sec-hero',
+    key: 'hero',
+    title: 'بنر اصلی و پیام آغازین',
+    subtitle: 'معرفی رسالت مستر دستباف در احیای هنرهای اصیل ایرانی',
+    isEnabled: true,
+    sortOrder: 1,
+    configData: {
+      badgeText: 'پلتفرم تخصصی آموزش صنایع دستی',
+      headline: 'هنر بافندگی و اصالت ایرانی را با دستان خود زنده کنید',
+      subheadline: 'مجموعه مسترکلاس‌های تصویری قالی‌بافی، گلیم‌بافی و منسوجات دستباف، همراه با هدایت گام‌به‌گام استادکاران نام‌آور',
+      ctaText: 'مشاهده دوره‌ها و شروع یادگیری',
+      secondaryCtaText: 'آشنایی با پلن‌های عضویت',
+      heroImageUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80',
+    },
+  },
+  {
+    // v1.2.8: سکشن «categories» بازنشسته شد — دسته‌بندی‌های آموزشی از صفحهٔ نخست حذف شد
+    id: 'sec-featured',
+    key: 'featured_courses',
+    title: 'دوره‌های برگزیده و پیشنهادی اساتید',
+    subtitle: 'دوره‌های پرطرفدار با بالاترین رضایت هنرجویان در ماه‌های اخیر',
+    isEnabled: true,
+    sortOrder: 3,
+  },
+  {
+    id: 'sec-artisan',
+    key: 'artisan_story',
+    title: 'داستان مستر دستباف: هنر کهن در عصر نو',
+    subtitle: 'روایتی از تار و پود، عشق به هویت و انتقال سینه به سینه دانش اساتید',
+    isEnabled: true,
+    sortOrder: 4,
+    configData: {
+      quoteText: '«هر گره‌ای که بر تار قالی می‌نشیند، تپش قلبی است که فرهنگ و صبوری ایرانی را به آیندگان می‌سپارد.»',
+      author: 'محمدرضا خاموشیان - بنیان‌گذار مستر دستباف',
+    },
+  },
+  {
+    id: 'sec-membership',
+    key: 'membership_plans',
+    title: 'پلن‌های عضویت و اشتراک دانلودی',
+    subtitle: 'دسترسی نامحدود به ویدیوها با پرداخت ماهانه و سالانه مقرون‌به‌صرفه',
+    isEnabled: true,
+    sortOrder: 5,
+  },
+  {
+    id: 'sec-faq',
+    key: 'faq',
+    title: 'سوالات متداول هنرجویان',
+    subtitle: 'پاسخ به سوالات پرتکرار پیرامون شیوه آموزش، خرید اشتراک و ابزار کار',
+    isEnabled: true,
+    sortOrder: 6,
+  },
+  // v1.3.0: سکشن «محصولات» — داده از GET /shop/products (دمو: نمونهٔ ثابت shopService)
+  // v1.4.0: عنوان پیش‌فرض «محصولات» (هم‌قرارداد افزونهٔ ۱.۵.۰؛ زیرنویس ثابت)
+  {
+    id: 'sec-physical-products',
+    key: 'physical_products',
+    title: 'محصولات',
+    subtitle: 'آثار هنری آمادهٔ ارسال مستقیم',
+    isEnabled: true,
+    sortOrder: 7,
+  },
+];
+
+export const INITIAL_EDITORIAL_PAGES: EditorialPage[] = [
+  {
+    slug: 'about-us',
+    title: 'درباره مستر دستباف (mrdastbaaf.com)',
+    excerpt: 'تاریخچه شکل‌گیری آکادمی تخصصی دستبافته‌های ایرانی و رسالت ما.',
+    lastUpdatedJalali: '۱۴۰۵/۰۷/۱۰',
+    content: `مستر دستباف حاصل بیش از دو دهه تجربه عملی در کارگاه‌های سنتی قالی‌بافی و دغدغه حفظ و اشاعه هنرهای فراموش‌شده اصیل ایرانی است. ما باور داریم که هنر دست، تنها یک مهارت فنی نیست؛ بلکه شکلی ناب از آرامش، خلاقیت و خودکفایی پایدار است.
+
+در این آکادمی، با بهره‌گیری از ویدیوهای باکیفیت و ساختارمند، پیچیده‌ترین مفاهیم چله‌کشی، گره‌زنی، نقشه‌خوانی و رنگرزی را به گونه‌ای آموزش می‌دهیم که هر هنرجو در هر کجای ایران یا جهان بتواند با یک دار کوچک خانگی، اثری شایسته خلق کند.
+
+سیستم آموزشی مستر دستباف با الهام از آموزش‌های استاد-شاگردی طراحی شده تا هنرجویان گام به گام تا مرحله استادی و خلق ارزش هدایت شوند.`,
+  },
+  {
+    slug: 'guide-membership',
+    title: 'راهنمای خرید اشتراک و تمدید دستی',
+    excerpt: 'توضیحات کامل درباره سطوح عضویت و شیوه تمدید دوره‌ای بدون کسر خودکار وجه.',
+    lastUpdatedJalali: '۱۴۰۵/۰۷/۱۵',
+    content: `در مستر دستباف، دسترسی به درس‌های ویدئویی از طریق «عضویت دستی» فراهم می‌شود. 
+
+نکات مهم پیرامون پلن‌های عضویت:
+۱. تمدید کاملاً دستی است: هیچ‌گونه برداشت خودکار از حساب بانکی شما انجام نمی‌شود. پس از پایان مهلت اشتراک، در صورت تمایل می‌توانید اشتراک جدید خریداری کنید.
+۲. دو روش پرداخت معتبر:
+  - درگاه اینترنتی زیبال (Zibal): فعال‌سازی آنی پس از تایید سروری تراکنش.
+  - کارت به کارت / حواله پایا: ثبت شماره پیگیری و تصویر فیش؛ تایید نهایی پس از بررسی کارشناسان پشتیبانی ظرف ۲ الی ۶ ساعت کاری.
+۳. دسترسی به درس‌ها بر اساس سطح اشتراک: دوره‌های مقدماتی با اشتراک برنزی، دوره‌های متوسط با نقره‌ای و تمام دوره‌های پیشرفته با اشتراک طلایی در دسترس خواهند بود.`,
+  },
+  {
+    slug: 'faq',
+    title: 'پرسش‌های متداول هنرجویان',
+    excerpt: 'پاسخ به پرسش‌های رایج در زمینه پیش‌نیازها، ابزار و پخش ویدیوها.',
+    lastUpdatedJalali: '۱۴۰۵/۰۷/۱۸',
+    content: `۱. آیا بدون داشتن سابقه قبلی می‌توانم قالی‌بافی را یاد بگیرم؟
+بله، دوره‌های مقدماتی مستر دستباف با این فرض طراحی شده‌اند که شما هیچ پیش‌زمینه‌ای ندارید و از نحوه در دست گرفتن قلاب و بستن دار شروع می‌کنید.
+
+۲. ابزار و مواد اولیه را از کجا تهیه کنیم؟
+در جلسه اول هر دوره، لیست کامل ابزارها به همراه ابعاد دقیق معرفی می‌شود. همچنین هنرجویان اشتراک طلایی بسته هدیه الیاف و نخ چله دریافت می‌کنند.
+
+۳. آیا امکان دانلود مستقیم فایل‌های ویدیویی به صورت فایل خام وجود دارد؟
+خیر؛ به منظور صیانت از حقوق مادی و معنوی اساتید و جلوگیری از انتشار غیرقانونی، ویدیوها منحصراً در پلیر تحت وب پلتفرم با واترمارک اختصاصی شناسه هنرجو نمایش داده می‌شوند.
+
+۴. آیا می‌توانم هم‌زمان روی گوشی و تبلت ویدیوها را تماشا کنم؟
+بله، با ورود از طریق شماره موبایل ثبت‌نامی خود به پلتفرم می‌توانید در تمامی دستگاه‌های هوشمند خود به محتوا دسترسی داشته باشید.`,
+  },
+];
+
+export const MOCK_COMPANY_BANK_INFO = {
+  bankName: 'بانک ملت',
+  cardNumber: '۶۱۰۴-۳۳۷۸-۹۸۲۰-۴۴۵۵',
+  accountNumber: '۵۴۹۰۸۸۱۲۳۴',
+  shabaNumber: 'IR12 0120 0000 0000 5490 8812 34',
+  accountHolderName: 'محمدرضا خاموشیان (مستر دستباف)',
+  supportPhone: '۰۲۱-۸۸۹۹۷۷۶۶',
+  supportTelegram: '@mrdastbaaf_support',
+};

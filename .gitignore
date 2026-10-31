@@ -63,8 +63,8 @@ desktop.ini
 .workbuddy-ai/
 
 # =============================================================================
-# Legacy web-app artefacts (this repository is Android-only; the React PWA
-# lives in the separate `mrdb` repository). Kept so stray files never get in.
+# Web app (web/) — build output and dependencies. The PWA lives in this
+# repository now; its own .gitignore handles the rest.
 # =============================================================================
 node_modules/
 vendor/
@@ -73,3 +73,5 @@ dist/
 .cache/
 .temp/
 tmp/
+web/.env
+web/.env.local

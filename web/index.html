@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- BUG-49: viewport-fit=cover → env(safe-area-inset-*) در pb-safe/pt-safe و BottomNav کار می‌کند -->
+    <!-- v1.5.7: interactive-widget=resizes-content → وقتی کیبورد موبایل باز می‌شود viewport واقعاً کوچک می‌شود
+         و Bottom Sheet مودال‌ها (Modal.tsx) همیشه بالای کیبورد می‌ماند — ورودی هرگز زیر کیبورد پنهان نمی‌شود -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>مستر دستباف | پلتفرم آموزش صنایع دستی</title>
+    <meta name="description" content="پلتفرم جامع آموزش آنلاین بافندگی، قالی‌بافی، گلیم‌بافی و رودوزی‌های سنتی مستر دستباف" />
+    <meta name="theme-color" content="#9a3412" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="مستر دستباف" />
+    <meta property="og:title" content="مستر دستباف | آموزش تخصصی صنایع دستی" />
+    <meta property="og:description" content="یادگیری آنلاین قالی‌بافی، گلیم، جاجیم و هنرهای دستی با دسترسی اختصاصی به دروس ویدئویی و اشتراک" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://app.mrdastbaaf.com/mrd-appicon-512.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://app.mrdastbaaf.com/mrd-appicon-512.png" />
+
+    <!-- BRANDING v1.2.7: فاوآیکون رسمی — نام‌های آیکن برای تازه‌سازی WebAPK اندروید
+         دوباره عوض شد (mrd-appicon-*)؛ apple-touch هم اکنون ۱۸۰px توپر است -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/mrd-favicon-32.png" />
+    <link rel="apple-touch-icon" href="/mrd-apple-touch-180.png" />
+
+    <!-- Persian Typography v1.2.6: وزیرمتن از باندل لوکال (@font-face در index.css) لود می‌شود —
+         هیچ درخواستی به fonts.googleapis.com نمی‌رود (کند/مسدود در ایران + FOUT) -->
+  </head>
+  <body class="bg-[#FDFBF7] text-slate-800 antialiased selection:bg-amber-100 selection:text-amber-900 font-sans">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

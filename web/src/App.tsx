@@ -1,0 +1,935 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * @file App.tsx
+ * @description Main application shell for Mr. Dastbaaf Handicraft Learning Platform PWA
+ */
+
+import React, { useState, useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
+import { Course, CourseCategory, Lesson, MembershipPlan, PaymentGatewayType, PaymentOrder, ShopProduct, ShopShippingInfo, UserProfile, AppPage, AppUiConfig } from './types';
+import { authService } from './services/authService';
+import { courseService } from './services/courseService';
+import { appPagesService } from './services/appPagesService';
+import { appContentService } from './services/appContentService';
+import { paymentService } from './services/paymentService';
+import { isRealApiMode } from './services/apiClient';
+import { detectZibalCallback, clearZibalCallbackParams } from './services/zibalCallback';
+import { mutateOrder, orderStore } from './services/orderStore';
+import { ONLINE_REFETCH_EVENT } from './hooks/useOnlineRefetch';
+// v1.5.4: بررسی خودکار نسخه و محتوا — هر ۲ دقیقه چک می‌کند
+import { useVersionChecker } from './hooks/useVersionChecker';
+import { PWA_VERSION } from './version';
+
+// Common Components
+import { Header } from './components/common/Header';
+import { BottomNav } from './components/common/BottomNav';
+import { MenuSheet } from './components/common/MenuSheet';
+import { OfflineIndicator } from './components/common/OfflineIndicator';
+import { PWAUpdatePrompt } from './components/common/PWAUpdatePrompt';
+// v1.5.6: بنر مرئی «نسخهٔ جدید آماده است» — رویداد UPDATE_READY_EVENT از useVersionChecker
+import { UpdateReadyBanner } from './components/common/UpdateReadyBanner';
+
+// Modals
+import { PhoneLoginModal } from './components/auth/PhoneLoginModal';
+import { LessonPlayerModal } from './components/player/LessonPlayerModal';
+import { CheckoutModal } from './components/payment/CheckoutModal';
+import { ShopCheckoutModal } from './components/payment/ShopCheckoutModal';
+import { ZibalSimulatorModal } from './components/payment/ZibalSimulatorModal';
+import { ManualTransferModal } from './components/payment/ManualTransferModal';
+
+// Views
+import { HomeView } from './views/HomeView';
+import { CatalogueView } from './views/CatalogueView';
+import { CourseDetailView } from './views/CourseDetailView';
+import { MembershipView } from './views/MembershipView';
+import { UserDashboardView } from './views/UserDashboardView';
+import { AdminDashboardView } from './views/AdminDashboardView';
+import { EditorialPageView } from './views/EditorialPageView';
+// v1.5.1: صفحهٔ عیب‌یابی #/debug — عمومی، بدون نیاز به لاگین
+import { DebugView } from './views/DebugView';
+
+// BUG-52: typed navigation params instead of `any`
+interface AppViewParams {
+  category?: CourseCategory | 'all';
+  courseId?: string;
+  slug?: string;
+  /** v1.2.6: شناسهٔ صفحهٔ سایت (منوی اپ) */
+  pageId?: string;
+}
+
+// DEV-2: lightweight hash router (no new deps) — view ⇄ URL mapping.
+// Route map: #/ → home · #/catalogue[?cat={category}] → catalogue ·
+//   #/course/{courseId} → course_detail · #/membership → membership ·
+//   #/dashboard → dashboard · #/admin → admin ·
+//   #/page/{slug} → editorial page · #/editorial → editorial (about-us) ·
+//   #/app-page/{id} → صفحهٔ سایت از پیشخوان (v1.2.6).
+// Unknown/invalid routes fall back to home. Modals (player/checkout/gateway)
+// are intentionally NOT routed — future work.
+const serializeRoute = (view: string, params: AppViewParams): string => {
+  switch (view) {
+    case 'catalogue': {
+      const cat =
+        params.category && params.category !== 'all'
+          ? `?cat=${encodeURIComponent(params.category)}`
+          : '';
+      return `#/catalogue${cat}`;
+    }
+    case 'course_detail':
+      return params.courseId ? `#/course/${encodeURIComponent(params.courseId)}` : '#/catalogue';
+    case 'membership':
+      return '#/membership';
+    case 'dashboard':
+      return '#/dashboard';
+    case 'admin':
+      return '#/admin';
+    case 'editorial':
+      return params.slug ? `#/page/${encodeURIComponent(params.slug)}` : '#/editorial';
+    case 'app_page':
+      return params.pageId ? `#/app-page/${encodeURIComponent(params.pageId)}` : '#/';
+    case 'debug':
+      return '#/debug';
+    default:
+      return '#/';
+  }
+};
+
+const parseRoute = (hash: string): { view: string; params: AppViewParams } => {
+  const [path, query = ''] = hash.replace(/^#/, '').split('?');
+  const segments = path.split('/').filter(Boolean);
+
+  switch (segments[0]) {
+    case 'catalogue': {
+      const cat = new URLSearchParams(query).get('cat');
+      return { view: 'catalogue', params: cat ? { category: cat as CourseCategory } : {} };
+    }
+    case 'course':
+      return segments[1]
+        ? { view: 'course_detail', params: { courseId: decodeURIComponent(segments[1]) } }
+        : { view: 'catalogue', params: {} };
+    case 'membership':
+      return { view: 'membership', params: {} };
+    case 'dashboard':
+      return { view: 'dashboard', params: {} };
+    case 'admin':
+      return { view: 'admin', params: {} };
+    case 'page':
+      return segments[1]
+        ? { view: 'editorial', params: { slug: decodeURIComponent(segments[1]) } }
+        : { view: 'editorial', params: {} };
+    case 'editorial':
+      return { view: 'editorial', params: {} };
+    case 'app-page':
+      // v1.2.6: صفحهٔ سایت از پیشخوان — عمومی (فیلتر دسترسی سمت سرور است)
+      return segments[1]
+        ? { view: 'app_page', params: { pageId: decodeURIComponent(segments[1]) } }
+        : { view: 'home', params: {} };
+    case 'debug':
+      // v1.5.1: صفحهٔ عیب‌یابی — عمومی، بدون گارد
+      return { view: 'debug', params: {} };
+    default:
+      // DEV-2: empty/unknown hash → home.
+      return { view: 'home', params: {} };
+  }
+};
+
+// BUG-44: toast variants with distinct, palette-safe colors
+// (success=emerald, error=red, info=amber — no blue/indigo in this project).
+type ToastVariant = 'success' | 'error' | 'info';
+
+const TOAST_STYLES: Record<ToastVariant, string> = {
+  success: 'bg-emerald-800 text-emerald-50 border-emerald-700',
+  error: 'bg-red-800 text-red-50 border-red-700',
+  info: 'bg-stone-900 text-amber-100 border-stone-800',
+};
+
+interface ToastState {
+  id: number;
+  message: string;
+  variant: ToastVariant;
+}
+
+export default function App() {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(authService.getCurrentUser());
+  const [activeView, setActiveView] = useState<string>('home');
+  const [viewParams, setViewParams] = useState<AppViewParams>({});
+  // DEV-2: last applied route key — dedupes the popstate/hashchange echo of a
+  // pushState-driven navigation (and redundant renders of the same route).
+  const routeKeyRef = useRef<string>('');
+
+  // Modals state
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  const [selectedPlanForCheckout, setSelectedPlanForCheckout] = useState<MembershipPlan | null>(null);
+  // v1.4.0: خرید مستقیم دوره — دورهٔ انتخابی برای مودال پرداخت (هم‌الگوی پلن؛ BUG-46 resume)
+  const [selectedCourseForCheckout, setSelectedCourseForCheckout] = useState<Course | null>(null);
+  // v1.5.0: خرید درون‌اپ محصول فیزیکی — مودال اطلاعات ارسال/پرداخت (افزونهٔ 1.6.0)
+  const [shopCheckoutProduct, setShopCheckoutProduct] = useState<ShopProduct | null>(null);
+
+  const [isZibalModalOpen, setIsZibalModalOpen] = useState(false);
+  const [currentZibalOrder, setCurrentZibalOrder] = useState<PaymentOrder | null>(null);
+
+  const [isManualTransferModalOpen, setIsManualTransferModalOpen] = useState(false);
+
+  // Lesson Player State
+  const [isPlayerOpen, setIsPlayerOpen] = useState(false);
+  const [activePlayerCourse, setActivePlayerCourse] = useState<Course | null>(null);
+  const [activePlayerLesson, setActivePlayerLesson] = useState<Lesson | null>(null);
+
+  // v1.2.6 — صفحات سایت (منوی اپ) + شیت منو
+  const [appPages, setAppPages] = useState<AppPage[]>([]);
+  const [isMenuSheetOpen, setIsMenuSheetOpen] = useState(false);
+
+  // v1.2.7 — «محتوای وب‌اپ»: متن‌ها/سکشن‌ها/منو از پیشخوان (GET /app-ui).
+  // null = دمو یا خطا → همهٔ مصرف‌کننده‌ها پیش‌فرض‌های کد را نشان می‌دهند.
+  const [appUi, setAppUi] = useState<AppUiConfig | null>(null);
+
+  // Toast feedback message
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  // BUG-44: the old setTimeout was never cleared, so toast B was killed early
+  // by toast A's pending timer. Timer now lives in a ref and is reset on every
+  // call; container is a polite live region and toasts are dismissible.
+  const showToast = (msg: string, variant: ToastVariant = 'info') => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToast({ id: Date.now(), message: msg, variant });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 4000);
+  };
+
+  const dismissToast = () => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setToast(null);
+  };
+
+  // DEV-2: parse a hash into view+params and apply it — used by the mount boot
+  // (deep links like #/course/carpetry) and by popstate/hashchange (browser
+  // back/forward). Redundant applications of the same route are skipped.
+  const applyRoute = (hash: string) => {
+    const route = parseRoute(hash);
+    // DEV-2: protected views need a live session — deep links to #/dashboard
+    // or #/admin while logged out fall back to home (same guard the UI had).
+    if ((route.view === 'dashboard' || route.view === 'admin') && !authService.getCurrentUser()) {
+      route.view = 'home';
+      route.params = {};
+    }
+    // v1.1.0: in Real-API mode the in-app admin panel is demo-only (editorial
+    // sections / mock receipts) — real management lives in the WordPress
+    // dashboard («مستر دستباف» menu). Deep links to #/admin fall back to home
+    // so a production user can never see fabricated commercial data.
+    if (route.view === 'admin' && isRealApiMode) {
+      route.view = 'home';
+      route.params = {};
+    }
+    const key = serializeRoute(route.view, route.params);
+    if (routeKeyRef.current === key) return;
+    routeKeyRef.current = key;
+    setActiveView(route.view);
+    setViewParams(route.params);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // DEV-2: navigate now mirrors into the URL as a shareable deep link —
+  // history.pushState + manual render (pushState does not fire hashchange, so
+  // there is no double render); back/forward is handled by the listeners in
+  // the mount effect below.
+  const handleNavigate = (view: string, params: AppViewParams = {}) => {
+    const hash = serializeRoute(view, params);
+    if (window.location.hash !== hash) {
+      window.history.pushState(null, '', hash);
+    }
+    applyRoute(hash);
+  };
+
+  // DEV-2: boot from the current hash, then re-parse on back/forward. Both
+  // listeners are kept (history traversal fires both); the route-key guard in
+  // applyRoute makes the double fire a no-op.
+  useEffect(() => {
+    applyRoute(window.location.hash);
+    const onHashRouteChange = () => applyRoute(window.location.hash);
+    window.addEventListener('popstate', onHashRouteChange);
+    window.addEventListener('hashchange', onHashRouteChange);
+    return () => {
+      window.removeEventListener('popstate', onHashRouteChange);
+      window.removeEventListener('hashchange', onHashRouteChange);
+    };
+  }, []);
+
+  const handleSwitchRole = (role: 'student' | 'admin') => {
+    const switched = authService.switchRole(role);
+    setCurrentUser(switched);
+    showToast(`نقش به عنوان «${role === 'admin' ? 'مدیر ارشد' : 'هنرجو (سارا احمدی)'}» تغییر یافت.`, 'info');
+    if (role === 'admin' && activeView !== 'admin') {
+      handleNavigate('admin');
+    } else if (role === 'student' && activeView === 'admin') {
+      handleNavigate('home');
+    }
+  };
+
+  const handleLogout = () => {
+    // Hardening (prelive 18-b): در حالت Real ابتدا POST /auth/logout (best-effort)
+    // و بعد پاک‌سازی — async داخلی است و هرگز throw نمی‌کند؛ UI بلافاصله خارج می‌شود.
+    void authService.logout();
+    setCurrentUser(null);
+    showToast('با موفقیت از حساب کاربری خارج شدید.', 'info');
+    handleNavigate('home');
+  };
+
+  const handleOpenLessonPreview = (course: Course) => {
+    // v1.1.0 Real-API: فهرست دوره‌ها lessons ندارد — برای پخش پیش‌نمایش، جزئیات کامل از سرور گرفته می‌شود.
+    if (isRealApiMode && course.sections.length === 0) {
+      void courseService
+        .getCourseById(course.id)
+        .then((full) => {
+          const effectiveCourse = full || course;
+          const allLessons = effectiveCourse.sections.flatMap((s) => s.lessons);
+          const firstPreview = allLessons.find((l) => l.isFreePreview) || allLessons[0];
+          if (!firstPreview) return;
+          setActivePlayerCourse(effectiveCourse);
+          setActivePlayerLesson(firstPreview);
+          setIsPlayerOpen(true);
+        })
+        .catch(() => {
+          // بدون جزئیات، پخش باز نمی‌شود (فهرست خالی درس‌ها) — رفتار امن.
+        });
+      return;
+    }
+
+    // Find first preview lesson or first lesson
+    const allLessons = course.sections.flatMap((s) => s.lessons);
+    const firstPreview = allLessons.find((l) => l.isFreePreview) || allLessons[0];
+    setActivePlayerCourse(course);
+    setActivePlayerLesson(firstPreview);
+    setIsPlayerOpen(true);
+  };
+
+  const handlePlaySpecificLesson = (course: Course, lesson: Lesson) => {
+    setActivePlayerCourse(course);
+    setActivePlayerLesson(lesson);
+    setIsPlayerOpen(true);
+  };
+
+  const handleSelectPlan = (plan: MembershipPlan) => {
+    if (plan.priceToman === 0) {
+      // Free plan instant activation
+      if (!currentUser) {
+        // BUG-46: keep the plan in state so a successful login resumes this
+        // flow (see PhoneLoginModal.onSuccess) instead of silently dropping it.
+        setSelectedPlanForCheckout(plan);
+        setIsLoginModalOpen(true);
+        return;
+      }
+      showToast('اشتراک رایگان شما فعال است و درس‌های پیش‌نمایش در دسترس هستند.', 'success');
+      handleNavigate('catalogue');
+      return;
+    }
+
+    setSelectedPlanForCheckout(plan);
+    setIsCheckoutModalOpen(true);
+  };
+
+  const handleSelectGateway = async (gateway: PaymentGatewayType, plan: MembershipPlan) => {
+    setIsCheckoutModalOpen(false);
+
+    if (!currentUser) {
+      // BUG-46: previously the checkout context was lost here — the modal
+      // closed, login opened and nothing resumed. selectedPlanForCheckout now
+      // stays set and PhoneLoginModal.onSuccess re-opens checkout automatically.
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    if (gateway === 'zibal') {
+      try {
+        const { order, gatewayUrl } = await paymentService.initiateZibalPayment(currentUser, plan);
+        // v1.1.0 Real-API: خروج واقعی به درگاه زیبال — شبیه‌ساز فقط در دمو اجرا می‌شود؛
+        // تایید پس از بازگشت، از طریق boot callback (verifyZibalCallback) انجام می‌شود.
+        if (isRealApiMode) {
+          window.location.href = gatewayUrl;
+          return;
+        }
+        // BUG-45: the active zibal order is tracked in App state so an outcome-
+        // less close of the gateway can be swept to 'cancelled'.
+        setCurrentZibalOrder(order);
+        setIsZibalModalOpen(true);
+      } catch (e: any) {
+        showToast(e.message || 'خطا در اتصال به درگاه زیبال', 'error');
+      }
+    } else {
+      setIsManualTransferModalOpen(true);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // v1.4.0 — خرید مستقیم تک‌دوره‌ای با درگاه زیبال (قرارداد افزونهٔ 1.5.0:
+  // POST /payment/zibal/initiate {product_id}). گاردها آینهٔ handleSelectGateway است:
+  // بدون ورود → مودال ورود (دوره در state می‌ماند تا پس از لاگین resume شود)؛
+  // سپس initiate و خروج واقعی به درگاه با window.location.href. در دمو سرویس
+  // خطای فارسی روشن پرتاب می‌کند (خرید تک‌دوره‌ای فقط در حالت Real فعال است).
+  // پس از بازگشت از درگاه، همان مسیر کال‌بک زیبال (verifyZibalCallback در boot)
+  // نتیجه را تایید می‌کند و syncSessionFromServer سشن را تازه می‌کند — سفارش
+  // دوره‌ای (itemType:'course') هیچ شاخهٔ اشتراکی را لمس نمی‌کند و crash نمی‌دهد.
+  // ---------------------------------------------------------------------------
+  const handleBuyCourse = async (gateway: PaymentGatewayType, course: Course) => {
+    setIsCheckoutModalOpen(false);
+
+    if (!currentUser) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    if (gateway === 'zibal') {
+      try {
+        const { gatewayUrl } = await paymentService.initiateCourseZibalPayment(currentUser, course);
+        if (isRealApiMode) {
+          window.location.href = gatewayUrl;
+          return;
+        }
+        showToast('خرید آنلاین دوره در حالت دمو فعال نیست', 'info');
+      } catch (e: any) {
+        showToast(e.message || 'خطا در اتصال به درگاه زیبال', 'error');
+      }
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // v1.5.0 — خرید درون‌اپ محصول فیزیکی (قرارداد افزونهٔ 1.6.0): initiate با
+  // {product_id, kind:'shop', …} سپس خروج واقعی به درگاه زیبال. گاردها آینهٔ
+  // handleBuyCourse است؛ خطاهای فارسی سرور (نشانی ناقص/محصول غیرفعال) مستقیم
+  // toast می‌شوند و مودال باز می‌ماند تا کاربر اصلاح کند. پس از تایید پرداخت،
+  // سرور سفارش ووکامرس واقعی (processing) با نشانی کامل می‌سازد → اطلاع ادمین.
+  // ---------------------------------------------------------------------------
+  const handleBuyShopProduct = async (_gateway: PaymentGatewayType, product: ShopProduct, shipping: ShopShippingInfo) => {
+    if (!currentUser) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+    try {
+      const { gatewayUrl } = await paymentService.initiateShopProductPayment(currentUser, product, shipping);
+      if (isRealApiMode) {
+        window.location.href = gatewayUrl;
+        return;
+      }
+      showToast('خرید آنلاین محصولات در حالت دمو فعال نیست', 'info');
+    } catch (e: any) {
+      showToast(e.message || 'خطا در اتصال به درگاه زیبال', 'error');
+    }
+  };
+
+  // BUG-45: closing the Zibal gateway without any outcome no longer leaves the
+  // order pending forever — the order is cancelled with an admin note and the
+  // user is informed. Handler for the optional onAbandon prop of
+  // ZibalSimulatorModal (the prop itself landed via agent 3-b / BUG-65 and is
+  // wired at the JSX call site).
+  const handleZibalAbandon = () => {
+    const orderId = currentZibalOrder?.id;
+    if (!orderId) return;
+    try {
+      const order = orderStore.findById(orderId);
+      // only an outcome-less PENDING order may be swept — a completed/failed
+      // order already has its final state.
+      if (order && order.status === 'pending') {
+        mutateOrder(orderId, (draft) => {
+          draft.status = 'cancelled';
+          draft.adminNote = 'درگاه بدون نتیجه بسته شد';
+        });
+        showToast('سفارش لغو شد', 'info');
+      }
+    } catch (e: any) {
+      showToast(e?.message || 'لغو سفارش با خطا مواجه شد', 'error');
+    }
+  };
+
+  // DEV-13: on mount, sweep pending zibal orders older than 24h → 'cancelled'
+  // (client-side mirror of the server-side daily reconciliation cron).
+  useEffect(() => {
+    try {
+      const dayAgoMs = Date.now() - 24 * 60 * 60 * 1000;
+      orderStore
+        .getAll()
+        .filter(
+          (o) =>
+            o.gateway === 'zibal' &&
+            o.status === 'pending' &&
+            new Date(o.createdAt).getTime() < dayAgoMs
+        )
+        .forEach((o) => {
+          mutateOrder(o.id, (draft) => {
+            draft.status = 'cancelled';
+            draft.adminNote = 'سفارش پرداخت‌نشده پس از ۲۴ ساعت به‌صورت خودکار لغو شد';
+          });
+        });
+    } catch (e) {
+      // DEV-13: mutateOrder throws on storage failure — the boot sweep is
+      // best-effort and must never block the app from rendering.
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // v1.1.0 — Real-API boot (تنها تغییر boot اپ؛ در دمو بدون env این اثر no-op است):
+  //   ۱) کال‌بک زیبال: پس از بازگشت از درگاه، پارامترها detect→clear و verify می‌شود؛
+  //      نتیجه با toast موجود اعلام و به dashboard (موفق) یا catalogue (ناموفق) هدایت می‌شود.
+  //   ۲) همگام‌سازی سشن: اگر توکن Real موجود باشد، عضویت/هویت از /auth/me تازه می‌شود.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isRealApiMode) return;
+    let cancelled = false;
+
+    const runBoot = async () => {
+      const callback = detectZibalCallback();
+      if (callback) {
+        // پارامترها فوراً پاک می‌شوند تا refresh صفحه هرگز دوباره verify نزند.
+        clearZibalCallbackParams(callback.source);
+        try {
+          const result = await paymentService.verifyZibalCallback(callback);
+          if (cancelled) return;
+          if (result.success) {
+            // اشتراک سمت سرور فعال شده — سشن از سرور تازه می‌شود تا داشبورد آن را نشان دهد.
+            const synced = await authService.syncSessionFromServer();
+            if (cancelled) return;
+            if (synced) setCurrentUser(synced);
+            showToast(result.message || 'پرداخت با موفقیت تایید شد و اشتراک فعال گردید.', 'success');
+            handleNavigate('dashboard');
+          } else {
+            showToast(result.message || 'پرداخت ناموفق بود یا لغو گردید.', 'error');
+            handleNavigate('catalogue');
+          }
+        } catch (err) {
+          if (cancelled) return;
+          showToast(err instanceof Error ? err.message : 'تایید پرداخت با خطا مواجه شد؛ در صورت کسر وجه با پشتیبانی تماس بگیرید.', 'error');
+          handleNavigate('catalogue');
+        }
+        return;
+      }
+
+      try {
+        const synced = await authService.syncSessionFromServer();
+        if (cancelled) return;
+        if (synced) {
+          setCurrentUser(synced);
+        } else if (!authService.getCurrentUser()) {
+          // 401 در boot → سشن محلی هم بسته شده — state اپ هم باید خارج‌شده را نشان دهد.
+          setCurrentUser(null);
+        }
+      } catch (err) {
+        // خطای شبکه در boot — سشن محلی حفظ می‌شود (تحمل آفلاین).
+      }
+    };
+
+    void runBoot();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleZibalPaymentComplete = (order: PaymentOrder, success: boolean) => {
+    setCurrentZibalOrder(null);
+    setCurrentUser(authService.getCurrentUser());
+    if (success) {
+      // BUG-46 hygiene: the purchase finished — clear the pending plan so a
+      // later login cannot spuriously resume a completed checkout.
+      setSelectedPlanForCheckout(null);
+      showToast('پرداخت زیبال تایید شد و اشتراک با موفقیت فعال گردید.', 'success');
+      handleNavigate('dashboard');
+    } else {
+      showToast('تراکنش ناموفق بود یا لغو گردید.', 'error');
+    }
+  };
+
+  const handleManualTransferSubmitted = (order: PaymentOrder) => {
+    // BUG-46 hygiene: receipt registered — nothing left to resume after login.
+    setSelectedPlanForCheckout(null);
+    showToast('فیش واریزی ثبت شد و پس از تایید مدیر، اشتراک فعال خواهد شد.', 'success');
+    handleNavigate('dashboard');
+  };
+
+  // ---------------------------------------------------------------------------
+  // v1.2.6 — صفحات سایت برای منوی اپ: هر بار که هویت/اشتراک کاربر تغییر می‌کند
+  // (ورود/خروج/فعال‌شدن اشتراک) فهرست از سرور تازه می‌شود تا سطح دسترسی درست نشان داده شود.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isRealApiMode) {
+      setAppPages([]);
+      return;
+    }
+    let cancelled = false;
+    appPagesService
+      .getPages()
+      .then((pages) => {
+        if (!cancelled) setAppPages(pages);
+      })
+      .catch(() => {
+        if (!cancelled) setAppPages([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id, currentUser?.role, currentUser?.membership?.tier, currentUser?.membership?.status]);
+
+  // ---------------------------------------------------------------------------
+  // v1.2.7 — بارگذاری «محتوای وب‌اپ» (متن‌ها/سکشن‌ها/برچسب‌های منو). با تغییر هویت
+  // کاربر هم تازه می‌شود تا تغییرات کارفرما بدون تعویض سشن دیده شود. خطا = بی‌صدا
+  // (پیش‌فرض‌های کد باقی می‌مانند).
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isRealApiMode) {
+      setAppUi(null);
+      return;
+    }
+    let cancelled = false;
+    appContentService.getUi().then((ui) => {
+      if (!cancelled && ui) setAppUi(ui);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
+  // ---------------------------------------------------------------------------
+  // v1.3.0 — «خطای اتصال» گاه‌به‌گاه: وقتی اتصال مرورگر برمی‌گردد (رویداد online)
+  // رویداد داخلی refetch یک بار ارسال می‌شود؛ نماها (داشبورد/کاتالوگ/جزئیات دوره
+  // /عضویت/صفحات) فقط وقتی آخرین بارگذاری‌شان خطا خورده باشد یک refetch بی‌صدا
+  // می‌زنند (useOnlineRefetch). بدون پیام/اسپینر اضافه.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const handleOnline = () => {
+      window.dispatchEvent(new Event(ONLINE_REFETCH_EVENT));
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, []);
+
+  // v1.5.4: بررسی خودکار نسخهٔ PWA و content_hash سرور — هر ۲ دقیقه چک می‌کند.
+  // اگه نسخهٔ PWA روی سرور عوض شده باشد → force reload (حتی اگر SW قدیمی چسبیده).
+  // اگه content_hash عوض شده باشد (کارفرما چیزی در پیشخوان ذخیره کرده) →
+  // رویداد content-changed emit می‌شود تا ویوها (از طریق useOnlineRefetch)
+  // داده‌ها را refetch کنند — بدون reload کامل صفحه.
+  useVersionChecker(PWA_VERSION);
+
+  // DEV-4/3-b: parent-owned completion handler — persists through the
+  // whitelisted updater AND refreshes App state (setUser) so the dashboard /
+  // CourseDetailView re-render live (player icon state derives from props).
+  const handleCompleteLesson = (lessonId: string) => {
+    const user = authService.getCurrentUser();
+    if (!user) return;
+    const next = user.completedLessonIds.includes(lessonId)
+      ? user.completedLessonIds
+      : [...user.completedLessonIds, lessonId];
+    setCurrentUser(authService.updateCurrentUser({ completedLessonIds: next }));
+    showToast('این جلسه با موفقیت تکمیل شد!', 'success');
+  };
+
+  // DEV-5/3-b: bookmark toggle — same parent-owned pattern (updateCurrentUser +
+  // setUser) so the dashboard «نشان‌شده‌ها» section updates live.
+  const handleToggleBookmark = (lessonId: string) => {
+    const user = authService.getCurrentUser();
+    if (!user) return;
+    const next = user.bookmarkedLessonIds.includes(lessonId)
+      ? user.bookmarkedLessonIds.filter((id) => id !== lessonId)
+      : [...user.bookmarkedLessonIds, lessonId];
+    setCurrentUser(authService.updateCurrentUser({ bookmarkedLessonIds: next }));
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col bg-[#fdfbf7] text-stone-800 font-sans antialiased">
+      {/* Toast Notification — BUG-44: polite live region + variant colors + dismiss */}
+      {toast && (
+        <div
+          key={toast.id}
+          role="status"
+          aria-live="polite"
+          // v1.2.7: toast بالای همهٔ مودال‌ها (از جمله مودال ورود z-[70]) دیده شود
+          className={`fixed top-14 left-4 right-4 md:left-auto md:right-4 z-[80] text-xs px-4 py-2.5 rounded-xl shadow-xl border flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2 ${TOAST_STYLES[toast.variant]}`}
+        >
+          <span className="leading-relaxed">{toast.message}</span>
+          <button
+            onClick={dismissToast}
+            aria-label="بستن پیام"
+            className="shrink-0 w-11 h-11 -m-2 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Offline Connectivity Status */}
+      <OfflineIndicator />
+
+      {/* DEV-7: PWA update prompt — fixed bottom card when a new service
+          worker is waiting in prompt mode (no scroll lock, dismissible). */}
+      <PWAUpdatePrompt />
+
+      {/* v1.5.6: بنر «نسخهٔ جدید آماده است» با دکمهٔ بروزرسانی — زمانی که نسخهٔ
+          منتشرشده روی سرور (پیشخوان افزونه) از باندل فعلی جدیدتر باشد. */}
+      <UpdateReadyBanner />
+
+      {/* Top Header */}
+      <Header
+        currentUser={currentUser}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        onSwitchRole={handleSwitchRole}
+        onNavigate={handleNavigate}
+        activeView={activeView}
+        appPages={appPages}
+        dockConfig={appUi?.menu?.dock}
+        onOpenMenuSheet={() => setIsMenuSheetOpen(true)}
+      />
+
+      {/* Main Content Area */}
+      <main className="flex-1">
+        {activeView === 'home' && (
+          <HomeView
+            onNavigate={handleNavigate}
+            onOpenLessonPreview={handleOpenLessonPreview}
+            onSelectPlan={handleSelectPlan}
+            appUi={appUi}
+            currentUser={currentUser}
+            onBuyProduct={(product) => setShopCheckoutProduct(product)}
+          />
+        )}
+
+        {activeView === 'catalogue' && (
+          <CatalogueView
+            initialCategory={viewParams.category || 'all'}
+            onNavigate={handleNavigate}
+            onOpenLessonPreview={handleOpenLessonPreview}
+            currentUser={currentUser}
+          />
+        )}
+
+        {activeView === 'course_detail' && (
+          <CourseDetailView
+            courseId={viewParams.courseId || 'course-carpet-tabriz'}
+            onNavigate={handleNavigate}
+            onPlayLesson={handlePlaySpecificLesson}
+            currentUser={currentUser}
+            onOpenMembership={() => handleNavigate('membership')}
+            onOpenLogin={() => setIsLoginModalOpen(true)}
+            onBuyCourse={handleBuyCourse}
+          />
+        )}
+
+        {activeView === 'membership' && (
+          <MembershipView
+            onSelectPlan={handleSelectPlan}
+            currentUser={currentUser}
+            onNavigate={handleNavigate}
+          />
+        )}
+
+        {activeView === 'dashboard' && currentUser && (
+          <UserDashboardView
+            currentUser={currentUser}
+            onLogout={handleLogout}
+            onNavigate={handleNavigate}
+            onOpenMembership={() => handleNavigate('membership')}
+            onPlayLesson={handlePlaySpecificLesson}
+          />
+        )}
+
+        {activeView === 'admin' && currentUser && (
+          <AdminDashboardView currentUser={currentUser} onNavigate={handleNavigate} />
+        )}
+
+        {activeView === 'editorial' && (
+          <EditorialPageView
+            slug={viewParams.slug || 'about-us'}
+            onNavigate={handleNavigate}
+          />
+        )}
+
+        {/* v1.2.6: صفحهٔ سایت از پیشخوان (منوی اپ) */}
+        {activeView === 'app_page' && (
+          <EditorialPageView
+            slug=""
+            pageId={viewParams.pageId || ''}
+            onNavigate={handleNavigate}
+          />
+        )}
+
+        {/* v1.5.1: صفحهٔ عیب‌یابی — عمومی، بدون گارد */}
+        {activeView === 'debug' && (
+          <DebugView onNavigate={handleNavigate} />
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-stone-900 text-stone-400 py-10 px-4 border-t border-stone-800 text-xs">
+        <div className="max-w-5xl mx-auto space-y-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-black text-amber-100 text-sm">مستر دستباف</span>
+                <span className="text-[10px] text-amber-400 font-mono">mrdastbaaf.com</span>
+              </div>
+              <p className="text-[11px] text-stone-400">
+                پلتفرم تخصصی آموزش آنلاین صنایع دستی، قالی‌بافی و هنرهای اصیل دستباف
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4 text-[11px]">
+              <button
+                onClick={() => handleNavigate('editorial', { slug: 'about-us' })}
+                className="hover:text-stone-200 transition"
+              >
+                درباره ما
+              </button>
+              <button
+                onClick={() => handleNavigate('editorial', { slug: 'guide-membership' })}
+                className="hover:text-stone-200 transition"
+              >
+                راهنمای عضویت و تمدید دستی
+              </button>
+              <button
+                onClick={() => handleNavigate('editorial', { slug: 'faq' })}
+                className="hover:text-stone-200 transition"
+              >
+                سوالات متداول
+              </button>
+              <button
+                onClick={() => handleNavigate('membership')}
+                className="hover:text-stone-200 transition"
+              >
+                تعرفه‌ها
+              </button>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] text-stone-500">
+            <p>© تمام حقوق مادی و معنوی آموزش‌ها متعلق به مجموعه مستر دستباف است.</p>
+            <p>وب‌اپ نسخهٔ 1.5.0</p>
+          </div>
+        </div>
+      </footer>
+
+      {/* Mobile Ergonomic Bottom Navigation */}
+      <BottomNav
+        activeView={activeView}
+        onNavigate={handleNavigate}
+        userRole={currentUser?.role}
+        isLoggedIn={!!currentUser}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        onOpenMenuSheet={() => setIsMenuSheetOpen(true)}
+        dockConfig={appUi?.menu?.dock}
+      />
+
+      {/* v1.2.6: شیت شیشه‌ای منو — صفحات سایت + راهنماها */}
+      <MenuSheet
+        isOpen={isMenuSheetOpen}
+        onClose={() => setIsMenuSheetOpen(false)}
+        appPages={appPages}
+        userRole={currentUser?.role}
+        guides={appUi?.menu?.guides}
+        onNavigate={(view, params) => {
+          setIsMenuSheetOpen(false);
+          handleNavigate(view, params || {});
+        }}
+      />
+
+      {/* MODALS */}
+      {/* 1. Phone Otino SMS OTP Login Modal */}
+      <PhoneLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onSuccess={(user) => {
+          setCurrentUser(user);
+          showToast(`خوش آمدید، ${user.fullName}`, 'success');
+          // BUG-46: resume the interrupted purchase flow after a successful
+          // login — selectedPlanForCheckout survived the modal switch (both the
+          // paid-checkout path and the free-plan path keep it in state).
+          const pendingPlan = selectedPlanForCheckout;
+          // v1.4.0: resume جریان خرید دوره پس از ورود موفق (هم‌الگوی BUG-46 پلن)
+          const pendingCourse = selectedCourseForCheckout;
+          if (pendingPlan) {
+            if (pendingPlan.priceToman === 0) {
+              // free plan: instant-activation path (same as handleSelectPlan)
+              showToast('اشتراک رایگان شما فعال است و درس‌های پیش‌نمایش در دسترس هستند.', 'success');
+              handleNavigate('catalogue');
+            } else {
+              setIsCheckoutModalOpen(true);
+              showToast('ادامه خرید…', 'info');
+            }
+          } else if (pendingCourse) {
+            setIsCheckoutModalOpen(true);
+            showToast('ادامه خرید دوره…', 'info');
+          }
+        }}
+      />
+
+      {/* 2. Membership Checkout Modal (v1.4.0: + حالت خرید مستقیم دوره) */}
+      <CheckoutModal
+        isOpen={isCheckoutModalOpen}
+        onClose={() => setIsCheckoutModalOpen(false)}
+        plan={selectedPlanForCheckout}
+        currentUser={currentUser}
+        onSelectGateway={handleSelectGateway}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        course={selectedCourseForCheckout}
+        onBuyCourse={handleBuyCourse}
+      />
+
+      {/* 2.5 — v1.5.0: خرید درون‌اپ محصول فیزیکی (افزونهٔ 1.6.0) */}
+      <ShopCheckoutModal
+        isOpen={!!shopCheckoutProduct}
+        product={shopCheckoutProduct}
+        onClose={() => setShopCheckoutProduct(null)}
+        currentUser={currentUser}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        onPay={(product, shipping) => handleBuyShopProduct('zibal', product, shipping)}
+      />
+
+      {/* 3. Zibal Gateway Simulator */}
+      {/* BUG-45: onAbandon is wired (agent 3-b landed the prop as BUG-65) —
+          closing the gateway without an outcome parks the pending order as
+          'cancelled' + adminNote + info toast via handleZibalAbandon. */}
+      <ZibalSimulatorModal
+        isOpen={isZibalModalOpen}
+        onClose={() => setIsZibalModalOpen(false)}
+        order={currentZibalOrder}
+        onPaymentComplete={handleZibalPaymentComplete}
+        onAbandon={handleZibalAbandon}
+      />
+
+      {/* 4. Manual Bank Transfer (کارت به کارت) Modal */}
+      <ManualTransferModal
+        isOpen={isManualTransferModalOpen}
+        onClose={() => setIsManualTransferModalOpen(false)}
+        plan={selectedPlanForCheckout}
+        currentUser={currentUser}
+        onSubmitted={handleManualTransferSubmitted}
+      />
+
+      {/* 5. Custom Branded Lesson Video Player */}
+      {/* DEV-4/DEV-5: onCompleteLesson + onToggleBookmark are wired (agent 3-b
+          landed both props as BUG-59). Both handlers persist through
+          authService.updateCurrentUser and refresh App's currentUser state so
+          dashboard / CourseDetailView re-render live. The legacy
+          onLessonCompleted prop is intentionally NOT passed — the player
+          prefers onCompleteLesson and the legacy slot was toast-only. */}
+      {isPlayerOpen && activePlayerCourse && activePlayerLesson && (
+        <LessonPlayerModal
+          isOpen={isPlayerOpen}
+          onClose={() => setIsPlayerOpen(false)}
+          course={activePlayerCourse}
+          currentLesson={activePlayerLesson}
+          onSelectLesson={(l) => setActivePlayerLesson(l)}
+          currentUser={currentUser}
+          onCompleteLesson={handleCompleteLesson}
+          onToggleBookmark={handleToggleBookmark}
+        />
+      )}
+    </div>
+  );
+}
