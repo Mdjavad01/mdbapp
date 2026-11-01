@@ -36,17 +36,21 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # The runner image ships an SDK, but not necessarily platform 35 /
-      # build-tools 35, which this project compiles against. Installing them
+      # The runner image ships an SDK, but not necessarily platform 36 /
+      # build-tools 36, which this project compiles against. Installing them
       # explicitly keeps the build reproducible instead of depending on whatever
       # the image happens to contain that week.
-      - name: Install Android SDK 35
+      #
+      # 36 and not 35: Google Play rejects new apps and updates that target
+      # below Android 16 (API 36) from 2026-08-31, so the app has to compile and
+      # target 36 even though minSdk stays at 24.
+      - name: Install Android SDK 36
         run: |
           SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           echo "Android SDK root: $SDK_ROOT"
           SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
           echo "sdk.dir=$SDK_ROOT" > local.properties
 
       # `gradlew` is committed as mode 100644 (Windows checkout), so the

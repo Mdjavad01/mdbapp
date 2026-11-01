@@ -14,7 +14,8 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | Code | What changed |
 |---|---|---|
-| **1.7.3** | 23 | the palette comes from the panel: `GET /app-ui` → `theme` feeds `MdbTheme(brand = …)` through a `BrandViewModel`, so a recolour is a save in WordPress, not a release. A bad hex falls back anchor by anchor |
+| **1.7.4** | 24 | store-ready: `compileSdk`/`targetSdk` 36 (Play rejects anything below Android 16 for new apps since 2026-08-31), which also moves AGP to 8.9.2 and Gradle to 8.11.1. Adds a signed-release workflow producing the APK for Bazaar and the AAB for Play, and `docs/PUBLISHING.md` |
+| 1.7.3 | 23 | the palette comes from the panel: `GET /app-ui` → `theme` feeds `MdbTheme(brand = …)` through a `BrandViewModel`, so a recolour is a save in WordPress, not a release. A bad hex falls back anchor by anchor |
 | 1.7.2 | 22 | HLS playback with a real quality menu: the renditions come from the manifest and are selected through the track selector, not by swapping URLs. MP4 keeps the old path |
 | 1.7.1 | 21 | every request now carries `X-MDB-Client: android/<version>`, so the bridge can record whether a sale came from the app or the site |
 | 1.7.0 | 20 | shop is a category menu → section page with breadcrumb, subcategory chips and paged products |
