@@ -44,7 +44,8 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | What changed | Pairs with |
 |---|---|---|
-| **1.7.23** | `GET /app-ui` returns a `theme` block (primary/accent/canvas/success) and the settings page finally has the four colour fields for it — a recolour is a save in WordPress, not two releases. An invalid hex keeps the previous value instead of repainting the app | app 1.7.3 · web 1.8.0 |
+| **1.7.24** | fixes 1.7.23: `get_app_ui()` built its response array by hand and dropped the `theme` block that `get_defaults()` had just produced — so the colour fields saved fine and no client ever saw them. The block is now in the response, with `test-app-ui-theme.php` (11 cases) guarding it | app 1.7.3 · web 1.8.0 |
+| 1.7.23 | `GET /app-ui` returns a `theme` block (primary/accent/canvas/success) and the settings page finally has the four colour fields for it — a recolour is a save in WordPress, not two releases. An invalid hex keeps the previous value instead of repainting the app | app 1.7.3 · web 1.8.0 |
 | 1.7.21 | playback reports `videoType` (hls/mp4) and an HLS lesson returns no separate qualities; the PHP stream proxy is bypassed for HLS; the lesson form explains where `master.m3u8` goes | app 1.7.2 · web 1.6.0 |
 | 1.7.20 | `source` column on orders (app/web), detected from `X-MDB-Client` or the OkHttp agent; `_mrdastbaaf_source` on WooCommerce orders; new «سفارش‌ها» screen with filters and CSV export; `created_at` index | app 1.7.1 |
 | 1.7.19 | receipt status tabs sit in a card; fixed column widths so the table stops scrolling sideways | app 1.7.0 |
