@@ -318,7 +318,7 @@ export const CatalogueView: React.FC<CatalogueViewProps> = ({
                           e.stopPropagation();
                           onNavigate('course_detail', { courseId: course.id });
                         }}
-                        className="bg-stone-900 hover:bg-amber-900 text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition"
+                        className="bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition"
                       >
                         سرفصل‌ها
                       </button>

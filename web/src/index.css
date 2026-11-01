@@ -17,6 +17,47 @@
   font-display: swap;
 }
 
+/* ---------------------------------------------------------------------------
+   v1.8.1 — پالت مقیاس‌پذیر: کل مقیاس amber و emerald از چهار لنگر برند
+   مشتق می‌شود.
+
+   چرا اینجا و نه در کامپوننت‌ها: در کل اپ ۵۱۷ استفاده از amber-* هست
+   (دکمه، لینک، چیپ، حاشیه، عنوان). اگر بخواهیم هر کدام را به var وصل کنیم،
+   هر رنگ جدید در آینده هم باید دستی وصل شود — یعنی «مقیاس‌پذیر» نیست. با
+   بازتعریف خودِ توکن‌های Tailwind، همهٔ آن ۵۱۷ مورد یک‌جا از پنل پیروی
+   می‌کنند و هیچ کلاسی در کامپوننت‌ها عوض نمی‌شود.
+
+   مشتق‌ها با color-mix ساخته می‌شوند تا نسبت روشنایی حفظ شود: سایه‌های روشن
+   به سمت canvas می‌روند و سایه‌های تیره به سمت سیاه، پس کنتراست متن‌ها با
+   تغییر رنگ نمی‌شکند. (Tailwind 4 خودش هم به color-mix نیاز دارد، پس این
+   مرورگر-جدیدتر از قبل را نمی‌خواهد.)
+   --------------------------------------------------------------------------- */
+@theme {
+  /* سایه‌های روشن از «مکمل» (accent) ساخته می‌شوند، نه از primary: چیپ‌ها و
+     نشان‌های کم‌رنگ باید طلایی بمانند؛ تینت تراکوتا روی زمینهٔ کرم صورتی
+     می‌شود و شبیه خطاست. سایه‌های تیره از primary می‌آیند تا دکمه و تیتر
+     دقیقاً رنگ برند باشند. */
+  --color-amber-50: color-mix(in srgb, var(--brand-accent) 7%, var(--brand-canvas));
+  --color-amber-100: color-mix(in srgb, var(--brand-accent) 14%, var(--brand-canvas));
+  --color-amber-200: color-mix(in srgb, var(--brand-accent) 28%, var(--brand-canvas));
+  --color-amber-300: color-mix(in srgb, var(--brand-accent) 46%, var(--brand-canvas));
+  --color-amber-400: color-mix(in srgb, var(--brand-accent) 68%, var(--brand-canvas));
+  --color-amber-500: var(--brand-accent);
+  --color-amber-600: color-mix(in srgb, var(--brand-accent) 82%, var(--brand-primary));
+  --color-amber-700: color-mix(in srgb, var(--brand-primary) 62%, var(--brand-accent));
+  --color-amber-800: var(--brand-primary);
+  --color-amber-900: color-mix(in srgb, var(--brand-primary) 86%, #000000);
+  --color-amber-950: color-mix(in srgb, var(--brand-primary) 74%, #000000);
+
+  --color-emerald-50: color-mix(in srgb, var(--brand-success) 8%, #FFFFFF);
+  --color-emerald-100: color-mix(in srgb, var(--brand-success) 14%, #FFFFFF);
+  --color-emerald-200: color-mix(in srgb, var(--brand-success) 28%, #FFFFFF);
+  --color-emerald-600: var(--brand-success);
+  --color-emerald-700: var(--brand-success);
+  --color-emerald-800: color-mix(in srgb, var(--brand-success) 84%, #000000);
+  --color-emerald-900: color-mix(in srgb, var(--brand-success) 72%, #000000);
+}
+
 @layer base {
   :root {
     --font-sans: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -27,6 +68,16 @@
     --brand-accent: #D97706;
     --brand-canvas: #FDFBF7;
     --brand-success: #047857;
+    /* v1.8.1 — رنگ متن روی سطح primary. در App.tsx از روشنایی رنگ حساب
+       می‌شود: اگر کارفرما رنگ روشن انتخاب کند، متن دکمه‌ها مشکی می‌شود نه
+       سفید (وگرنه سفید روی زرد خوانا نیست). */
+    --brand-on-primary: #FFFFFF;
+    /* v1.8.1 — همان رنگ برند، برای «متن» روی canvas. اگر رنگ اصلی روشن باشد
+       (زرد/نارنجی کمرنگ)، متن لینک و قیمت روی زمینهٔ کرم ناخوانا می‌شود؛
+       App.tsx این دو را تا رسیدن به کنتراست ۴.۵ و ۷ تیره می‌کند. برای پالت
+       پیش‌فرض هر دو عیناً همان #9A3412 می‌مانند، پس ظاهر امروز عوض نمی‌شود. */
+    --brand-primary-text: #9A3412;
+    --brand-primary-ink: #9A3412;
   }
 
   html {
@@ -133,7 +184,52 @@
 /* BUG-50: حلقه فوکوس سراسری برای ناوبری با کیبورد (دسترس‌پذیری). */
 @layer base {
   :focus-visible {
-    outline: 2px solid #d97706; /* amber-600 */
+    outline: 2px solid var(--brand-accent);
     outline-offset: 2px;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   v1.8.1 — برچسبِ خوانا روی سطح برند.
+
+   دکمه‌هایی که پس‌زمینه‌شان رنگ اصلی است، متن سفید هاردکد دارند. اگر کارفرما
+   رنگ روشن انتخاب کند (زرد، نارنجی کمرنگ)، سفید روی آن خوانا نیست و هیچ
+   تایپ‌چکی این را نمی‌گیرد. این قاعده رنگ متن را از متغیر می‌خواند و App.tsx
+   آن را از روشنایی رنگ اصلی حساب می‌کند.
+
+   فقط button/a را هدف می‌گیرد، نه هر عنصری با این کلاس: نشان‌های روی تصویر
+   (span با bg-amber-900/90 و text-amber-200) عمداً متن روشن دارند.
+
+   بدون @layer است تا از utilities پیشی بگیرد (text-white در لایهٔ utilities
+   است و لایه‌بندی همیشه به unlayered می‌بازد).
+   --------------------------------------------------------------------------- */
+button.bg-amber-700,
+button.bg-amber-800,
+button.bg-amber-900,
+a.bg-amber-700,
+a.bg-amber-800,
+a.bg-amber-900,
+button.bg-\[var\(--brand-primary\)\],
+a.bg-\[var\(--brand-primary\)\] {
+  color: var(--brand-on-primary);
+}
+
+/* ---------------------------------------------------------------------------
+   v1.8.1 — متن برند، خوانا روی هر پالتی.
+
+   اگر رنگ اصلی روشن باشد، `text-amber-800` (لینک، برچسب، قیمت) روی زمینهٔ
+   کرم کم‌کنتراست می‌شود. این چهار selector تنها جاهایی هستند که رنگ برند
+   به‌عنوان «متن» استفاده شده (۵۵+۴۶+۳۶ مورد + دو hover)؛ همه به متغیرهای
+   تیره‌شده وصل می‌شوند. برای پالت پیش‌فرض مقدارها همان #9A3412 است، پس هیچ
+   تفاوتی دیده نمی‌شود.
+   --------------------------------------------------------------------------- */
+.text-amber-800,
+.text-amber-900,
+.hover\:text-amber-800:hover,
+.hover\:text-amber-900:hover {
+  color: var(--brand-primary-text);
+}
+
+.text-amber-950 {
+  color: var(--brand-primary-ink);
 }

@@ -60,7 +60,8 @@ Plugin history before 1.7.16, and web history before the import, are in
 
 | Version | What changed |
 |---|---|
-| **1.8.0** | the shop is a real catalogue: `#/shop` is a category menu → section page with breadcrumb, subcategory chips and 24 products per page from `GET /shop/categories` + `GET /shop/catalog` — so a new WooCommerce product shows up on the site without being hand-ticked. Membership lost the برنزی/نقرهای table and shows duration plans with a per-month price and a saving badge, like the app. The palette now comes from the panel as CSS variables |
+| **1.8.1** | the palette actually scales: the whole amber and emerald scales are re-derived from the four panel anchors, so every button, link, chip, border and heading follows a recolour — no component knows a hex value. Button labels flip to dark when the primary is light, and brand-coloured text is darkened until it passes 4.5:1 (7:1 for headings). The default palette renders byte-identically to 1.8.0 |
+| 1.8.0 | the shop is a real catalogue: `#/shop` is a category menu → section page with breadcrumb, subcategory chips and 24 products per page from `GET /shop/categories` + `GET /shop/catalog` — so a new WooCommerce product shows up on the site without being hand-ticked. Membership lost the برنزی/نقرهای table and shows duration plans with a per-month price and a saving badge, like the app. The palette now comes from the panel as CSS variables |
 | 1.7.3 | network-stall retries and a visibility resume in the player |
 | 1.7.2 | the black screen was `canPlayType` lying about HLS — hls.js now runs whenever it is supported; `#/debug` player self-test added |
 | 1.7.0–1.7.1 | hls.js player with a quality menu built from the manifest, and the playback error overlay that names the real reason |

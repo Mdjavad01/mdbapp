@@ -22,6 +22,8 @@ import { mutateOrder, orderStore } from './services/orderStore';
 import { ONLINE_REFETCH_EVENT } from './hooks/useOnlineRefetch';
 // v1.5.4: بررسی خودکار نسخه و محتوا — هر ۲ دقیقه چک می‌کند
 import { useVersionChecker, CONTENT_CHANGED_EVENT } from './hooks/useVersionChecker';
+// v1.8.1: رنگ متن روی سطح برند (رنگ روشن از پنل نباید متن ناخوانا بسازد)
+import { darkenUntilReadable, readableOn } from './utils/color';
 import { PWA_VERSION } from './version';
 
 // Common Components
@@ -642,6 +644,12 @@ export default function App() {
     root.style.setProperty('--brand-accent', accent);
     root.style.setProperty('--brand-canvas', canvas);
     root.style.setProperty('--brand-success', success);
+    // v1.8.1: متن دکمه‌های برند از روشنایی رنگ اصلی — رنگ روشن، متن تیره.
+    root.style.setProperty('--brand-on-primary', readableOn(primary));
+    // متنِ برند روی زمینهٔ canvas: رنگ روشن تا رسیدن به کنتراست ۴.۵ (لینک) و
+    // ۷ (تیتر) تیره می‌شود؛ برای پالت پیش‌فرض هر دو همان رنگ اصلی‌اند.
+    root.style.setProperty('--brand-primary-text', darkenUntilReadable(primary, canvas, 4.5));
+    root.style.setProperty('--brand-primary-ink', darkenUntilReadable(primary, canvas, 7));
     // نوار وضعیت مرورگر موبایل هم با پالت هم‌گام می‌شود (index.html مقدار ثابت دارد).
     document
       .querySelector('meta[name="theme-color"]')

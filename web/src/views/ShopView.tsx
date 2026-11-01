@@ -323,7 +323,7 @@ export const ShopView: React.FC<ShopViewProps> = ({
                         <button
                           type="button"
                           onClick={() => onBuyProduct(product)}
-                          className="flex-1 min-h-9 bg-stone-900 hover:bg-amber-900 text-white text-[11px] font-bold rounded-xl transition"
+                          className="flex-1 min-h-9 bg-amber-800 hover:bg-amber-900 text-white text-[11px] font-bold rounded-xl transition"
                         >
                           خرید
                         </button>

@@ -564,7 +564,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
                   <button
                     onClick={() => setEditingPlan(p)}
-                    className="flex items-center gap-1 bg-stone-900 hover:bg-amber-900 text-white px-3 py-1.5 rounded-xl font-semibold transition"
+                    className="flex items-center gap-1 bg-amber-800 hover:bg-amber-900 text-white px-3 py-1.5 rounded-xl font-semibold transition"
                   >
                     <Edit className="w-3.5 h-3.5" />
                     <span>ویرایش پلن</span>

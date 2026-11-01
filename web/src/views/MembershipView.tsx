@@ -259,7 +259,7 @@ export const MembershipView: React.FC<MembershipViewProps> = ({
                     className={`w-full py-2.5 rounded-xl text-xs font-bold transition shadow-xs ${
                       plan.isPopular
                         ? 'bg-amber-800 hover:bg-amber-900 text-white'
-                        : 'bg-stone-900 hover:bg-amber-900 text-white'
+                        : 'bg-amber-800 hover:bg-amber-900 text-white'
                     }`}
                   >
                     {isFree
